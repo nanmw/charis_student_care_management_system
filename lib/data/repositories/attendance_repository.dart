@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
+import 'package:uuid/uuid.dart';
 
 import 'package:charis_student_care/data/database/app_database.dart';
 
@@ -18,6 +21,7 @@ class AttendanceRepository {
   AttendanceRepository(this._db);
 
   final AppDatabase _db;
+  static const _uuid = Uuid();
 
   /// Stream of attendance rows for [date] (date-only).
   Stream<List<AttendanceData>> watchAttendanceForDate(DateTime date) {
@@ -50,8 +54,9 @@ class AttendanceRepository {
   /// Optimized to use batch operations for better performance.
   Future<void> upsertAttendanceForDate(
     DateTime date,
-    List<AttendanceEntry> rows,
-  ) async {
+    List<AttendanceEntry> rows, {
+    String? userId,
+  }) async {
     if (rows.isEmpty) return;
     
     final d = _dateOnly(date);
@@ -69,9 +74,12 @@ class AttendanceRepository {
     await _db.transaction(() async {
       for (final e in rows) {
         final existing = existingMap[e.studentId];
+        final operation = existing != null ? 'UPDATE' : 'INSERT';
+        int? attendanceId;
 
         if (existing != null) {
           // Update existing record
+          attendanceId = existing.id;
           await (_db.update(_db.attendance)..where((t) => t.id.equals(existing.id))).write(
             AttendanceCompanion(
               present: Value(e.present ? 1 : 0),
@@ -82,7 +90,7 @@ class AttendanceRepository {
           );
         } else {
           // Insert new record
-          await _db.into(_db.attendance).insert(
+          attendanceId = await _db.into(_db.attendance).insert(
             AttendanceCompanion.insert(
               date: d,
               studentId: e.studentId,
@@ -93,8 +101,90 @@ class AttendanceRepository {
             ),
           );
         }
+        
+        if (userId != null && attendanceId != null) {
+          await _insertChangeSet(
+            table: 'attendance',
+            recordId: attendanceId.toString(),
+            operation: operation,
+            payload: {
+              'date': d.toIso8601String(),
+              'studentId': e.studentId,
+              'present': e.present,
+              if (e.notes != null && e.notes!.trim().isNotEmpty) 'notes': e.notes!.trim(),
+            },
+            userId: userId,
+            version: 1,
+          );
+        }
       }
     });
+  }
+
+  /// Calculates average attendance percentage for the last [days] days.
+  /// Computes per-student percentages then averages them.
+  /// Returns null if no attendance data exists.
+  Stream<double?> watchAverageAttendancePercentage({int days = 30}) {
+    final endDate = _dateOnly(DateTime.now());
+    final startDate = _dateOnly(endDate.subtract(Duration(days: days - 1)));
+
+    // Fetch all attendance records and filter by date range in memory
+    // This is simpler than trying to use date range queries in Drift
+    return _db.select(_db.attendance).watch().map((allRecords) {
+      // Filter records within date range (inclusive on both ends)
+      final attendanceRecords = allRecords.where((record) {
+        final recordDate = _dateOnly(record.date);
+        return !recordDate.isBefore(startDate) && !recordDate.isAfter(endDate);
+      }).toList();
+      
+      if (attendanceRecords.isEmpty) return null;
+      
+      // Group by studentId
+      final Map<int, List<AttendanceData>> byStudent = {};
+      for (final record in attendanceRecords) {
+        byStudent.putIfAbsent(record.studentId, () => []).add(record);
+      }
+      
+      if (byStudent.isEmpty) return null;
+      
+      // Calculate percentage for each student
+      final List<double> studentPercentages = [];
+      for (final studentRecords in byStudent.values) {
+        final totalDays = studentRecords.length;
+        if (totalDays == 0) continue;
+        
+        final presentDays = studentRecords.where((r) => r.present == 1).length;
+        final percentage = (presentDays / totalDays) * 100;
+        studentPercentages.add(percentage);
+      }
+      
+      if (studentPercentages.isEmpty) return null;
+      
+      // Average the percentages
+      final sum = studentPercentages.fold<double>(0.0, (a, b) => a + b);
+      return sum / studentPercentages.length;
+    });
+  }
+
+  Future<void> _insertChangeSet({
+    required String table,
+    required String recordId,
+    required String operation,
+    required Map<String, dynamic> payload,
+    required String userId,
+    required int version,
+  }) async {
+    await _db.into(_db.changeSets).insert(
+          ChangeSetsCompanion.insert(
+            id: _uuid.v4(),
+            table: table,
+            recordId: recordId,
+            operation: operation,
+            payload: jsonEncode(payload),
+            userId: userId,
+            version: version,
+          ),
+        );
   }
 }
 

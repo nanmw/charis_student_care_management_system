@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart';
+import 'package:uuid/uuid.dart';
 
 import 'package:charis_student_care/data/database/app_database.dart';
 
@@ -40,6 +43,7 @@ class PaymentRepository {
   PaymentRepository(this._db);
 
   final AppDatabase _db;
+  static const _uuid = Uuid();
 
   /// Stream of payment rows for [year]. Use for reactive UI.
   Stream<List<Payment>> watchPaymentsForYear(String year) {
@@ -75,9 +79,13 @@ class PaymentRepository {
     double nov = 0,
     double dec = 0,
     double lumpSum = 0,
+    String? userId,
   }) async {
     final existing = await getPaymentRow(studentId, year);
     final now = DateTime.now();
+    final operation = existing != null ? 'UPDATE' : 'INSERT';
+    final paymentId = existing?.id;
+    
     if (existing != null) {
       await (_db.update(_db.payments)..where((t) => t.id.equals(existing.id)))
           .write(
@@ -99,7 +107,7 @@ class PaymentRepository {
         ),
       );
     } else {
-      await _db.into(_db.payments).insert(
+      final inserted = await _db.into(_db.payments).insert(
         PaymentsCompanion.insert(
           studentId: studentId,
           year: year,
@@ -120,6 +128,60 @@ class PaymentRepository {
           updatedAt: Value(now),
         ),
       );
+      if (userId != null) {
+        await _insertChangeSet(
+          table: 'payments',
+          recordId: inserted.toString(),
+          operation: operation,
+          payload: {
+            'studentId': studentId,
+            'year': year,
+            'jan': jan,
+            'feb': feb,
+            'mar': mar,
+            'apr': apr,
+            'may': may,
+            'jun': jun,
+            'jul': jul,
+            'aug': aug,
+            'sep': sep,
+            'oct': oct,
+            'nov': nov,
+            'dec': dec,
+            'lumpSum': lumpSum,
+          },
+          userId: userId,
+          version: 1,
+        );
+      }
+      return;
+    }
+    
+    if (userId != null && paymentId != null) {
+      await _insertChangeSet(
+        table: 'payments',
+        recordId: paymentId.toString(),
+        operation: operation,
+        payload: {
+          'studentId': studentId,
+          'year': year,
+          'jan': jan,
+          'feb': feb,
+          'mar': mar,
+          'apr': apr,
+          'may': may,
+          'jun': jun,
+          'jul': jul,
+          'aug': aug,
+          'sep': sep,
+          'oct': oct,
+          'nov': nov,
+          'dec': dec,
+          'lumpSum': lumpSum,
+        },
+        userId: userId,
+        version: 1,
+      );
     }
   }
 
@@ -129,6 +191,7 @@ class PaymentRepository {
   Future<int> batchUpsertPayments({
     required String year,
     required Map<int, PaymentData> payments,
+    String? userId,
   }) async {
     if (payments.isEmpty) return 0;
 
@@ -151,9 +214,12 @@ class PaymentRepository {
         final studentId = entry.key;
         final payment = entry.value;
         final existing = existingMap[studentId];
+        final operation = existing != null ? 'UPDATE' : 'INSERT';
+        int? paymentId;
 
         if (existing != null) {
           // Update existing row
+          paymentId = existing.id;
           await (_db.update(_db.payments)..where((t) => t.id.equals(existing.id)))
               .write(
             PaymentsCompanion(
@@ -175,7 +241,7 @@ class PaymentRepository {
           );
         } else {
           // Insert new row
-          await _db.into(_db.payments).insert(
+          paymentId = await _db.into(_db.payments).insert(
             PaymentsCompanion.insert(
               studentId: studentId,
               year: year,
@@ -197,10 +263,84 @@ class PaymentRepository {
             ),
           );
         }
+        
+        if (userId != null && paymentId != null) {
+          await _insertChangeSet(
+            table: 'payments',
+            recordId: paymentId.toString(),
+            operation: operation,
+            payload: {
+              'studentId': studentId,
+              'year': year,
+              'jan': payment.jan,
+              'feb': payment.feb,
+              'mar': payment.mar,
+              'apr': payment.apr,
+              'may': payment.may,
+              'jun': payment.jun,
+              'jul': payment.jul,
+              'aug': payment.aug,
+              'sep': payment.sep,
+              'oct': payment.oct,
+              'nov': payment.nov,
+              'dec': payment.dec,
+              'lumpSum': payment.lumpSum,
+            },
+            userId: userId,
+            version: 1,
+          );
+        }
         count++;
       }
 
       return count;
     });
+  }
+
+  /// Calculates total paid amount for [year] across all payments.
+  Stream<double> watchTotalPaidForYear(String year) {
+    final totalPaidExpr = _db.payments.jan +
+        _db.payments.feb +
+        _db.payments.mar +
+        _db.payments.apr +
+        _db.payments.may +
+        _db.payments.jun +
+        _db.payments.jul +
+        _db.payments.aug +
+        _db.payments.sep +
+        _db.payments.oct +
+        _db.payments.nov +
+        _db.payments.dec +
+        _db.payments.lumpSum;
+
+    return (_db.selectOnly(_db.payments)
+          ..addColumns([totalPaidExpr.sum()])
+          ..where(_db.payments.year.equals(year))
+          ..groupBy([]))
+        .watch()
+        .map((rows) => rows.isNotEmpty
+            ? (rows.single.read<double>(totalPaidExpr.sum()) ?? 0.0)
+            : 0.0);
+  }
+
+  Future<void> _insertChangeSet({
+    required String table,
+    required String recordId,
+    required String operation,
+    required Map<String, dynamic> payload,
+    required String userId,
+    required int version,
+  }) async {
+    await _db.into(_db.changeSets).insert(
+          ChangeSetsCompanion.insert(
+            id: _uuid.v4(),
+            table: table,
+            recordId: recordId,
+            operation: operation,
+            payload: jsonEncode(payload),
+            userId: userId,
+            version: version,
+          ),
+        );
   }
 }

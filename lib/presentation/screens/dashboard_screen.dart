@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/core/utils/currency_utils.dart';
+import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
+import 'package:charis_student_care/presentation/providers/dashboard_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/test_providers.dart';
 
@@ -20,6 +23,9 @@ class DashboardScreen extends ConsumerWidget {
     final displayName = auth is Authenticated ? auth.user.displayName : 'User';
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
     final outstandingAsync = ref.watch(totalOutstandingCountProvider);
+    final attendanceAsync = ref.watch(averageAttendancePercentageProvider);
+    final balanceAsync = ref.watch(totalBalanceDueProvider);
+    final activitiesAsync = ref.watch(recentActivitiesProvider);
 
     return Container(
       color: colorScheme.surface,
@@ -47,7 +53,14 @@ class DashboardScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 24),
-            _buildStatCards(context, colorScheme, studentsAsync, outstandingAsync),
+            _buildStatCards(
+              context,
+              colorScheme,
+              studentsAsync,
+              outstandingAsync,
+              attendanceAsync,
+              balanceAsync,
+            ),
             const SizedBox(height: 24),
             Text(
               'Recent Activities',
@@ -59,7 +72,7 @@ class DashboardScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 12),
-            _buildRecentActivitiesPlaceholder(colorScheme),
+            _buildRecentActivities(context, colorScheme, activitiesAsync),
             const SizedBox(height: 24),
             Text(
               'Quick Links',
@@ -83,6 +96,8 @@ class DashboardScreen extends ConsumerWidget {
     ColorScheme colorScheme,
     AsyncValue<List<dynamic>> studentsAsync,
     AsyncValue<int> outstandingAsync,
+    AsyncValue<double?> attendanceAsync,
+    AsyncValue<double> balanceAsync,
   ) {
     final totalStudents = studentsAsync.when(
       data: (list) => list.length,
@@ -91,6 +106,16 @@ class DashboardScreen extends ConsumerWidget {
     );
     final outstandingTests = outstandingAsync.when(
       data: (count) => count,
+      loading: () => null,
+      error: (_, __) => null,
+    );
+    final attendancePercent = attendanceAsync.when(
+      data: (percent) => percent,
+      loading: () => null,
+      error: (_, __) => null,
+    );
+    final totalBalance = balanceAsync.when(
+      data: (balance) => balance,
       loading: () => null,
       error: (_, __) => null,
     );
@@ -109,7 +134,9 @@ class DashboardScreen extends ConsumerWidget {
         _statCard(
           colorScheme: colorScheme,
           title: 'Avg Attendance %',
-          value: '92.5%',
+          value: attendancePercent != null
+              ? '${attendancePercent.toStringAsFixed(1)}%'
+              : '—',
           subtitle: 'Last 30 days',
           valueColor: colorScheme.onSurface,
         ),
@@ -123,9 +150,12 @@ class DashboardScreen extends ConsumerWidget {
         _statCard(
           colorScheme: colorScheme,
           title: 'Total Balance Due',
-          value: CurrencyUtils.formatRand(15300),
+          value: totalBalance != null
+              ? CurrencyUtils.formatRand(totalBalance)
+              : '—',
           subtitle: 'Across all students',
           valueColor: AppColors.primaryActionRed,
+          width: 280,
         ),
       ],
     );
@@ -137,9 +167,10 @@ class DashboardScreen extends ConsumerWidget {
     required String value,
     required String subtitle,
     required Color valueColor,
+    double width = 200,
   }) {
     return Container(
-      width: 200,
+      width: width,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: colorScheme.surface,
@@ -189,25 +220,158 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildRecentActivitiesPlaceholder(ColorScheme colorScheme) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outlineVariant),
+  Widget _buildRecentActivities(
+    BuildContext context,
+    ColorScheme colorScheme,
+    AsyncValue<List<ChangeSet>> activitiesAsync,
+  ) {
+    return activitiesAsync.when(
+      data: (activities) {
+        if (activities.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: colorScheme.outlineVariant),
+            ),
+            child: Center(
+              child: Text(
+                'No recent activities to display. Please check back later.',
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 14,
+                  fontFamily: 'Questrial',
+                ),
+              ),
+            ),
+          );
+        }
+
+        return Container(
+          decoration: BoxDecoration(
+            color: colorScheme.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: colorScheme.outlineVariant),
+          ),
+          child: ListView.separated(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            itemCount: activities.length,
+            separatorBuilder: (context, index) => Divider(
+              height: 1,
+              color: colorScheme.outlineVariant,
+            ),
+            itemBuilder: (context, index) {
+              final activity = activities[index];
+              final dateFormat = DateFormat('MMM d, y • h:mm a');
+              final timestamp = activity.timestamp;
+              final formattedDate = dateFormat.format(timestamp);
+
+              String activityText;
+              switch (activity.operation) {
+                case 'INSERT':
+                  activityText = 'Added ${activity.table}';
+                  break;
+                case 'UPDATE':
+                  activityText = 'Updated ${activity.table}';
+                  break;
+                case 'STATUS_CHANGE':
+                  activityText = 'Changed ${activity.table} status';
+                  break;
+                default:
+                  activityText = 'Modified ${activity.table}';
+              }
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      _getActivityIcon(activity.operation),
+                      size: 20,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            activityText,
+                            style: TextStyle(
+                              color: colorScheme.onSurface,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              fontFamily: 'Questrial',
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            formattedDate,
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                              fontSize: 12,
+                              fontFamily: 'Questrial',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+      loading: () => Container(
+        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Center(
+          child: CircularProgressIndicator(
+            color: AppColors.primaryActionRed,
+          ),
+        ),
       ),
-      child: Center(
-        child: Text(
-          'No recent activities to display. Please check back later.',
-          style: TextStyle(
-            color: colorScheme.onSurfaceVariant,
-            fontSize: 14,
-            fontFamily: 'Questrial',
+      error: (error, stack) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Center(
+          child: Text(
+            'Unable to load recent activities.',
+            style: TextStyle(
+              color: colorScheme.error,
+              fontSize: 14,
+              fontFamily: 'Questrial',
+            ),
           ),
         ),
       ),
     );
+  }
+
+  IconData _getActivityIcon(String operation) {
+    switch (operation) {
+      case 'INSERT':
+        return Icons.add_circle_outline;
+      case 'UPDATE':
+        return Icons.edit_outlined;
+      case 'STATUS_CHANGE':
+        return Icons.swap_horiz;
+      default:
+        return Icons.info_outline;
+    }
   }
 
   Widget _buildQuickLinks(BuildContext context, ColorScheme colorScheme) {

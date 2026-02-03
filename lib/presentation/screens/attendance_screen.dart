@@ -7,6 +7,8 @@ import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/attendance_repository.dart';
 import 'package:charis_student_care/domain/use_cases/sort_students_alphabetically.dart';
 import 'package:charis_student_care/presentation/providers/attendance_providers.dart';
+import 'package:charis_student_care/presentation/providers/auth_provider.dart';
+import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 
 // #region agent log (disabled for performance - synchronous file I/O was blocking UI)
@@ -470,10 +472,14 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     // #endregion
     
     try {
+      // Get userId for change set logging
+      final auth = ref.read(authStateProvider).valueOrNull;
+      final userId = auth is Authenticated ? auth.user.id : null;
+      
       // #region agent log
       _debugLog('attendance_screen.dart:_save', 'Calling upsertAttendanceForDate', {'entriesCount': entries.length}, 'A');
       // #endregion
-      await repo.upsertAttendanceForDate(_attendanceDate, entries);
+      await repo.upsertAttendanceForDate(_attendanceDate, entries, userId: userId);
       // #region agent log
       _debugLog('attendance_screen.dart:_save', 'Upsert completed successfully', {}, 'A');
       // #endregion

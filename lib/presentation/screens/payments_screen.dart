@@ -12,6 +12,8 @@ import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/payment_repository.dart';
 import 'package:charis_student_care/data/repositories/payment_repository.dart' show PaymentData;
 import 'package:charis_student_care/domain/use_cases/sort_students_alphabetically.dart';
+import 'package:charis_student_care/presentation/providers/auth_provider.dart';
+import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/payment_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
@@ -1062,10 +1064,15 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         return;
       }
       
+      // Get userId for change set logging
+      final auth = ref.read(authStateProvider).valueOrNull;
+      final userId = auth is Authenticated ? auth.user.id : null;
+      
       // Use batch upsert for much better performance
       final savedCount = await repo.batchUpsertPayments(
         year: _paymentYear,
         payments: paymentDataMap,
+        userId: userId,
       );
       
       if (mounted) {
