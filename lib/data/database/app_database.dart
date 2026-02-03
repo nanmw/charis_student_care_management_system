@@ -9,11 +9,12 @@ import 'tables/change_sets.dart';
 import 'tables/attendance.dart';
 import 'tables/tests.dart';
 import 'tables/payments.dart';
+import 'tables/subjects.dart';
 
 part 'app_database.g.dart';
 
 /// Main database class (plain SQLite; encryption can be re-added later with platform-specific setup)
-@DriftDatabase(tables: [Students, ChangeSets, Attendance, Tests, Payments])
+@DriftDatabase(tables: [Students, ChangeSets, Attendance, Tests, Payments, Subjects])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
@@ -22,7 +23,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.test() : super(_openTestConnection());
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 12;
 
   @override
   MigrationStrategy get migration {
@@ -40,6 +41,159 @@ class AppDatabase extends _$AppDatabase {
             'CREATE INDEX IF NOT EXISTS idx_changesets_timestamp ON change_sets(timestamp)',);
         await customStatement(
             'CREATE INDEX IF NOT EXISTS idx_changesets_user_id ON change_sets(user_id)',);
+        await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_subjects_year ON subjects(year)');
+        
+        // Seed first-year subjects
+        final firstYearSubjects = [
+          'A Sure Foundation',
+          'Healing',
+          'Life Foundations',
+          'Basics of Righteousness',
+          'Possess The Land',
+          'Prosperity God\'s Way',
+          'Holy Spirit I',
+          'Discipleship Evangelism I',
+          'The Heart of The Gospel',
+          'Principles of Grace & Faith',
+          'Holy Spirit II',
+          'Discipleship Evangelism II',
+          'Fruit of The Spirit',
+          'Marriage & Family',
+          'Romans',
+          'Holy Spirit III',
+          'Relationship with God I',
+          'Old Testament Survey 1',
+          'Discipleship Evangelism III',
+          'New Covenant Prayer',
+          'Galatians',
+          'Introduction To The Bible',
+          'Relationship With God II',
+          'Basic Bible Doctrines',
+          'Establishing A Prosperous Soul',
+          'Old Testament Survey II',
+          'The Fundamentals Of Faith',
+          'Prayer Minister Training',
+          'Finally, My Brethren',
+          'Biblical Ethics and Morals',
+          'Receiving From God I',
+          'Old Testament Survey III',
+          'The Ministry Of Jesus I',
+          'Let Freedom Reign',
+          'Love Of God',
+          'Old Testament Survey IV',
+          'The Ministry Of Jesus II',
+          'Old Testament Survey V',
+          'Operating In God\'s Best',
+          'Foundations Of Evangelism',
+          'Receiving From God II',
+          'Old Testament Survey VI',
+          'Rehearsal',
+          'Graduation',
+        ];
+        
+        for (final subjectName in firstYearSubjects) {
+          final escapedName = subjectName.replaceAll("'", "''");
+          await customStatement('''
+            INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 1')
+          ''');
+        }
+        
+        // Seed second-year subjects
+        final secondYearSubjects = [
+          'How To Get Along With People',
+          'Laws of The Kingdom',
+          'How To Study The Bible',
+          'Biblical Leadership',
+          'Healing II',
+          'New Testament Survey I',
+          'Living in Balance',
+          'IAG Practical Ministry',
+          'Practical Skills for Godly Relationships',
+          '20/20 Vision',
+          'Bible Covenants',
+          'How to Flow in The Gifts',
+          'Public Speaking',
+          'Lifestyle of Intimacy',
+          'Principles of Godly Leadership',
+          'Answers to Important Questions I',
+          'The Church Defined',
+          'Biblical Basis for Missions',
+          'Introduction to Money Mastery',
+          'Imparting Success to The Next Gen',
+          'Life of Christ',
+          'Walking In The Spirit',
+          'Making of A Minister I',
+          'Excellence In Ministry',
+          'IAG Sacerdotal Duties',
+          'Goal of The Cross',
+          'Answers to Important Question II',
+          'New Testament Survey II',
+          'Advanced Bible Doctrines',
+          'Making of A Minister II',
+          'Wisdom & Maturity',
+          'Church History',
+          'In Christ Realities',
+          'Acts: Power for Supernatural Living',
+          'Foundational Truths for Godly Ministry',
+          'Heart Matters',
+          'Biblical Worldview',
+          'Who is Man',
+          'Weddings',
+          'Funerals',
+          'Rehearsal',
+          'Graduation',
+        ];
+        
+        for (final subjectName in secondYearSubjects) {
+          final escapedName = subjectName.replaceAll("'", "''");
+          await customStatement('''
+            INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 2')
+          ''');
+        }
+        
+        // Seed third-year subjects
+        final thirdYearSubjects = [
+          'Vision Development Intro',
+          'Advice From an Older Minister',
+          'Organizational Mastery',
+          'Time Management',
+          'Sound Doctrine',
+          'Business Model Generation Canvas',
+          'How to Teach & Preach Effectively',
+          'How to Teach',
+          'Boundaries',
+          'The Evolution of Ministry',
+          'Developing Healthy Relationships',
+          'Change Mastery',
+          'Team Building',
+          'Making Cents',
+          'Business As Missions',
+          'Business Planning',
+          'Anatomy of Revival',
+          'Strategic Planning',
+          'Divine Guidance',
+          'Leadership 101',
+          'Money Mastery',
+          'Missions',
+          'Creatively Communicating The Gospel',
+          'Basic CEO 1',
+          'Effective Counseling',
+          'Conflict Resolution',
+          'Leadership',
+          'Building a Successful Business',
+          'Purpose of Marriage, Spiritual Formation',
+          'How to Disciple',
+          'Rehearsal',
+          'Graduation',
+        ];
+        
+        for (final subjectName in thirdYearSubjects) {
+          final escapedName = subjectName.replaceAll("'", "''");
+          await customStatement('''
+            INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 3')
+          ''');
+        }
       },
       onUpgrade: (Migrator m, int from, int to) async {
         // #region agent log
@@ -200,6 +354,274 @@ class AppDatabase extends _$AppDatabase {
           ''');
           await customStatement(
               'CREATE INDEX IF NOT EXISTS idx_payments_student_year ON payments(student_id, year)');
+        }
+        if (from < 11) {
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS subjects (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              name TEXT NOT NULL,
+              year TEXT NOT NULL,
+              UNIQUE(name, year)
+            )
+          ''');
+          await customStatement(
+              'CREATE INDEX IF NOT EXISTS idx_subjects_year ON subjects(year)');
+          
+          // Seed first-year subjects
+          final firstYearSubjects = [
+            'A Sure Foundation',
+            'Healing',
+            'Life Foundations',
+            'Basics of Righteousness',
+            'Possess The Land',
+            'Prosperity God\'s Way',
+            'Holy Spirit I',
+            'Discipleship Evangelism I',
+            'The Heart of The Gospel',
+            'Principles of Grace & Faith',
+            'Holy Spirit II',
+            'Discipleship Evangelism II',
+            'Fruit of The Spirit',
+            'Marriage & Family',
+            'Romans',
+            'Holy Spirit III',
+            'Relationship with God I',
+            'Old Testament Survey 1',
+            'Discipleship Evangelism III',
+            'New Covenant Prayer',
+            'Galatians',
+            'Introduction To The Bible',
+            'Relationship With God II',
+            'Basic Bible Doctrines',
+            'Establishing A Prosperous Soul',
+            'Old Testament Survey II',
+            'The Fundamentals Of Faith',
+            'Prayer Minister Training',
+            'Finally, My Brethren',
+            'Biblical Ethics and Morals',
+            'Receiving From God I',
+            'Old Testament Survey III',
+            'The Ministry Of Jesus I',
+            'Let Freedom Reign',
+            'Love Of God',
+            'Old Testament Survey IV',
+            'The Ministry Of Jesus II',
+            'Old Testament Survey V',
+            'Operating In God\'s Best',
+            'Foundations Of Evangelism',
+            'Receiving From God II',
+            'Old Testament Survey VI',
+            'Rehearsal',
+            'Graduation',
+          ];
+          
+          // Insert subjects using batch insert for efficiency
+          for (final subjectName in firstYearSubjects) {
+            // Escape single quotes in subject names for SQL
+            final escapedName = subjectName.replaceAll("'", "''");
+            await customStatement('''
+              INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 1')
+            ''');
+          }
+          
+          // Seed second-year subjects
+          final secondYearSubjects = [
+            'How To Get Along With People',
+            'Laws of The Kingdom',
+            'How To Study The Bible',
+            'Biblical Leadership',
+            'Healing II',
+            'New Testament Survey I',
+            'Living in Balance',
+            'IAG Practical Ministry',
+            'Practical Skills for Godly Relationships',
+            '20/20 Vision',
+            'Bible Covenants',
+            'How to Flow in The Gifts',
+            'Public Speaking',
+            'Lifestyle of Intimacy',
+            'Principles of Godly Leadership',
+            'Answers to Important Questions I',
+            'The Church Defined',
+            'Biblical Basis for Missions',
+            'Introduction to Money Mastery',
+            'Imparting Success to The Next Gen',
+            'Life of Christ',
+            'Walking In The Spirit',
+            'Making of A Minister I',
+            'Excellence In Ministry',
+            'IAG Sacerdotal Duties',
+            'Goal of The Cross',
+            'Answers to Important Question II',
+            'New Testament Survey II',
+            'Advanced Bible Doctrines',
+            'Making of A Minister II',
+            'Wisdom & Maturity',
+            'Church History',
+            'In Christ Realities',
+            'Acts: Power for Supernatural Living',
+            'Foundational Truths for Godly Ministry',
+            'Heart Matters',
+            'Biblical Worldview',
+            'Who is Man',
+            'Weddings',
+            'Funerals',
+            'Rehearsal',
+            'Graduation',
+          ];
+          
+          // Insert Year 2 subjects
+          for (final subjectName in secondYearSubjects) {
+            // Escape single quotes in subject names for SQL
+            final escapedName = subjectName.replaceAll("'", "''");
+            await customStatement('''
+              INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 2')
+            ''');
+          }
+          
+          // Seed third-year subjects
+          final thirdYearSubjects = [
+            'Vision Development Intro',
+            'Advice From an Older Minister',
+            'Organizational Mastery',
+            'Time Management',
+            'Sound Doctrine',
+            'Business Model Generation Canvas',
+            'How to Teach & Preach Effectively',
+            'How to Teach',
+            'Boundaries',
+            'The Evolution of Ministry',
+            'Developing Healthy Relationships',
+            'Change Mastery',
+            'Team Building',
+            'Making Cents',
+            'Business As Missions',
+            'Business Planning',
+            'Anatomy of Revival',
+            'Strategic Planning',
+            'Divine Guidance',
+            'Leadership 101',
+            'Money Mastery',
+            'Missions',
+            'Creatively Communicating The Gospel',
+            'Basic CEO 1',
+            'Effective Counseling',
+            'Conflict Resolution',
+            'Leadership',
+            'Building a Successful Business',
+            'Purpose of Marriage, Spiritual Formation',
+            'How to Disciple',
+            'Rehearsal',
+            'Graduation',
+          ];
+          
+          // Insert Year 3 subjects
+          for (final subjectName in thirdYearSubjects) {
+            // Escape single quotes in subject names for SQL
+            final escapedName = subjectName.replaceAll("'", "''");
+            await customStatement('''
+              INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 3')
+            ''');
+          }
+        }
+        if (from < 12) {
+          // Seed second-year subjects for databases already at version 11
+          final secondYearSubjects = [
+            'How To Get Along With People',
+            'Laws of The Kingdom',
+            'How To Study The Bible',
+            'Biblical Leadership',
+            'Healing II',
+            'New Testament Survey I',
+            'Living in Balance',
+            'IAG Practical Ministry',
+            'Practical Skills for Godly Relationships',
+            '20/20 Vision',
+            'Bible Covenants',
+            'How to Flow in The Gifts',
+            'Public Speaking',
+            'Lifestyle of Intimacy',
+            'Principles of Godly Leadership',
+            'Answers to Important Questions I',
+            'The Church Defined',
+            'Biblical Basis for Missions',
+            'Introduction to Money Mastery',
+            'Imparting Success to The Next Gen',
+            'Life of Christ',
+            'Walking In The Spirit',
+            'Making of A Minister I',
+            'Excellence In Ministry',
+            'IAG Sacerdotal Duties',
+            'Goal of The Cross',
+            'Answers to Important Question II',
+            'New Testament Survey II',
+            'Advanced Bible Doctrines',
+            'Making of A Minister II',
+            'Wisdom & Maturity',
+            'Church History',
+            'In Christ Realities',
+            'Acts: Power for Supernatural Living',
+            'Foundational Truths for Godly Ministry',
+            'Heart Matters',
+            'Biblical Worldview',
+            'Who is Man',
+            'Weddings',
+            'Funerals',
+            'Rehearsal',
+            'Graduation',
+          ];
+          
+          // Insert Year 2 subjects
+          for (final subjectName in secondYearSubjects) {
+            final escapedName = subjectName.replaceAll("'", "''");
+            await customStatement('''
+              INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 2')
+            ''');
+          }
+          
+          // Seed third-year subjects
+          final thirdYearSubjects = [
+            'Vision Development Intro',
+            'Advice From an Older Minister',
+            'Organizational Mastery',
+            'Time Management',
+            'Sound Doctrine',
+            'Business Model Generation Canvas',
+            'How to Teach & Preach Effectively',
+            'How to Teach',
+            'Boundaries',
+            'The Evolution of Ministry',
+            'Developing Healthy Relationships',
+            'Change Mastery',
+            'Team Building',
+            'Making Cents',
+            'Business As Missions',
+            'Business Planning',
+            'Anatomy of Revival',
+            'Strategic Planning',
+            'Divine Guidance',
+            'Leadership 101',
+            'Money Mastery',
+            'Missions',
+            'Creatively Communicating The Gospel',
+            'Basic CEO 1',
+            'Effective Counseling',
+            'Conflict Resolution',
+            'Leadership',
+            'Building a Successful Business',
+            'Purpose of Marriage, Spiritual Formation',
+            'How to Disciple',
+            'Rehearsal',
+            'Graduation',
+          ];
+          
+          // Insert Year 3 subjects
+          for (final subjectName in thirdYearSubjects) {
+            final escapedName = subjectName.replaceAll("'", "''");
+            await customStatement('''
+              INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 3')
+            ''');
+          }
         }
       },
     );

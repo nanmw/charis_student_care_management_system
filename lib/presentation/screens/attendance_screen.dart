@@ -48,6 +48,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   String? _academicYear;
   DateTime _attendanceDate = DateTime.now();
   Map<int, _RowEdit> _edits = {};
+  Map<int, _RowEdit> _originalEdits = {};
   final Map<int, TextEditingController> _noteControllers = {};
   String _refillKey = '';
 
@@ -157,12 +158,18 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       }
     }
     final edits = <int, _RowEdit>{};
+    final originalEdits = <int, _RowEdit>{};
     for (final s in students) {
       final row = rowMap[s.id];
       // #region agent log
       _debugLog('attendance_screen.dart:_refillEditsIfNeeded', 'Processing student', {'studentId': s.id, 'hasRow': row != null, 'rowPresent': row?.present, 'rowNotes': row?.notes}, 'D');
       // #endregion
       final notes = row?.notes ?? '';
+      final originalEdit = _RowEdit(
+        present: row?.present == 1,
+        notes: notes,
+      );
+      originalEdits[s.id] = originalEdit;
       edits[s.id] = _RowEdit(
         present: row?.present == 1,
         notes: notes,
@@ -170,7 +177,12 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       final controller = _noteControllers[s.id] ??= TextEditingController(text: notes);
       controller.text = notes;
     }
-    if (mounted) setState(() => _edits = edits);
+    if (mounted) {
+      setState(() {
+        _originalEdits = originalEdits;
+        _edits = edits;
+      });
+    }
   }
 
   Widget _buildFiltersRow(ColorScheme colorScheme) {
@@ -455,20 +467,40 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     _debugLog('attendance_screen.dart:_save', 'Filtered students', {'filteredCount': students.length, 'selectedMode': _selectedMode, 'academicYear': _academicYear}, 'E');
     // #endregion
     
-    // Ensure all students are included in the save, with their current checkbox state
-    final entries = students.map((student) {
-      // #region agent log
-      _debugLog('attendance_screen.dart:_save', 'Processing student entry', {'studentId': student.id, 'hasEdit': _edits.containsKey(student.id)}, 'E');
-      // #endregion
+    // Only include entries that have been changed from their original state
+    final entries = <AttendanceEntry>[];
+    for (final student in students) {
       final edit = _edits[student.id] ?? _RowEdit(present: false);
-      return AttendanceEntry(
-        studentId: student.id,
-        present: edit.present, // Explicitly use the current checkbox state (false if unchecked)
-        notes: edit.notes.isEmpty ? null : edit.notes,
-      );
-    }).toList();
+      final originalEdit = _originalEdits[student.id];
+      
+      // Check if this entry has changed
+      bool hasChanged = false;
+      
+      if (originalEdit == null) {
+        // New entry - include if present is true or notes are not empty
+        if (edit.present || (edit.notes.trim().isNotEmpty)) {
+          hasChanged = true;
+        }
+      } else {
+        // Existing entry - check if present or notes changed
+        final notesChanged = (edit.notes.trim()) != (originalEdit.notes.trim());
+        final presentChanged = edit.present != originalEdit.present;
+        
+        if (presentChanged || notesChanged) {
+          hasChanged = true;
+        }
+      }
+      
+      if (hasChanged) {
+        entries.add(AttendanceEntry(
+          studentId: student.id,
+          present: edit.present,
+          notes: edit.notes.trim().isEmpty ? null : edit.notes.trim(),
+        ));
+      }
+    }
     // #region agent log
-    _debugLog('attendance_screen.dart:_save', 'Created entries', {'entriesCount': entries.length}, 'E');
+    _debugLog('attendance_screen.dart:_save', 'Created entries', {'entriesCount': entries.length, 'totalStudents': students.length}, 'E');
     // #endregion
     
     try {

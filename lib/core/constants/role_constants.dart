@@ -36,4 +36,9 @@ class RolePermissions {
   static bool canResolveConflicts(UserRole role) {
     return role == UserRole.adminLevel01;
   }
+
+  /// Check if role can manage subjects (add/edit/delete)
+  static bool canManageSubjects(UserRole role) {
+    return role == UserRole.adminLevel01;
+  }
 }

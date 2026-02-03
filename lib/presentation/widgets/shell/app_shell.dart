@@ -163,6 +163,7 @@ class AppShell extends ConsumerWidget {
         children: [
           _navItem(context, Icons.dashboard_outlined, Icons.dashboard, 'Dashboard', '/dashboard'),
           _navItem(context, Icons.people_outline, Icons.people, 'Students', '/students'),
+          _navItem(context, Icons.book_outlined, Icons.book, 'Subjects', '/subjects'),
           _navItem(context, Icons.checklist_outlined, Icons.checklist, 'Attendance', '/attendance'),
           _navItem(context, Icons.hourglass_empty_outlined, Icons.hourglass_empty, 'Ministry Hours', '/ministry-hours'),
           _navItem(context, Icons.assignment_outlined, Icons.assignment, 'Tests', '/tests'),

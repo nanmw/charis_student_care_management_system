@@ -10,6 +10,7 @@ import '../screens/login_screen.dart';
 import '../screens/payments_screen.dart';
 import '../screens/placeholder_screen.dart';
 import '../screens/student_list_screen.dart';
+import '../screens/subjects_screen.dart';
 import '../screens/tests_screen.dart';
 
 /// Application routing configuration with auth redirect.
@@ -47,6 +48,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/students',
             builder: (context, state) => const StudentListScreen(),
+          ),
+          GoRoute(
+            path: '/subjects',
+            builder: (context, state) => const SubjectsScreen(),
           ),
           GoRoute(
             path: '/attendance',
