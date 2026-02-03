@@ -1,0 +1,74 @@
+name: charis_student_care
+description: Student Care Data Capture System for Charis Bible College Cape Town
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Typography
+  google_fonts: ^6.3.0
+
+  # Database (plain SQLite; SQLCipher removed to avoid Windows CMake clash with sqlite3_flutter_libs)
+  drift: ^2.14.1
+  sqlite3_flutter_libs: ^0.5.18
+  path_provider: ^2.1.2
+  path: ^1.9.0
+
+  # Authentication (desktop: OAuth2 + url_launcher; mobile: msal_flutter)
+  oauth2: ^2.0.2
+  url_launcher: ^6.2.0
+  msal_flutter: ^2.0.0 # Microsoft Entra ID OAuth2 (Android/iOS)
+
+  # OneDrive Sync
+  http: ^1.2.0
+  dio: ^5.4.0 # HTTP client for OneDrive API
+
+  # UI Components
+  syncfusion_flutter_datagrid: ^24.1.41 # Data grid for tables
+  syncfusion_flutter_core: ^24.1.41
+  pdf: ^3.11.3 # PDF generation
+  printing: ^5.13.0 # PDF printing and sharing
+  intl: ^0.19.0 # Date/number formatting
+
+  # Routing
+  go_router: ^13.0.0 # Navigation
+
+  # Utilities
+  uuid: ^4.3.3 # For change-set IDs
+  json_patch: ^3.0.0 # JSON patch operations
+  equatable: ^2.0.5 # Value equality
+  freezed_annotation: ^2.4.1 # Immutable models (optional)
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  build_runner: ^2.4.8
+  drift_dev: ^2.14.1
+  riverpod_generator: ^2.3.9
+  freezed: ^2.4.7
+  mockito: ^5.4.4
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/images/logo.png
+
+  fonts:
+    - family: Questrial
+      fonts:
+        - asset: assets/fonts/Questrial/Questrial-Regular.ttf
+          weight: 400

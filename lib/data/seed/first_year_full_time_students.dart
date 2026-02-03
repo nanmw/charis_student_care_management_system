@@ -1,0 +1,27 @@
+/// Seed data: 23 first-year full-time students (S/N 5–27 from the original list).
+/// First four students are already in the database.
+const List<({String firstName, String surname})> firstYearFullTimeSeedStudents = [
+  (firstName: 'Dan Kabamba', surname: 'Nsonga'),
+  (firstName: 'Dapo', surname: 'Falodun'),
+  (firstName: 'Darren', surname: 'Gordon'),
+  (firstName: 'Denis', surname: 'Mugoya'),
+  (firstName: 'Ebenezer Frimpong-', surname: 'Manso'),
+  (firstName: 'Esmee', surname: 'Rouvoet'),
+  (firstName: 'Gaylord', surname: 'Tshimpumpu'),
+  (firstName: 'Kelvin Nana', surname: 'Owusu'),
+  (firstName: 'Kira', surname: 'Saunderson'),
+  (firstName: 'Kirstin', surname: 'Zeelie'),
+  (firstName: 'Kiswa', surname: 'Kalondo'),
+  (firstName: 'Midah', surname: 'Maigari'),
+  (firstName: 'Mnotho', surname: 'Ngonyama'),
+  (firstName: 'Mqhele', surname: 'Ngonyama'),
+  (firstName: 'Olalekan', surname: 'Lawal'),
+  (firstName: 'Phyllis', surname: 'Nkirote'),
+  (firstName: 'Richie Jeevan', surname: 'Halanen'),
+  (firstName: 'Sharon', surname: 'Klanisi'),
+  (firstName: 'Sinthemba', surname: 'Mthiyane'),
+  (firstName: 'Themba', surname: 'Calvin'),
+  (firstName: 'Thembelani', surname: 'Mpushe'),
+  (firstName: 'Vijay', surname: 'Devarapalli'),
+  (firstName: 'Yemisi', surname: 'Oluwaseun'),
+];
