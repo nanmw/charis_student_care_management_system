@@ -8,6 +8,7 @@ import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/subject_providers.dart';
+import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:charis_student_care/presentation/widgets/subject_form_dialog.dart';
 
@@ -22,10 +23,24 @@ class SubjectsScreen extends ConsumerStatefulWidget {
 class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
   String _selectedYear = 'Year 1';
   SubjectDataSource? _dataSource;
+  int _displayedCount = 20; // Initial batch size
+  bool _isLoadingMore = false;
+
+  void _loadMore(int total) {
+    if (_isLoadingMore || _displayedCount >= total) return;
+    setState(() {
+      _isLoadingMore = true;
+      _displayedCount += 20; // Load next batch
+      _isLoadingMore = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final themeMode = ref.watch(themeModeProvider);
+    final isDark = themeMode == ThemeMode.dark;
+    final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final subjectsAsync = ref.watch(subjectsForYearStreamProvider(_selectedYear));
 
     return Container(
@@ -53,7 +68,7 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
                   icon: const Icon(Icons.add, size: 20),
                   label: const Text('Add Subject'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primaryActionRed,
+                    backgroundColor: redColor,
                     foregroundColor: AppColors.charisWhite,
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -84,8 +99,14 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
                     ),
                   );
                 }
+                // Reset displayed count if year changed
+                final total = subjects.length;
+                if (_displayedCount > total) {
+                  _displayedCount = total;
+                }
+                final displayedSubjects = subjects.sublist(0, _displayedCount.clamp(0, total));
                 _dataSource ??= SubjectDataSource(
-                  subjects: subjects,
+                  subjects: displayedSubjects,
                   colorScheme: colorScheme,
                   onEdit: (s) => _openEditSubject(context, s),
                   onDelete: (s) => _deleteSubject(context, s),
@@ -94,7 +115,7 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
                   ),
                 );
                 _dataSource!.updateData(
-                  subjects,
+                  displayedSubjects,
                   colorScheme,
                   (
                     (s) => _openEditSubject(context, s),
@@ -104,15 +125,27 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
                     ),
                   ),
                 );
-                return RepaintBoundary(
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: SfDataGrid(
-                      source: _dataSource!,
-                      columnWidthMode: ColumnWidthMode.fill,
-                      gridLinesVisibility: GridLinesVisibility.horizontal,
-                      headerGridLinesVisibility: GridLinesVisibility.both,
-                      columns: [
+                return NotificationListener<ScrollNotification>(
+                  onNotification: (notification) {
+                    if (notification is ScrollUpdateNotification) {
+                      final metrics = notification.metrics;
+                      if (metrics.pixels >= metrics.maxScrollExtent * 0.8 &&
+                          _displayedCount < total &&
+                          !_isLoadingMore) {
+                        _loadMore(total);
+                      }
+                    }
+                    return false;
+                  },
+                  child: RepaintBoundary(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: SfDataGrid(
+                        source: _dataSource!,
+                        columnWidthMode: ColumnWidthMode.fill,
+                        gridLinesVisibility: GridLinesVisibility.horizontal,
+                        headerGridLinesVisibility: GridLinesVisibility.both,
+                        columns: [
                         GridColumn(
                           columnName: 'sn',
                           width: 80,
@@ -167,6 +200,7 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
                       ],
                     ),
                   ),
+                  ),
                 );
               },
               loading: () => const Center(child: CircularProgressIndicator()),
@@ -217,6 +251,7 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
           if (value != null) {
             setState(() {
               _selectedYear = value;
+              _displayedCount = 20; // Reset to initial batch
             });
           }
         },
@@ -276,7 +311,7 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
           FilledButton(
             onPressed: () => Navigator.of(ctx).pop(true),
             style: FilledButton.styleFrom(
-              backgroundColor: AppColors.primaryActionRed,
+              backgroundColor: AppColors.charisRedPrimary,
             ),
             child: const Text('Delete'),
           ),

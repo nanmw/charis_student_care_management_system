@@ -21,7 +21,10 @@ class StudentDetailDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     return Dialog(
+      backgroundColor: isDark ? AppColors.surfaceDarkElevated : AppColors.charisWhite,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420, maxHeight: 560),
@@ -66,9 +69,9 @@ class StudentDetailDialog extends StatelessWidget {
                     _row('Phone', student.contactInfo ?? '—', colorScheme),
                     _row('Email', student.email ?? '—', colorScheme),
                     const SizedBox(height: 8),
-                    _checkboxRow('Handbook', student.handbook, colorScheme),
-                    _checkboxRow('Media Release', student.mediaRelease, colorScheme),
-                    _checkboxRow('Accident Waiver', student.accidentWaiver, colorScheme),
+                    _checkboxRow('Handbook', student.handbook, colorScheme, redColor),
+                    _checkboxRow('Media Release', student.mediaRelease, colorScheme, redColor),
+                    _checkboxRow('Accident Waiver', student.accidentWaiver, colorScheme, redColor),
                     const SizedBox(height: 16),
                     Text(
                       'Placeholder (data coming later)',
@@ -140,7 +143,7 @@ class StudentDetailDialog extends StatelessWidget {
     );
   }
 
-  Widget _checkboxRow(String label, bool value, ColorScheme colorScheme) {
+  Widget _checkboxRow(String label, bool value, ColorScheme colorScheme, Color redColor) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -162,7 +165,7 @@ class StudentDetailDialog extends StatelessWidget {
               children: [
                 Icon(
                   value ? Icons.check_circle : Icons.circle_outlined,
-                  color: value ? AppColors.primaryActionRed : colorScheme.onSurfaceVariant,
+                  color: value ? redColor : colorScheme.onSurfaceVariant,
                   size: 20,
                 ),
                 const SizedBox(width: 8),

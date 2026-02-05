@@ -10,17 +10,28 @@ import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/core/utils/currency_utils.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/payment_repository.dart';
-import 'package:charis_student_care/data/repositories/payment_repository.dart' show PaymentData;
+import 'package:charis_student_care/data/repositories/payment_repository.dart'
+    show PaymentData;
 import 'package:charis_student_care/domain/use_cases/sort_students_alphabetically.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/payment_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 
 /// Month column labels (Jan–Oct for display).
 const List<String> _monthLabels = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct'
 ];
 
 const List<String> _modeOptions = ['Full-time', 'Hybrid'];
@@ -32,12 +43,14 @@ class _PaymentCell extends StatefulWidget {
     required this.controller,
     required this.colorScheme,
     required this.onChanged,
+    required this.isDark,
     this.width = 70,
   });
 
   final TextEditingController controller;
   final ColorScheme colorScheme;
   final void Function(double) onChanged;
+  final bool isDark;
   final double width;
 
   @override
@@ -64,16 +77,15 @@ class _PaymentCellState extends State<_PaymentCell> {
           decoration: InputDecoration(
             hintText: '0',
             hintStyle: TextStyle(
-                color: widget.colorScheme.onSurfaceVariant,
-                fontSize: 13),
+                color: widget.colorScheme.onSurfaceVariant, fontSize: 13),
             border: InputBorder.none,
+            filled: true,
+            fillColor: widget.isDark ? AppColors.surfaceDark : AppColors.charisWhite,
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
             isDense: true,
           ),
-          style: TextStyle(
-              color: widget.colorScheme.onSurface,
-              fontSize: 13),
+          style: TextStyle(color: widget.colorScheme.onSurface, fontSize: 13),
           onChanged: (v) {
             final n = double.tryParse(v);
             if (n != null && n >= 0) {
@@ -117,6 +129,39 @@ class _PaymentDisplayCell extends StatelessWidget {
   }
 }
 
+/// Toggle switch widget for lump sum payment option
+class _LumpSumToggleSwitch extends StatelessWidget {
+  const _LumpSumToggleSwitch({
+    required this.value,
+    required this.isEnabled,
+    required this.colorScheme,
+    required this.redColor,
+    required this.onChanged,
+  });
+
+  final bool value;
+  final bool isEnabled;
+  final ColorScheme colorScheme;
+  final Color redColor;
+  final void Function(bool) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: SizedBox(
+        width: 76,
+        child: Switch(
+          value: value,
+          onChanged: isEnabled ? onChanged : null,
+          activeColor: redColor,
+          inactiveThumbColor: colorScheme.outlineVariant,
+          inactiveTrackColor: colorScheme.outlineVariant.withValues(alpha: 0.3),
+        ),
+      ),
+    );
+  }
+}
+
 /// One row's editable payment state (Jan–Oct + lump sum).
 class _PaymentRowEdit {
   _PaymentRowEdit({
@@ -153,8 +198,17 @@ class _PaymentRowEdit {
 
   double get totalPaid =>
       jan + feb + mar + apr + may + jun + jul + aug + sep + oct + lumpSum;
-  double get balance =>
-      AppConstants.fullTuitionAmount - totalPaid;
+
+  /// Returns true if lump sum is enabled (lumpSum > 0)
+  bool get isLumpSumEnabled => lumpSum > 0;
+
+  /// Returns the tuition amount to use for balance calculation
+  /// Uses discount amount (18,000) if lump sum is enabled, otherwise full amount (19,800)
+  double get _tuitionAmount => isLumpSumEnabled
+      ? AppConstants.lumpSumDiscountAmount
+      : AppConstants.fullTuitionAmount;
+
+  double get balance => _tuitionAmount - totalPaid;
 
   String get totalPaidFormatted {
     final current = totalPaid;
@@ -200,21 +254,22 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   final Map<String, TextEditingController> _controllers = {};
   String _refillKey = '';
   String? _lastPaymentYear;
-  
+
   // Debouncing for text input
   final Map<String, Timer> _debounceTimers = {};
-  
+
   // Memoization for filtered/sorted lists
   List<Student>? _cachedFilteredStudents;
   String _lastFilterKey = '';
-  
+
   // Cached payment map to avoid recreating on every refill
   Map<int, Payment>? _cachedPaymentMap;
   int? _cachedPaymentHash;
-  
-  // Pagination state
-  int _pageSize = 15; // Default 15 rows per page
-  int _currentPage = 0;
+
+  // Infinite scroll state
+  int _displayedCount = 25; // Initial batch size
+  bool _isLoadingMore = false;
+  final ScrollController _scrollController = ScrollController();
 
   // Helper to get current year's edits map (ensures it exists)
   Map<int, _PaymentRowEdit> get _currentYearEdits {
@@ -222,13 +277,21 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
     // Cancel all debounce timers
     for (final timer in _debounceTimers.values) {
       timer.cancel();
     }
     _debounceTimers.clear();
-    
+
     // Dispose all controllers
     for (final c in _controllers.values) {
       c.dispose();
@@ -236,8 +299,25 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     super.dispose();
   }
 
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent * 0.8) {
+      _loadMore();
+    }
+  }
+
+  void _loadMore() {
+    if (_isLoadingMore) return;
+    setState(() {
+      _isLoadingMore = true;
+      _displayedCount += 25; // Load next batch
+      _isLoadingMore = false;
+    });
+  }
+
   // Debounced update method
-  void _debouncedUpdate(String key, void Function() update, {Duration delay = const Duration(milliseconds: 300)}) {
+  void _debouncedUpdate(String key, void Function() update,
+      {Duration delay = const Duration(milliseconds: 300)}) {
     _debounceTimers[key]?.cancel();
     _debounceTimers[key] = Timer(delay, () {
       update();
@@ -248,8 +328,12 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final themeMode = ref.watch(themeModeProvider);
+    final isDark = themeMode == ThemeMode.dark;
+    final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
-    final paymentsAsync = ref.watch(paymentsForYearStreamProvider(_paymentYear));
+    final paymentsAsync =
+        ref.watch(paymentsForYearStreamProvider(_paymentYear));
 
     return RoleGuard(
       canShow: (role) => RolePermissions.canManageFinancials(role),
@@ -313,15 +397,15 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                     const SizedBox(width: 12),
                     ElevatedButton.icon(
                       onPressed: _save,
-                      icon: const Icon(Icons.save, size: 20,
-                          color: AppColors.charisWhite),
+                      icon: const Icon(Icons.save,
+                          size: 20, color: AppColors.charisWhite),
                       label: const Text('Save',
                           style: TextStyle(
                               color: AppColors.charisWhite,
                               fontFamily: 'Questrial',
                               fontWeight: FontWeight.w600)),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primaryActionRed,
+                        backgroundColor: redColor,
                         padding: const EdgeInsets.symmetric(
                             horizontal: 24, vertical: 12),
                         shape: RoundedRectangleBorder(
@@ -333,55 +417,62 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
               ],
             ),
             const SizedBox(height: 16),
-            _buildFiltersRow(colorScheme),
+            _buildFiltersRow(colorScheme, redColor),
             const SizedBox(height: 24),
             Expanded(
               child: studentsAsync.when(
                 data: (allStudents) {
                   // Memoize filtered/sorted list
-                  final filterKey = '$_selectedMode|$_academicYear|$_searchQuery';
-                  if (_cachedFilteredStudents == null || _lastFilterKey != filterKey) {
+                  final filterKey =
+                      '$_selectedMode|$_academicYear|$_searchQuery';
+                  if (_cachedFilteredStudents == null ||
+                      _lastFilterKey != filterKey) {
                     // Optimized: combine filters into single pass to reduce allocations
                     final searchQueryLower = _searchQuery.toLowerCase();
                     final filtered = allStudents.where((s) {
                       // Mode filter
                       if (s.mode != _selectedMode) return false;
                       // Academic year filter
-                      if (_academicYear != null && s.year != _academicYear) return false;
+                      if (_academicYear != null && s.year != _academicYear)
+                        return false;
                       // Search filter
                       if (searchQueryLower.isNotEmpty) {
-                        if (!s.surname.toLowerCase().contains(searchQueryLower) &&
-                            !s.firstName.toLowerCase().contains(searchQueryLower) &&
-                            !(s.email?.toLowerCase().contains(searchQueryLower) ?? false)) {
+                        if (!s.surname
+                                .toLowerCase()
+                                .contains(searchQueryLower) &&
+                            !s.firstName
+                                .toLowerCase()
+                                .contains(searchQueryLower) &&
+                            !(s.email
+                                    ?.toLowerCase()
+                                    .contains(searchQueryLower) ??
+                                false)) {
                           return false;
                         }
                       }
                       return true;
                     }).toList();
-                    _cachedFilteredStudents = sortStudentsAlphabetically(filtered);
+                    _cachedFilteredStudents =
+                        sortStudentsAlphabetically(filtered);
                     _lastFilterKey = filterKey;
                   }
                   final allFilteredStudents = _cachedFilteredStudents!;
-                  
-                  // Apply pagination
+
+                  // Apply infinite scroll - reset displayed count if filters changed
                   final total = allFilteredStudents.length;
-                  final totalPages = total == 0 ? 1 : ((total - 1) / _pageSize).floor() + 1;
-                  
-                  // Handle edge case: if current page exceeds available pages, reset to last valid page
-                  if (_currentPage >= totalPages && totalPages > 0) {
-                    _currentPage = totalPages - 1;
+                  if (_displayedCount > total) {
+                    _displayedCount = total;
                   }
-                  
-                  final start = _currentPage * _pageSize;
-                  final pageStudents = total == 0
+                  final displayedStudents = total == 0
                       ? <Student>[]
-                      : allFilteredStudents.sublist(start, (start + _pageSize).clamp(0, total));
-                  
+                      : allFilteredStudents.sublist(0, _displayedCount.clamp(0, total));
+
                   // Wait for payments to load before initializing edits
                   return paymentsAsync.when(
                     data: (paymentRows) {
-                      // Initialize edits for ALL filtered students, but controllers only for current page
-                      _refillEditsIfNeeded(allFilteredStudents, paymentRows, pageStudents: pageStudents);
+                      // Initialize edits for ALL filtered students, but controllers only for displayed students
+                      _refillEditsIfNeeded(allFilteredStudents, paymentRows,
+                          pageStudents: displayedStudents);
 
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -408,10 +499,22 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                                       ),
                                     ),
                                   )
-                                : _buildTable(
-                                    context, colorScheme, pageStudents),
+                                : NotificationListener<ScrollNotification>(
+                                    onNotification: (notification) {
+                                      if (notification is ScrollUpdateNotification) {
+                                        final metrics = notification.metrics;
+                                        if (metrics.pixels >= metrics.maxScrollExtent * 0.8 &&
+                                            _displayedCount < total &&
+                                            !_isLoadingMore) {
+                                          _loadMore();
+                                        }
+                                      }
+                                      return false;
+                                    },
+                                    child: _buildTable(
+                                        context, colorScheme, redColor, isDark, displayedStudents),
+                                  ),
                           ),
-                          if (allFilteredStudents.isNotEmpty) _buildPagination(total),
                         ],
                       );
                     },
@@ -439,15 +542,25 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     );
   }
 
-  void _refillEditsIfNeeded(
-      List<Student> students, List<Payment> paymentRows, {List<Student>? pageStudents}) {
+  void _refillEditsIfNeeded(List<Student> students, List<Payment> paymentRows,
+      {List<Student>? pageStudents}) {
     // Optimized hash calculation using Object.hashAll instead of string concatenation
-    final paymentHash = paymentRows.isEmpty 
-        ? 0 
+    final paymentHash = paymentRows.isEmpty
+        ? 0
         : Object.hashAll(paymentRows.map((p) => Object.hash(
-            p.studentId, p.jan, p.feb, p.mar, p.apr, p.may, 
-            p.jun, p.jul, p.aug, p.sep, p.oct, p.lumpSum)));
-    
+            p.studentId,
+            p.jan,
+            p.feb,
+            p.mar,
+            p.apr,
+            p.may,
+            p.jun,
+            p.jul,
+            p.aug,
+            p.sep,
+            p.oct,
+            p.lumpSum)));
+
     // Cache payment map if hash hasn't changed
     Map<int, Payment> paymentMap;
     if (_cachedPaymentMap != null && _cachedPaymentHash == paymentHash) {
@@ -457,35 +570,41 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       _cachedPaymentMap = paymentMap;
       _cachedPaymentHash = paymentHash;
     }
-    
+
     // Simplified key generation - use payment count + year + hash
-    final key = '${_paymentYear}_${students.length}_${paymentRows.length}_$paymentHash';
-    final shouldSkipEditRefill = key == _refillKey && _lastPaymentYear == _paymentYear;
-    
+    final key =
+        '${_paymentYear}_${students.length}_${paymentRows.length}_$paymentHash';
+    final shouldSkipEditRefill =
+        key == _refillKey && _lastPaymentYear == _paymentYear;
+
     if (!shouldSkipEditRefill) {
       _refillKey = key;
       _lastPaymentYear = _paymentYear;
     }
-    
+
     // Get current year's edits map
     final edits = _currentYearEdits;
-    
+
     // Determine which students need controllers (paginated students, or all if not paginated)
     final studentsForControllers = pageStudents ?? students;
-    final controllerStudentIds = studentsForControllers.map((s) => s.id).toSet();
-    
+    final controllerStudentIds =
+        studentsForControllers.map((s) => s.id).toSet();
+
     // Clean up controllers for students no longer visible on current page
+    // Also remove any lump sum controllers since we're using a switch now
     for (final k in _controllers.keys.toList()) {
       final studentId = int.tryParse(k.split('_').first);
-      if (studentId == null || !controllerStudentIds.contains(studentId)) {
+      if (studentId == null ||
+          !controllerStudentIds.contains(studentId) ||
+          k.endsWith('_lumpSum')) {
         _controllers[k]?.dispose();
         _controllers.remove(k);
       }
     }
-    
+
     // Track if any changes were made to determine if setState is needed
     bool hasChanges = false;
-    
+
     // Only initialize/update edits if not skipping
     if (!shouldSkipEditRefill) {
       // Initialize or update edits for ALL filtered students (not just paginated)
@@ -522,7 +641,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           final dbSep = p?.sep ?? 0;
           final dbOct = p?.oct ?? 0;
           final dbLumpSum = p?.lumpSum ?? 0;
-          
+
           // Check if current edit matches database (no unsaved changes)
           final hasUnsavedChanges = existing.jan != dbJan ||
               existing.feb != dbFeb ||
@@ -535,7 +654,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
               existing.sep != dbSep ||
               existing.oct != dbOct ||
               existing.lumpSum != dbLumpSum;
-          
+
           if (!hasUnsavedChanges && p != null) {
             // No unsaved changes, update from database
             final updatedEdit = _PaymentRowEdit(
@@ -559,47 +678,50 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         }
       }
     }
-    
+
     // ALWAYS initialize controllers for current page students, even if skipping edit refill
     // This ensures controllers exist when _buildTable accesses them
     for (final s in studentsForControllers) {
       final edit = edits[s.id] ?? _PaymentRowEdit();
-      
+
       // Initialize controllers if needed and update text only if changed
       for (var i = 0; i < _monthLabels.length; i++) {
         final field = _monthLabels[i].toLowerCase();
         final ctrlKey = '${s.id}_$field';
         final controller = _controllers[ctrlKey] ??= TextEditingController();
-        
+
         final val = [
-          edit.jan, edit.feb, edit.mar, edit.apr, edit.may,
-          edit.jun, edit.jul, edit.aug, edit.sep, edit.oct,
+          edit.jan,
+          edit.feb,
+          edit.mar,
+          edit.apr,
+          edit.may,
+          edit.jun,
+          edit.jul,
+          edit.aug,
+          edit.sep,
+          edit.oct,
         ][i];
         final newText = val == 0 ? '' : val.toStringAsFixed(0);
-        
+
         // Only update if text actually changed to avoid cursor jumping
         if (controller.text != newText) {
           controller.text = newText;
           hasChanges = true;
         }
       }
-      
-      final lumpKey = '${s.id}_lumpSum';
-      final lumpController = _controllers[lumpKey] ??= TextEditingController();
-      final lumpText = edit.lumpSum == 0 ? '' : edit.lumpSum.toStringAsFixed(0);
-      if (lumpController.text != lumpText) {
-        lumpController.text = lumpText;
-        hasChanges = true;
-      }
+
+      // Note: Lump sum no longer uses a text controller since we're using a switch
+      // The switch state is derived directly from edit.lumpSum value
     }
-    
+
     // Only call setState if changes were actually made
     if (hasChanges && mounted) {
       setState(() {});
     }
   }
 
-  Widget _buildFiltersRow(ColorScheme colorScheme) {
+  Widget _buildFiltersRow(ColorScheme colorScheme, Color redColor) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -609,7 +731,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                 fontSize: 14,
                 fontFamily: 'Questrial')),
         const SizedBox(width: 8),
-        _buildModeToggle(colorScheme),
+        _buildModeToggle(colorScheme, redColor),
         const SizedBox(width: 24),
         Text('Academic Year:',
             style: TextStyle(
@@ -635,15 +757,15 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                 if (mounted) {
                   setState(() {
                     _searchQuery = v;
-                    _currentPage = 0; // Reset to first page
+                    _displayedCount = 25; // Reset to initial batch
                   });
                 }
               });
             },
             decoration: InputDecoration(
               hintText: 'Search students...',
-              hintStyle: TextStyle(
-                  color: colorScheme.onSurfaceVariant, fontSize: 14),
+              hintStyle:
+                  TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
               prefixIcon: Icon(Icons.search,
                   color: colorScheme.onSurfaceVariant, size: 22),
               filled: true,
@@ -661,11 +783,11 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     );
   }
 
-  Widget _buildModeToggle(ColorScheme colorScheme) {
+  Widget _buildModeToggle(ColorScheme colorScheme, Color redColor) {
     return ToggleButtons(
       constraints: const BoxConstraints(minWidth: 90, minHeight: 44),
       borderRadius: BorderRadius.circular(8),
-      fillColor: AppColors.primaryActionRed,
+      fillColor: redColor,
       selectedColor: AppColors.charisWhite,
       color: colorScheme.onSurface,
       isSelected: _modeOptions.map((m) => m == _selectedMode).toList(),
@@ -673,12 +795,12 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         setState(() {
           _selectedMode = _modeOptions[index];
           _cachedFilteredStudents = null; // Invalidate cache
-          _currentPage = 0; // Reset to first page
+          _displayedCount = 25; // Reset to initial batch
         });
       },
       children: _modeOptions
-          .map((l) =>
-              Text(l, style: const TextStyle(fontFamily: 'Questrial', fontSize: 14)))
+          .map((l) => Text(l,
+              style: const TextStyle(fontFamily: 'Questrial', fontSize: 14)))
           .toList(),
     );
   }
@@ -697,8 +819,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         child: DropdownButton<String?>(
           value: _academicYear,
           hint: Text('All',
-              style: TextStyle(
-                  color: colorScheme.onSurfaceVariant, fontSize: 14)),
+              style:
+                  TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14)),
           isExpanded: true,
           underline: const SizedBox.shrink(),
           borderRadius: BorderRadius.circular(8),
@@ -714,7 +836,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
             setState(() {
               _academicYear = v;
               _cachedFilteredStudents = null; // Invalidate cache
-              _currentPage = 0; // Reset to first page
+              _displayedCount = 25; // Reset to initial batch
             });
           },
         ),
@@ -751,7 +873,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
               setState(() {
                 _paymentYear = v;
                 _cachedFilteredStudents = null; // Invalidate cache
-                _currentPage = 0; // Reset to first page
+                _displayedCount = 25; // Reset to initial batch
               });
             }
           },
@@ -760,24 +882,37 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     );
   }
 
+  /// Helper method to check if student has any monthly payments
+  bool _hasMonthlyPayments(_PaymentRowEdit edit) {
+    return edit.jan > 0 ||
+        edit.feb > 0 ||
+        edit.mar > 0 ||
+        edit.apr > 0 ||
+        edit.may > 0 ||
+        edit.jun > 0 ||
+        edit.jul > 0 ||
+        edit.aug > 0 ||
+        edit.sep > 0 ||
+        edit.oct > 0;
+  }
+
   Widget _buildTable(
-      BuildContext context, ColorScheme colorScheme, List<Student> students) {
+      BuildContext context, ColorScheme colorScheme, Color redColor, bool isDark, List<Student> students) {
     final edits = _currentYearEdits;
-    
+
     return LayoutBuilder(
       builder: (context, constraints) {
         return RepaintBoundary(
           child: SingleChildScrollView(
+            controller: _scrollController,
             scrollDirection: Axis.vertical,
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Table(
                 columnWidths: {
                   0: const FixedColumnWidth(160),
-                  ...Map.fromEntries(List.generate(
-                      _monthLabels.length,
-                      (i) => MapEntry(
-                          i + 1, const FixedColumnWidth(72)))),
+                  ...Map.fromEntries(List.generate(_monthLabels.length,
+                      (i) => MapEntry(i + 1, const FixedColumnWidth(72)))),
                   _monthLabels.length + 1: const FixedColumnWidth(80),
                   _monthLabels.length + 2: const FixedColumnWidth(100),
                   _monthLabels.length + 3: const FixedColumnWidth(110),
@@ -824,31 +959,57 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                           final ctrlKey = '${student.id}_$field';
                           // Controllers are initialized in _refillEditsIfNeeded
                           // Use null-safe access with fallback to prevent crashes (shouldn't happen, but safety measure)
-                          final controller = _controllers[ctrlKey] ??= TextEditingController();
-                          
+                          final controller =
+                              _controllers[ctrlKey] ??= TextEditingController();
+
                           return _cell(
                               context,
                               colorScheme,
                               _PaymentCell(
                                 controller: controller,
                                 colorScheme: colorScheme,
+                                isDark: isDark,
                                 onChanged: (n) {
                                   if (mounted) {
                                     setState(() {
-                                      final e = edits[student.id] ??= 
+                                      final e = edits[student.id] ??=
                                           _PaymentRowEdit();
                                       e.invalidateCache();
                                       switch (i) {
-                                        case 0: e.jan = n; break;
-                                        case 1: e.feb = n; break;
-                                        case 2: e.mar = n; break;
-                                        case 3: e.apr = n; break;
-                                        case 4: e.may = n; break;
-                                        case 5: e.jun = n; break;
-                                        case 6: e.jul = n; break;
-                                        case 7: e.aug = n; break;
-                                        case 8: e.sep = n; break;
-                                        case 9: e.oct = n; break;
+                                        case 0:
+                                          e.jan = n;
+                                          break;
+                                        case 1:
+                                          e.feb = n;
+                                          break;
+                                        case 2:
+                                          e.mar = n;
+                                          break;
+                                        case 3:
+                                          e.apr = n;
+                                          break;
+                                        case 4:
+                                          e.may = n;
+                                          break;
+                                        case 5:
+                                          e.jun = n;
+                                          break;
+                                        case 6:
+                                          e.jul = n;
+                                          break;
+                                        case 7:
+                                          e.aug = n;
+                                          break;
+                                        case 8:
+                                          e.sep = n;
+                                          break;
+                                        case 9:
+                                          e.oct = n;
+                                          break;
+                                      }
+                                      // If monthly payment is entered and lump sum is enabled, clear lump sum
+                                      if (n > 0 && e.lumpSum > 0) {
+                                        e.lumpSum = 0;
                                       }
                                     });
                                   }
@@ -858,17 +1019,20 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                         _cell(
                             context,
                             colorScheme,
-                            _PaymentCell(
-                              controller: _controllers['${student.id}_lumpSum'] ??= TextEditingController(),
+                            _LumpSumToggleSwitch(
+                              redColor: redColor,
+                              value: edit.lumpSum > 0,
+                              isEnabled: !_hasMonthlyPayments(edit),
                               colorScheme: colorScheme,
-                              width: 76,
-                              onChanged: (n) {
+                              onChanged: (value) {
                                 if (mounted) {
                                   setState(() {
-                                    final e = edits[student.id] ??= 
-                                        _PaymentRowEdit();
+                                    final e =
+                                        edits[student.id] ??= _PaymentRowEdit();
                                     e.invalidateCache();
-                                    e.lumpSum = n;
+                                    e.lumpSum = value
+                                        ? AppConstants.lumpSumDiscountAmount
+                                        : 0.0;
                                   });
                                 }
                               },
@@ -921,75 +1085,20 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     );
   }
 
-  Widget _cell(
-      BuildContext context, ColorScheme colorScheme, Widget child) {
+  Widget _cell(BuildContext context, ColorScheme colorScheme, Widget child) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: child,
     );
   }
 
-  Widget _buildPagination(int totalFiltered) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final totalPages = totalFiltered == 0 ? 1 : ((totalFiltered - 1) / _pageSize).floor() + 1;
-    final start = _currentPage * _pageSize;
-    final end = (start + _pageSize).clamp(0, totalFiltered);
-    final showing = totalFiltered == 0 ? 0 : end - start;
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            'Showing $showing of $totalFiltered students',
-            style: TextStyle(
-              color: colorScheme.onSurfaceVariant,
-              fontSize: 14,
-              fontFamily: 'Questrial',
-            ),
-          ),
-          Row(
-            children: [
-              IconButton(
-                onPressed: _currentPage > 0
-                    ? () => setState(() => _currentPage--)
-                    : null,
-                icon: Icon(Icons.chevron_left, color: colorScheme.onSurface),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: AppColors.primaryActionRed,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  '${_currentPage + 1}',
-                  style: const TextStyle(
-                    color: AppColors.charisWhite,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                  ),
-                ),
-              ),
-              IconButton(
-                onPressed: _currentPage < totalPages - 1
-                    ? () => setState(() => _currentPage++)
-                    : null,
-                icon: Icon(Icons.chevron_right, color: colorScheme.onSurface),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 
   Future<void> _save() async {
     try {
       final repo = ref.read(paymentRepositoryProvider);
-      final edits = _currentYearEdits; // Use the helper to get current year's edits
-      
+      final edits =
+          _currentYearEdits; // Use the helper to get current year's edits
+
       if (edits.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -997,19 +1106,20 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         }
         return;
       }
-      
+
       // Get current payment rows from database for comparison
-      final currentPaymentRows = await repo.watchPaymentsForYear(_paymentYear).first;
+      final currentPaymentRows =
+          await repo.watchPaymentsForYear(_paymentYear).first;
       final paymentMap = {for (final p in currentPaymentRows) p.studentId: p};
-      
+
       // Convert only changed edits to PaymentData map for batch operation
       final paymentDataMap = <int, PaymentData>{};
-      
+
       for (final entry in edits.entries) {
         final studentId = entry.key;
         final edit = entry.value;
         final dbPayment = paymentMap[studentId];
-        
+
         // Compare edit with database value to detect changes
         final dbJan = dbPayment?.jan ?? 0;
         final dbFeb = dbPayment?.feb ?? 0;
@@ -1022,7 +1132,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         final dbSep = dbPayment?.sep ?? 0;
         final dbOct = dbPayment?.oct ?? 0;
         final dbLumpSum = dbPayment?.lumpSum ?? 0;
-        
+
         // Check if any value has changed
         final hasChanges = edit.jan != dbJan ||
             edit.feb != dbFeb ||
@@ -1035,7 +1145,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
             edit.sep != dbSep ||
             edit.oct != dbOct ||
             edit.lumpSum != dbLumpSum;
-        
+
         // Only include records that have actually changed
         if (hasChanges) {
           paymentDataMap[studentId] = PaymentData(
@@ -1055,7 +1165,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           );
         }
       }
-      
+
       if (paymentDataMap.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -1063,26 +1173,27 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         }
         return;
       }
-      
+
       // Get userId for change set logging
       final auth = ref.read(authStateProvider).valueOrNull;
       final userId = auth is Authenticated ? auth.user.id : null;
-      
+
       // Use batch upsert for much better performance
       final savedCount = await repo.batchUpsertPayments(
         year: _paymentYear,
         payments: paymentDataMap,
         userId: userId,
       );
-      
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Successfully saved $savedCount payment record(s).')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:
+                Text('Successfully saved $savedCount payment record(s).')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error saving payments: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Error saving payments: $e')));
       }
     }
   }
@@ -1098,11 +1209,11 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     ];
     rows.add(header.join(','));
     final edits = _currentYearEdits; // Use current year's edits
-    
+
     // Optimized: use cached filtered students instead of re-reading from provider
     final students = _cachedFilteredStudents ?? [];
     final studentMap = {for (final s in students) s.id: s};
-    
+
     for (final entry in edits.entries) {
       final studentId = entry.key;
       final edit = entry.value;
@@ -1131,9 +1242,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     if (mounted) {
       Clipboard.setData(ClipboardData(text: csv));
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(
-                'Exported ${edits.length} rows to clipboard.')),
+        SnackBar(content: Text('Exported ${edits.length} rows to clipboard.')),
       );
     }
   }

@@ -15,8 +15,14 @@ class Tests extends Table {
   /// Optional label (e.g. "Quiz 1")
   TextColumn get label => text().nullable()();
 
+  /// Subject id (references subjects.id)
+  IntColumn get subjectId => integer().nullable()();
+
   /// When the test was recorded
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+
+  /// When the test was last updated (null for tests that haven't been updated)
+  DateTimeColumn get updatedAt => dateTime().nullable()();
 
   @override
   Set<Column> get primaryKey => {id};

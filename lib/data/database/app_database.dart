@@ -14,7 +14,8 @@ import 'tables/subjects.dart';
 part 'app_database.g.dart';
 
 /// Main database class (plain SQLite; encryption can be re-added later with platform-specific setup)
-@DriftDatabase(tables: [Students, ChangeSets, Attendance, Tests, Payments, Subjects])
+@DriftDatabase(
+    tables: [Students, ChangeSets, Attendance, Tests, Payments, Subjects])
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
@@ -23,7 +24,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.test() : super(_openTestConnection());
 
   @override
-  int get schemaVersion => 12;
+  int get schemaVersion => 14;
 
   @override
   MigrationStrategy get migration {
@@ -32,18 +33,23 @@ class AppDatabase extends _$AppDatabase {
         await m.createAll();
         // Create indexes for efficient queries
         await customStatement(
-            'CREATE INDEX IF NOT EXISTS idx_students_surname ON students(surname)',);
+          'CREATE INDEX IF NOT EXISTS idx_students_surname ON students(surname)',
+        );
         await customStatement(
-            'CREATE INDEX IF NOT EXISTS idx_students_status ON students(status)',);
+          'CREATE INDEX IF NOT EXISTS idx_students_status ON students(status)',
+        );
         await customStatement(
-            'CREATE INDEX IF NOT EXISTS idx_changesets_table_record ON change_sets("table", record_id)',);
+          'CREATE INDEX IF NOT EXISTS idx_changesets_table_record ON change_sets("table", record_id)',
+        );
         await customStatement(
-            'CREATE INDEX IF NOT EXISTS idx_changesets_timestamp ON change_sets(timestamp)',);
+          'CREATE INDEX IF NOT EXISTS idx_changesets_timestamp ON change_sets(timestamp)',
+        );
         await customStatement(
-            'CREATE INDEX IF NOT EXISTS idx_changesets_user_id ON change_sets(user_id)',);
+          'CREATE INDEX IF NOT EXISTS idx_changesets_user_id ON change_sets(user_id)',
+        );
         await customStatement(
             'CREATE INDEX IF NOT EXISTS idx_subjects_year ON subjects(year)');
-        
+
         // Seed first-year subjects
         final firstYearSubjects = [
           'A Sure Foundation',
@@ -91,14 +97,14 @@ class AppDatabase extends _$AppDatabase {
           'Rehearsal',
           'Graduation',
         ];
-        
+
         for (final subjectName in firstYearSubjects) {
           final escapedName = subjectName.replaceAll("'", "''");
           await customStatement('''
             INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 1')
           ''');
         }
-        
+
         // Seed second-year subjects
         final secondYearSubjects = [
           'How To Get Along With People',
@@ -144,14 +150,14 @@ class AppDatabase extends _$AppDatabase {
           'Rehearsal',
           'Graduation',
         ];
-        
+
         for (final subjectName in secondYearSubjects) {
           final escapedName = subjectName.replaceAll("'", "''");
           await customStatement('''
             INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 2')
           ''');
         }
-        
+
         // Seed third-year subjects
         final thirdYearSubjects = [
           'Vision Development Intro',
@@ -187,7 +193,7 @@ class AppDatabase extends _$AppDatabase {
           'Rehearsal',
           'Graduation',
         ];
-        
+
         for (final subjectName in thirdYearSubjects) {
           final escapedName = subjectName.replaceAll("'", "''");
           await customStatement('''
@@ -198,7 +204,8 @@ class AppDatabase extends _$AppDatabase {
       onUpgrade: (Migrator m, int from, int to) async {
         // #region agent log
         try {
-          final logFile = File(r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log');
+          final logFile = File(
+              r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log');
           final entry = jsonEncode({
             'id': 'log_${DateTime.now().millisecondsSinceEpoch}',
             'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -215,7 +222,8 @@ class AppDatabase extends _$AppDatabase {
         if (from < 2) {
           await customStatement('ALTER TABLE students ADD COLUMN year TEXT');
           await customStatement('ALTER TABLE students ADD COLUMN mode TEXT');
-          await customStatement('ALTER TABLE students ADD COLUMN contact_info TEXT');
+          await customStatement(
+              'ALTER TABLE students ADD COLUMN contact_info TEXT');
           await customStatement('ALTER TABLE students ADD COLUMN email TEXT');
         }
         if (from < 3) {
@@ -226,7 +234,8 @@ class AppDatabase extends _$AppDatabase {
               "UPDATE students SET mode = 'Hybrid' WHERE mode = 'Part-time' OR mode = 'Correspondence'");
         }
         if (from < 5) {
-          await customStatement('ALTER TABLE students ADD COLUMN admission_year TEXT');
+          await customStatement(
+              'ALTER TABLE students ADD COLUMN admission_year TEXT');
         }
         if (from < 6) {
           await customStatement('''
@@ -254,9 +263,12 @@ class AppDatabase extends _$AppDatabase {
               "UPDATE students SET admission_year = '2024' WHERE year = 'Year 3' AND admission_year IS NULL");
         }
         if (from < 8) {
-          await customStatement('ALTER TABLE students ADD COLUMN handbook INTEGER DEFAULT 0');
-          await customStatement('ALTER TABLE students ADD COLUMN media_release INTEGER DEFAULT 0');
-          await customStatement('ALTER TABLE students ADD COLUMN accident_waiver INTEGER DEFAULT 0');
+          await customStatement(
+              'ALTER TABLE students ADD COLUMN handbook INTEGER DEFAULT 0');
+          await customStatement(
+              'ALTER TABLE students ADD COLUMN media_release INTEGER DEFAULT 0');
+          await customStatement(
+              'ALTER TABLE students ADD COLUMN accident_waiver INTEGER DEFAULT 0');
         }
         if (from < 4) {
           await customStatement('''
@@ -276,7 +288,8 @@ class AppDatabase extends _$AppDatabase {
         if (from < 9) {
           // #region agent log
           try {
-            final logFile = File(r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log');
+            final logFile = File(
+                r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log');
             final entry = jsonEncode({
               'id': 'log_${DateTime.now().millisecondsSinceEpoch}',
               'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -308,12 +321,14 @@ class AppDatabase extends _$AppDatabase {
             SELECT id, date, student_id, present, notes FROM attendance
           ''');
           await customStatement('DROP TABLE attendance');
-          await customStatement('ALTER TABLE attendance_new RENAME TO attendance');
+          await customStatement(
+              'ALTER TABLE attendance_new RENAME TO attendance');
           await customStatement(
               'CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_date_student ON attendance(date, student_id)');
           // #region agent log
           try {
-            final logFile = File(r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log');
+            final logFile = File(
+                r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log');
             final entry = jsonEncode({
               'id': 'log_${DateTime.now().millisecondsSinceEpoch}',
               'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -366,7 +381,7 @@ class AppDatabase extends _$AppDatabase {
           ''');
           await customStatement(
               'CREATE INDEX IF NOT EXISTS idx_subjects_year ON subjects(year)');
-          
+
           // Seed first-year subjects
           final firstYearSubjects = [
             'A Sure Foundation',
@@ -414,7 +429,7 @@ class AppDatabase extends _$AppDatabase {
             'Rehearsal',
             'Graduation',
           ];
-          
+
           // Insert subjects using batch insert for efficiency
           for (final subjectName in firstYearSubjects) {
             // Escape single quotes in subject names for SQL
@@ -423,7 +438,7 @@ class AppDatabase extends _$AppDatabase {
               INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 1')
             ''');
           }
-          
+
           // Seed second-year subjects
           final secondYearSubjects = [
             'How To Get Along With People',
@@ -469,7 +484,7 @@ class AppDatabase extends _$AppDatabase {
             'Rehearsal',
             'Graduation',
           ];
-          
+
           // Insert Year 2 subjects
           for (final subjectName in secondYearSubjects) {
             // Escape single quotes in subject names for SQL
@@ -478,7 +493,7 @@ class AppDatabase extends _$AppDatabase {
               INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 2')
             ''');
           }
-          
+
           // Seed third-year subjects
           final thirdYearSubjects = [
             'Vision Development Intro',
@@ -514,7 +529,7 @@ class AppDatabase extends _$AppDatabase {
             'Rehearsal',
             'Graduation',
           ];
-          
+
           // Insert Year 3 subjects
           for (final subjectName in thirdYearSubjects) {
             // Escape single quotes in subject names for SQL
@@ -570,7 +585,7 @@ class AppDatabase extends _$AppDatabase {
             'Rehearsal',
             'Graduation',
           ];
-          
+
           // Insert Year 2 subjects
           for (final subjectName in secondYearSubjects) {
             final escapedName = subjectName.replaceAll("'", "''");
@@ -578,7 +593,7 @@ class AppDatabase extends _$AppDatabase {
               INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 2')
             ''');
           }
-          
+
           // Seed third-year subjects
           final thirdYearSubjects = [
             'Vision Development Intro',
@@ -614,7 +629,7 @@ class AppDatabase extends _$AppDatabase {
             'Rehearsal',
             'Graduation',
           ];
-          
+
           // Insert Year 3 subjects
           for (final subjectName in thirdYearSubjects) {
             final escapedName = subjectName.replaceAll("'", "''");
@@ -622,6 +637,44 @@ class AppDatabase extends _$AppDatabase {
               INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 3')
             ''');
           }
+        }
+        if (from < 13) {
+          // Update change_sets table to support DELETE operation
+          // SQLite doesn't support modifying CHECK constraints directly, so we recreate the table
+          await customStatement('''
+            CREATE TABLE change_sets_new (
+              id TEXT NOT NULL PRIMARY KEY,
+              "table" TEXT NOT NULL,
+              record_id TEXT NOT NULL,
+              operation TEXT NOT NULL CHECK(operation IN ('INSERT', 'UPDATE', 'STATUS_CHANGE', 'DELETE')),
+              payload TEXT NOT NULL,
+              timestamp INTEGER NOT NULL DEFAULT (strftime('%s', 'now')),
+              user_id TEXT NOT NULL,
+              version INTEGER NOT NULL
+            )
+          ''');
+          await customStatement('''
+            INSERT INTO change_sets_new (id, "table", record_id, operation, payload, timestamp, user_id, version)
+            SELECT id, "table", record_id, operation, payload, timestamp, user_id, version FROM change_sets
+          ''');
+          await customStatement('DROP TABLE change_sets');
+          await customStatement(
+              'ALTER TABLE change_sets_new RENAME TO change_sets');
+          // Recreate indexes
+          await customStatement(
+              'CREATE INDEX IF NOT EXISTS idx_changesets_table_record ON change_sets("table", record_id)');
+          await customStatement(
+              'CREATE INDEX IF NOT EXISTS idx_changesets_timestamp ON change_sets(timestamp)');
+          await customStatement(
+              'CREATE INDEX IF NOT EXISTS idx_changesets_user_id ON change_sets(user_id)');
+        }
+        if (from < 14) {
+          await customStatement('ALTER TABLE tests ADD COLUMN subject_id INTEGER');
+          await customStatement('CREATE INDEX IF NOT EXISTS idx_tests_subject_id ON tests(subject_id)');
+        }
+        if (from < 15) {
+          await customStatement('ALTER TABLE tests ADD COLUMN updated_at INTEGER');
+          await customStatement('CREATE INDEX IF NOT EXISTS idx_tests_updated_at ON tests(updated_at)');
         }
       },
     );

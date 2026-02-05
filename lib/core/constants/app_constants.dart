@@ -4,6 +4,7 @@ class AppConstants {
 
   // Tuition
   static const double fullTuitionAmount = 19800.0; // Rand
+  static const double lumpSumDiscountAmount = 18000.0; // Rand
 
   // Test passing score
   static const int passingTestScore = 70;

@@ -12,7 +12,7 @@ class Students extends Table {
   /// Student first name
   TextColumn get firstName => text()();
 
-  /// Student status: Active, Withdrawn, or Transferred
+  /// Student status: Active, Withdrawn, Transferred, or Correspondence
   /// Defaults to 'Active'
   TextColumn get status => text().withDefault(const Constant('Active'))();
 
@@ -38,7 +38,8 @@ class Students extends Table {
   BoolColumn get mediaRelease => boolean().withDefault(const Constant(false))();
 
   /// Accident waiver checkbox status
-  BoolColumn get accidentWaiver => boolean().withDefault(const Constant(false))();
+  BoolColumn get accidentWaiver =>
+      boolean().withDefault(const Constant(false))();
 
   /// Timestamp when record was created
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
@@ -59,6 +60,6 @@ class Students extends Table {
   @override
   List<String> get customConstraints => [
         // Ensure status is one of the valid values
-        "CHECK(status IN ('Active', 'Withdrawn', 'Transferred'))",
+        "CHECK(status IN ('Active', 'Withdrawn', 'Transferred', 'Correspondence'))",
       ];
 }

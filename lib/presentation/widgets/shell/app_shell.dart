@@ -40,7 +40,7 @@ class AppShell extends ConsumerWidget {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _buildSidebar(context),
+                _buildSidebar(context, ref),
                 Expanded(child: child),
               ],
             ),
@@ -55,20 +55,25 @@ class AppShell extends ConsumerWidget {
     final colorScheme = Theme.of(context).colorScheme;
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
+    final headerBgColor = isDark ? colorScheme.surfaceContainerHighest : AppColors.charisRedPrimary;
+    final headerTextColor = isDark ? colorScheme.onSurface : AppColors.charisWhite;
+    final headerTitleColor = isDark ? AppColors.primaryActionRed : AppColors.charisWhite;
+    final headerRoleColor = isDark ? colorScheme.onSurfaceVariant : AppColors.charisWhite.withOpacity(0.8);
+    
     return Container(
       height: 56,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
+        color: headerBgColor,
       ),
       child: Row(
         children: [
-          _buildLogo(context),
+          _buildLogo(context, isDark),
           const SizedBox(width: 12),
           Text(
             'Charis Student Care',
             style: TextStyle(
-              color: AppColors.primaryActionRed,
+              color: headerTitleColor,
               fontWeight: FontWeight.w700,
               fontSize: 16,
               fontFamily: 'Questrial',
@@ -78,13 +83,13 @@ class AppShell extends ConsumerWidget {
           IconButton(
             onPressed: () => ref.read(themeModeProvider.notifier).toggle(),
             icon: Icon(isDark ? Icons.light_mode : Icons.dark_mode),
-            color: colorScheme.onSurface,
+            color: headerTextColor,
             tooltip: isDark ? 'Switch to light mode' : 'Switch to dark mode',
           ),
           const SizedBox(width: 8),
           _buildSyncedPill(context),
           const SizedBox(width: 16),
-          Icon(Icons.person_outline, color: colorScheme.onSurface, size: 24),
+          Icon(Icons.person_outline, color: headerTextColor, size: 24),
           const SizedBox(width: 8),
           Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -93,7 +98,7 @@ class AppShell extends ConsumerWidget {
               Text(
                 displayName,
                 style: TextStyle(
-                  color: colorScheme.onSurface,
+                  color: headerTextColor,
                   fontWeight: FontWeight.w600,
                   fontSize: 14,
                   fontFamily: 'Questrial',
@@ -103,7 +108,7 @@ class AppShell extends ConsumerWidget {
                 Text(
                   roleLabel,
                   style: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
+                    color: headerRoleColor,
                     fontSize: 12,
                     fontFamily: 'Questrial',
                   ),
@@ -115,17 +120,21 @@ class AppShell extends ConsumerWidget {
     );
   }
 
-  Widget _buildLogo(BuildContext context) {
+  Widget _buildLogo(BuildContext context, bool isDark) {
+    final logoPath = isDark 
+        ? 'assets/images/logo_dark.png'
+        : 'assets/images/logo_light.png';
+    
     return ClipRRect(
       borderRadius: BorderRadius.circular(6),
       child: Image.asset(
-        'assets/images/logo.png',
+        logoPath,
         width: 36,
         height: 36,
         fit: BoxFit.contain,
         errorBuilder: (_, __, ___) => Icon(
           Icons.school,
-          color: AppColors.primaryActionRed,
+          color: isDark ? AppColors.primaryActionRed : AppColors.charisWhite,
           size: 32,
         ),
       ),
@@ -151,25 +160,29 @@ class AppShell extends ConsumerWidget {
     );
   }
 
-  Widget _buildSidebar(BuildContext context) {
+  Widget _buildSidebar(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
+    final themeMode = ref.watch(themeModeProvider);
+    final isDark = themeMode == ThemeMode.dark;
+    final sidebarBgColor = isDark ? colorScheme.surfaceContainerHighest : AppColors.charisRedPrimary;
+    
     return Container(
       width: 200,
       padding: const EdgeInsets.symmetric(vertical: 12),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
+        color: sidebarBgColor,
       ),
       child: Column(
         children: [
-          _navItem(context, Icons.dashboard_outlined, Icons.dashboard, 'Dashboard', '/dashboard'),
-          _navItem(context, Icons.people_outline, Icons.people, 'Students', '/students'),
-          _navItem(context, Icons.book_outlined, Icons.book, 'Subjects', '/subjects'),
-          _navItem(context, Icons.checklist_outlined, Icons.checklist, 'Attendance', '/attendance'),
-          _navItem(context, Icons.hourglass_empty_outlined, Icons.hourglass_empty, 'Ministry Hours', '/ministry-hours'),
-          _navItem(context, Icons.assignment_outlined, Icons.assignment, 'Tests', '/tests'),
-          _navItem(context, Icons.credit_card_outlined, Icons.credit_card, 'Payments', '/payments'),
-          _navItem(context, Icons.public_outlined, Icons.public, 'Missions', '/missions'),
-          _navItem(context, Icons.download_outlined, Icons.download, 'Reports / Export', '/reports'),
+          _navItem(context, ref, Icons.dashboard_outlined, Icons.dashboard, 'Dashboard', '/dashboard'),
+          _navItem(context, ref, Icons.people_outline, Icons.people, 'Students', '/students'),
+          _navItem(context, ref, Icons.book_outlined, Icons.book, 'Subjects', '/subjects'),
+          _navItem(context, ref, Icons.checklist_outlined, Icons.checklist, 'Attendance', '/attendance'),
+          _navItem(context, ref, Icons.hourglass_empty_outlined, Icons.hourglass_empty, 'Ministry Hours', '/ministry-hours'),
+          _navItem(context, ref, Icons.assignment_outlined, Icons.assignment, 'Tests', '/tests'),
+          _navItem(context, ref, Icons.credit_card_outlined, Icons.credit_card, 'Payments', '/payments'),
+          _navItem(context, ref, Icons.public_outlined, Icons.public, 'Missions', '/missions'),
+          _navItem(context, ref, Icons.download_outlined, Icons.download, 'Reports / Export', '/reports'),
         ],
       ),
     );
@@ -177,14 +190,24 @@ class AppShell extends ConsumerWidget {
 
   Widget _navItem(
     BuildContext context,
+    WidgetRef ref,
     IconData iconOutlined,
     IconData iconFilled,
     String label,
     String path,
   ) {
     final colorScheme = Theme.of(context).colorScheme;
+    final themeMode = ref.watch(themeModeProvider);
+    final isDark = themeMode == ThemeMode.dark;
     final selected = GoRouterState.of(context).matchedLocation == path;
-    final textColor = selected ? AppColors.primaryActionRed : colorScheme.onSurface;
+    
+    final textColor = isDark
+        ? (selected ? AppColors.primaryActionRed : colorScheme.onSurface)
+        : AppColors.charisWhite;
+    final borderColor = isDark
+        ? AppColors.primaryActionRed
+        : AppColors.charisWhite;
+    
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: Material(
@@ -196,9 +219,9 @@ class AppShell extends ConsumerWidget {
           child: Container(
             decoration: BoxDecoration(
               border: selected
-                  ? const Border(
+                  ? Border(
                       left: BorderSide(
-                        color: AppColors.primaryActionRed,
+                        color: borderColor,
                         width: 3,
                       ),
                     )

@@ -30,4 +30,10 @@ class AppColors {
 
   /// Light red background for Withdrawn status (e.g. in students list).
   static const Color withdrawnStatusBackground = Color(0x1ACC3B3B);
+
+  /// Green color for Correspondence status border and text.
+  static const Color correspondenceStatusGreen = Color(0xFF2E7D32);
+
+  /// Light green background for Correspondence status (e.g. in students list).
+  static const Color correspondenceStatusBackground = Color(0x1A2E7D32);
 }

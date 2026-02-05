@@ -210,6 +210,64 @@ class StudentRepository {
     }
   }
 
+  /// Bulk updates handbook field to true for multiple students.
+  /// Only updates students where handbook is currently false.
+  /// Requires [userRole] with canManageStudents; throws otherwise.
+  /// [userId] used for change-set if provided.
+  /// Returns the count of students updated.
+  Future<int> bulkUpdateHandbook({
+    required List<int> studentIds,
+    required UserRole userRole,
+    String? userId,
+  }) async {
+    if (!RolePermissions.canManageStudents(userRole)) {
+      throw StateError('Role cannot manage students');
+    }
+    if (studentIds.isEmpty) return 0;
+
+    // Fetch all students that need updating (where handbook=false)
+    final studentsToUpdate = await (_db.select(_db.students)
+          ..where((t) => t.id.isIn(studentIds) & t.handbook.equals(false)))
+        .get();
+
+    if (studentsToUpdate.isEmpty) return 0;
+
+    // Use a transaction to batch all operations
+    return await _db.transaction(() async {
+      int count = 0;
+      final now = DateTime.now();
+
+      for (final student in studentsToUpdate) {
+        final newVersion = student.version + 1;
+        final companion = StudentsCompanion(
+          id: Value(student.id),
+          handbook: const Value(true),
+          updatedAt: Value(now),
+          version: Value(newVersion),
+        );
+        await (_db.update(_db.students)..where((t) => t.id.equals(student.id))).write(companion);
+
+        if (userId != null) {
+          final payload = <String, dynamic>{
+            'handbook': true,
+            'version': newVersion,
+          };
+          await _insertChangeSet(
+            table: 'students',
+            recordId: student.id.toString(),
+            operation: 'UPDATE',
+            payload: payload,
+            userId: userId,
+            version: newVersion,
+          );
+        }
+        count++;
+      }
+
+      return count;
+    });
+  }
+
   Future<void> _insertChangeSet({
     required String table,
     required String recordId,

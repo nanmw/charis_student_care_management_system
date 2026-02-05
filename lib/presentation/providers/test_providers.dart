@@ -16,6 +16,12 @@ final testsForStudentProvider = StreamProvider.autoDispose
   return repo.watchTestsForStudent(studentId);
 });
 
+/// Stream of all tests, ordered by studentId and createdAt desc.
+final allTestsProvider = StreamProvider.autoDispose<List<Test>>((ref) {
+  final repo = ref.watch(testRepositoryProvider);
+  return repo.watchAllTests();
+});
+
 /// Total outstanding tests count (score < 70) across all students. Reactive.
 final totalOutstandingCountProvider = StreamProvider.autoDispose<int>((ref) {
   final repo = ref.watch(testRepositoryProvider);

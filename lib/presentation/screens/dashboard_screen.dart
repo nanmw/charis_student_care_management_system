@@ -11,6 +11,7 @@ import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/dashboard_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/test_providers.dart';
+import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 
 /// Dashboard home screen: overview, stat cards, recent activities placeholder, quick links.
 class DashboardScreen extends ConsumerWidget {
@@ -19,6 +20,9 @@ class DashboardScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
+    final themeMode = ref.watch(themeModeProvider);
+    final isDark = themeMode == ThemeMode.dark;
+    final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final auth = ref.watch(authStateProvider).valueOrNull;
     final displayName = auth is Authenticated ? auth.user.displayName : 'User';
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
@@ -56,6 +60,7 @@ class DashboardScreen extends ConsumerWidget {
             _buildStatCards(
               context,
               colorScheme,
+              redColor,
               studentsAsync,
               outstandingAsync,
               attendanceAsync,
@@ -72,7 +77,7 @@ class DashboardScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 12),
-            _buildRecentActivities(context, colorScheme, activitiesAsync),
+            _buildRecentActivities(context, colorScheme, redColor, activitiesAsync),
             const SizedBox(height: 24),
             Text(
               'Quick Links',
@@ -84,7 +89,7 @@ class DashboardScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 12),
-            _buildQuickLinks(context, colorScheme),
+            _buildQuickLinks(context, colorScheme, redColor),
           ],
         ),
       ),
@@ -94,6 +99,7 @@ class DashboardScreen extends ConsumerWidget {
   Widget _buildStatCards(
     BuildContext context,
     ColorScheme colorScheme,
+    Color redColor,
     AsyncValue<List<dynamic>> studentsAsync,
     AsyncValue<int> outstandingAsync,
     AsyncValue<double?> attendanceAsync,
@@ -129,7 +135,7 @@ class DashboardScreen extends ConsumerWidget {
           title: 'Total Students',
           value: totalStudents != null ? '$totalStudents' : '—',
           subtitle: 'Currently enrolled',
-          valueColor: AppColors.primaryActionRed,
+          valueColor: redColor,
         ),
         _statCard(
           colorScheme: colorScheme,
@@ -154,7 +160,7 @@ class DashboardScreen extends ConsumerWidget {
               ? CurrencyUtils.formatRand(totalBalance)
               : '—',
           subtitle: 'Across all students',
-          valueColor: AppColors.primaryActionRed,
+          valueColor: redColor,
           width: 280,
         ),
       ],
@@ -223,6 +229,7 @@ class DashboardScreen extends ConsumerWidget {
   Widget _buildRecentActivities(
     BuildContext context,
     ColorScheme colorScheme,
+    Color redColor,
     AsyncValue<List<ChangeSet>> activitiesAsync,
   ) {
     return activitiesAsync.when(
@@ -336,7 +343,7 @@ class DashboardScreen extends ConsumerWidget {
         ),
         child: Center(
           child: CircularProgressIndicator(
-            color: AppColors.primaryActionRed,
+            color: redColor,
           ),
         ),
       ),
@@ -374,13 +381,13 @@ class DashboardScreen extends ConsumerWidget {
     }
   }
 
-  Widget _buildQuickLinks(BuildContext context, ColorScheme colorScheme) {
+  Widget _buildQuickLinks(BuildContext context, ColorScheme colorScheme, Color redColor) {
     return Row(
       children: [
         ElevatedButton(
           onPressed: () => context.go('/students'),
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primaryActionRed,
+            backgroundColor: redColor,
             foregroundColor: AppColors.charisWhite,
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             shape: RoundedRectangleBorder(

@@ -10,6 +10,7 @@ import 'package:charis_student_care/presentation/providers/attendance_providers.
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 
 // #region agent log (disabled for performance - synchronous file I/O was blocking UI)
 void _debugLog(String location, String message, Map<String, dynamic> data, String hypothesisId) {
@@ -51,18 +52,48 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   Map<int, _RowEdit> _originalEdits = {};
   final Map<int, TextEditingController> _noteControllers = {};
   String _refillKey = '';
+  int _displayedCount = 30; // Initial batch size
+  bool _isLoadingMore = false;
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
+    _scrollController.dispose();
     for (final c in _noteControllers.values) {
       c.dispose();
     }
     super.dispose();
   }
 
+  void _onScroll() {
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent * 0.8) {
+      _loadMore();
+    }
+  }
+
+  void _loadMore() {
+    if (_isLoadingMore) return;
+    setState(() {
+      _isLoadingMore = true;
+      _displayedCount += 30; // Load next batch
+      _isLoadingMore = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final themeMode = ref.watch(themeModeProvider);
+    final isDark = themeMode == ThemeMode.dark;
+    final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
     final attendanceAsync = ref.watch(attendanceForDateProvider(_attendanceDate));
 
@@ -82,7 +113,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
             ),
           ),
           const SizedBox(height: 16),
-          _buildFiltersRow(colorScheme),
+          _buildFiltersRow(colorScheme, redColor),
           const SizedBox(height: 24),
           Expanded(
             child: studentsAsync.when(
@@ -91,8 +122,17 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                     .where((s) => s.mode == _selectedMode)
                     .where((s) => _academicYear == null || s.year == _academicYear)
                     .toList();
-                final students = sortStudentsAlphabetically(filtered);
-                _refillEditsIfNeeded(students, attendanceAsync.valueOrNull);
+                final allStudentsSorted = sortStudentsAlphabetically(filtered);
+                // Reset displayed count if filters changed
+                final total = allStudentsSorted.length;
+                if (_displayedCount > total) {
+                  _displayedCount = total;
+                }
+                final displayedStudents = total == 0
+                    ? <Student>[]
+                    : allStudentsSorted.sublist(0, _displayedCount.clamp(0, total));
+                // Initialize edits for all filtered students, but only create controllers for displayed ones
+                _refillEditsIfNeeded(allStudentsSorted, attendanceAsync.valueOrNull, displayedStudents: displayedStudents);
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -107,7 +147,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                     ),
                     const SizedBox(height: 12),
                     Expanded(
-                      child: students.isEmpty
+                      child: allStudentsSorted.isEmpty
                           ? Center(
                               child: Text(
                                 'No students match the selected mode.',
@@ -118,12 +158,32 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                                 ),
                               ),
                             )
-                          : _buildTable(context, colorScheme, students),
+                          : NotificationListener<ScrollNotification>(
+                              onNotification: (notification) {
+                                if (notification is ScrollUpdateNotification) {
+                                  final metrics = notification.metrics;
+                                  if (metrics.pixels >= metrics.maxScrollExtent * 0.8 &&
+                                      _displayedCount < total &&
+                                      !_isLoadingMore) {
+                                    _loadMore();
+                                  }
+                                }
+                                return false;
+                              },
+                              child: _buildTable(context, colorScheme, redColor, displayedStudents),
+                            ),
                     ),
                     const SizedBox(height: 16),
                     Align(
                       alignment: Alignment.centerRight,
-                      child: _buildSaveButton(colorScheme),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildBulkTickButton(colorScheme, redColor),
+                          const SizedBox(width: 12),
+                          _buildSaveButton(colorScheme, redColor),
+                        ],
+                      ),
                     ),
                   ],
                 );
@@ -140,13 +200,29 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
   }
 
-  void _refillEditsIfNeeded(List<Student> students, List<AttendanceData>? rows) {
+  void _refillEditsIfNeeded(List<Student> students, List<AttendanceData>? rows, {List<Student>? displayedStudents}) {
     final key = '${_attendanceDate.millisecondsSinceEpoch}_${students.map((s) => s.id).join(",")}_${rows?.length ?? -1}';
-    if (key == _refillKey) return;
+    if (key == _refillKey) {
+      // Still need to ensure controllers exist for displayed students
+      final displayedIds = (displayedStudents ?? students).map((s) => s.id).toSet();
+      for (final id in displayedIds) {
+        final edit = _edits[id] ?? _RowEdit(present: false);
+        _noteControllers[id] ??= TextEditingController(text: edit.notes);
+      }
+      // Clean up controllers for students no longer displayed
+      for (final id in _noteControllers.keys.toList()) {
+        if (!displayedIds.contains(id)) {
+          _noteControllers[id]?.dispose();
+          _noteControllers.remove(id);
+        }
+      }
+      return;
+    }
     _refillKey = key;
-    final studentIds = students.map((s) => s.id).toSet();
+    final displayedIds = (displayedStudents ?? students).map((s) => s.id).toSet();
+    // Clean up controllers for students no longer in displayed list
     for (final id in _noteControllers.keys.toList()) {
-      if (!studentIds.contains(id)) {
+      if (!displayedIds.contains(id)) {
         _noteControllers[id]?.dispose();
         _noteControllers.remove(id);
       }
@@ -159,6 +235,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     }
     final edits = <int, _RowEdit>{};
     final originalEdits = <int, _RowEdit>{};
+    // Initialize edits for ALL students (for save functionality)
     for (final s in students) {
       final row = rowMap[s.id];
       // #region agent log
@@ -174,8 +251,12 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         present: row?.present == 1,
         notes: notes,
       );
-      final controller = _noteControllers[s.id] ??= TextEditingController(text: notes);
-      controller.text = notes;
+    }
+    // Only create controllers for displayed students
+    for (final s in (displayedStudents ?? students)) {
+      final edit = edits[s.id] ?? _RowEdit(present: false);
+      final controller = _noteControllers[s.id] ??= TextEditingController(text: edit.notes);
+      controller.text = edit.notes;
     }
     if (mounted) {
       setState(() {
@@ -185,7 +266,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     }
   }
 
-  Widget _buildFiltersRow(ColorScheme colorScheme) {
+  Widget _buildFiltersRow(ColorScheme colorScheme, Color redColor) {
     return Row(
       children: [
         Text('Student Mode:',
@@ -194,7 +275,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                 fontSize: 14,
                 fontFamily: 'Questrial')),
         const SizedBox(width: 8),
-        _buildModeToggle(colorScheme),
+        _buildModeToggle(colorScheme, redColor),
         const SizedBox(width: 24),
         Text('Academic Year:',
             style: TextStyle(
@@ -215,16 +296,19 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
   }
 
-  Widget _buildModeToggle(ColorScheme colorScheme) {
+  Widget _buildModeToggle(ColorScheme colorScheme, Color redColor) {
     return ToggleButtons(
       constraints: const BoxConstraints(minWidth: 90, minHeight: 44),
       borderRadius: BorderRadius.circular(8),
-      fillColor: AppColors.primaryActionRed,
+      fillColor: redColor,
       selectedColor: AppColors.charisWhite,
       color: colorScheme.onSurface,
       isSelected: _modeOptions.map((m) => m == _selectedMode).toList(),
       onPressed: (index) {
-        setState(() => _selectedMode = _modeOptions[index]);
+        setState(() {
+          _selectedMode = _modeOptions[index];
+          _displayedCount = 30; // Reset to initial batch
+        });
       },
       children: _modeOptions.map((l) => Text(l, style: const TextStyle(fontFamily: 'Questrial', fontSize: 14))).toList(),
     );
@@ -254,7 +338,10 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                   ))
               .toList(),
           onChanged: (v) {
-            setState(() => _academicYear = v);
+            setState(() {
+              _academicYear = v;
+              _displayedCount = 30; // Reset to initial batch
+            });
           },
         ),
       ),
@@ -270,7 +357,12 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
           firstDate: DateTime(2020),
           lastDate: DateTime(2030),
         );
-        if (picked != null && mounted) setState(() => _attendanceDate = picked);
+        if (picked != null && mounted) {
+          setState(() {
+            _attendanceDate = picked;
+            _displayedCount = 30; // Reset to initial batch
+          });
+        }
       },
       borderRadius: BorderRadius.circular(8),
       child: Container(
@@ -296,12 +388,13 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
   }
 
-  Widget _buildTable(BuildContext context, ColorScheme colorScheme, List<Student> students) {
+  Widget _buildTable(BuildContext context, ColorScheme colorScheme, Color redColor, List<Student> students) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final tableWidth = constraints.maxWidth;
         return RepaintBoundary(
           child: SingleChildScrollView(
+          controller: _scrollController,
           scrollDirection: Axis.vertical,
           child: SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -309,16 +402,18 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
               width: tableWidth,
               child: Table(
                 columnWidths: {
-                  0: FlexColumnWidth(2),
-                  1: FlexColumnWidth(0.6),
-                  2: FlexColumnWidth(2),
-                  3: FlexColumnWidth(0.5),
+                  0: FlexColumnWidth(0.5),
+                  1: FlexColumnWidth(2),
+                  2: FlexColumnWidth(0.6),
+                  3: FlexColumnWidth(2),
+                  4: FlexColumnWidth(0.5),
                 },
                 border: TableBorder.all(color: colorScheme.outlineVariant),
                 children: [
                   TableRow(
                     decoration: BoxDecoration(color: colorScheme.surfaceContainerHighest),
                     children: [
+                      _tableHeader(context, 'S/N'),
                       _tableHeader(context, 'Student Name'),
                       _tableHeader(context, 'Present'),
                       _tableHeader(context, 'Notes'),
@@ -348,8 +443,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                     return TableRow(
                       decoration: BoxDecoration(color: rowColor),
                       children: [
+                        _cell(context, colorScheme, Text('${index + 1}', style: TextStyle(color: colorScheme.onSurface, fontSize: 14, fontFamily: 'Questrial'))),
                         _cell(context, colorScheme, Text('${student.surname} ${student.firstName}', style: TextStyle(color: colorScheme.onSurface, fontSize: 14, fontFamily: 'Questrial'))),
-                        _checkboxCell(context, colorScheme, edit.present, (v) => _updateEdit(student.id, (e) => e.present = v)),
+                        _checkboxCell(context, colorScheme, redColor, edit.present, (v) => _updateEdit(student.id, (e) => e.present = v)),
                         _cell(context, colorScheme, TextField(
                           onChanged: (v) => _updateEdit(student.id, (e) => e.notes = v),
                           controller: controller,
@@ -410,14 +506,14 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
   }
 
-  Widget _checkboxCell(BuildContext context, ColorScheme colorScheme, bool value, ValueChanged<bool> onChanged) {
+  Widget _checkboxCell(BuildContext context, ColorScheme colorScheme, Color redColor, bool value, ValueChanged<bool> onChanged) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: Center(
         child: Checkbox(
           value: value,
           onChanged: (v) => onChanged(v ?? false),
-          activeColor: AppColors.primaryActionRed,
+          activeColor: redColor,
           checkColor: AppColors.charisWhite,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
         ),
@@ -425,17 +521,100 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
   }
 
-  Widget _buildSaveButton(ColorScheme colorScheme) {
+  Widget _buildBulkTickButton(ColorScheme colorScheme, Color redColor) {
+    return OutlinedButton.icon(
+      onPressed: () => _handleBulkTickAttendance(context),
+      icon: const Icon(Icons.check_circle_outline, size: 20),
+      label: const Text('Tick All Present', style: TextStyle(fontFamily: 'Questrial', fontWeight: FontWeight.w600)),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: redColor,
+        side: BorderSide(color: redColor),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+
+  Widget _buildSaveButton(ColorScheme colorScheme, Color redColor) {
     return ElevatedButton.icon(
       onPressed: _save,
       icon: const Icon(Icons.save, size: 20, color: AppColors.charisWhite),
       label: const Text('Save Changes', style: TextStyle(color: AppColors.charisWhite, fontFamily: 'Questrial', fontWeight: FontWeight.w600)),
       style: ElevatedButton.styleFrom(
-        backgroundColor: AppColors.primaryActionRed,
+        backgroundColor: redColor,
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
+  }
+
+  Future<void> _handleBulkTickAttendance(BuildContext context) async {
+    final themeMode = ref.read(themeModeProvider);
+    final isDark = themeMode == ThemeMode.dark;
+    final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
+    // Get current filtered students
+    final studentsAsync = ref.read(studentsStreamProvider('Active'));
+    final allStudents = await studentsAsync.when(
+      data: (students) => students,
+      loading: () => <Student>[],
+      error: (_, __) => <Student>[],
+    );
+
+    final filtered = allStudents
+        .where((s) => s.mode == _selectedMode)
+        .where((s) => _academicYear == null || s.year == _academicYear)
+        .toList();
+    final students = sortStudentsAlphabetically(filtered);
+
+    if (students.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No students match the selected filters')),
+        );
+      }
+      return;
+    }
+
+    // Filter to students who don't already have present=true
+    final studentsToUpdate = students.where((s) {
+      final edit = _edits[s.id];
+      return edit == null || !edit.present;
+    }).toList();
+
+    if (studentsToUpdate.isEmpty) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('All filtered students are already marked as present')),
+        );
+      }
+      return;
+    }
+
+    // Update _edits map for all students to mark as present
+    // Preserve existing notes
+    for (final student in studentsToUpdate) {
+      final existingEdit = _edits[student.id];
+      if (existingEdit != null) {
+        existingEdit.present = true;
+      } else {
+        _edits[student.id] = _RowEdit(
+          present: true,
+          notes: '',
+        );
+      }
+    }
+
+    // Update UI
+    setState(() {});
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Marked ${studentsToUpdate.length} student${studentsToUpdate.length == 1 ? '' : 's'} as present'),
+          backgroundColor: redColor,
+        ),
+      );
+    }
   }
 
   Future<void> _save() async {

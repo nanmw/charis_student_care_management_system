@@ -12,7 +12,7 @@ class ChangeSets extends Table {
   /// ID of the affected record
   TextColumn get recordId => text()();
 
-  /// Operation type: 'INSERT', 'UPDATE', or 'STATUS_CHANGE'
+  /// Operation type: 'INSERT', 'UPDATE', 'STATUS_CHANGE', or 'DELETE'
   TextColumn get operation => text()();
 
   /// JSON string representation of the changes
@@ -36,6 +36,6 @@ class ChangeSets extends Table {
   @override
   List<String> get customConstraints => [
         // Ensure operation is one of the valid values
-        "CHECK(operation IN ('INSERT', 'UPDATE', 'STATUS_CHANGE'))",
+        "CHECK(operation IN ('INSERT', 'UPDATE', 'STATUS_CHANGE', 'DELETE'))",
       ];
 }

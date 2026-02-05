@@ -16,6 +16,13 @@ class TestRepository {
 
   static const int _passThreshold = 70;
 
+  /// Stream of all tests, ordered by studentId and createdAt desc.
+  Stream<List<Test>> watchAllTests() {
+    return (_db.select(_db.tests)
+          ..orderBy([(t) => OrderingTerm.asc(t.studentId), (t) => OrderingTerm.desc(t.createdAt)]))
+        .watch();
+  }
+
   /// Stream of tests for [studentId], newest first.
   Stream<List<Test>> watchTestsForStudent(int studentId) {
     return (_db.select(_db.tests)
@@ -57,6 +64,7 @@ class TestRepository {
     int studentId,
     int score, {
     String? label,
+    int? subjectId,
     required UserRole userRole,
     String? userId,
   }) async {
@@ -70,6 +78,8 @@ class TestRepository {
       label: (label != null && label.trim().isNotEmpty)
           ? Value(label.trim())
           : const Value.absent(),
+      subjectId: subjectId != null ? Value(subjectId) : const Value.absent(),
+      createdAt: Value(DateTime.now()),
     );
     final id = await _db.into(_db.tests).insert(companion);
     if (userId != null) {
@@ -81,6 +91,7 @@ class TestRepository {
           'studentId': studentId,
           'score': clampedScore,
           if (label != null && label.trim().isNotEmpty) 'label': label.trim(),
+          if (subjectId != null) 'subjectId': subjectId,
         },
         userId: userId,
         version: 1,
@@ -94,6 +105,7 @@ class TestRepository {
     int id, {
     required int score,
     String? label,
+    int? subjectId,
     required UserRole userRole,
     String? userId,
   }) async {
@@ -109,6 +121,7 @@ class TestRepository {
         label: label != null
             ? Value(label.trim().isEmpty ? null : label.trim())
             : const Value.absent(),
+        subjectId: subjectId != null ? Value(subjectId) : const Value.absent(),
       ),
     );
     if (userId != null) {
@@ -119,10 +132,91 @@ class TestRepository {
         payload: {
           'score': clampedScore,
           if (label != null) 'label': label.trim().isEmpty ? null : label.trim(),
+          if (subjectId != null) 'subjectId': subjectId,
         },
         userId: userId,
         version: 1,
       );
+    }
+  }
+
+  /// Bulk update subject for multiple students.
+  /// Creates or updates test records for each student with the specified subject.
+  /// Requires canEnterTests; [userId] for change-set.
+  Future<void> bulkUpdateSubjectForStudents(
+    List<int> studentIds,
+    int? subjectId, {
+    required UserRole userRole,
+    String? userId,
+  }) async {
+    if (!RolePermissions.canEnterTests(userRole)) {
+      throw StateError('Role cannot enter tests');
+    }
+    if (studentIds.isEmpty) return;
+
+    // Get existing tests for these students
+    final existingTests = await (_db.select(_db.tests)
+          ..where((t) => t.studentId.isIn(studentIds)))
+        .get();
+
+    final testMap = <int, Test>{};
+    for (final test in existingTests) {
+      // Use the most recent test for each student
+      if (!testMap.containsKey(test.studentId) ||
+          test.createdAt.isAfter(testMap[test.studentId]!.createdAt)) {
+        testMap[test.studentId] = test;
+      }
+    }
+
+    // Update or create tests
+    for (final studentId in studentIds) {
+      final existingTest = testMap[studentId];
+      if (existingTest != null) {
+        // Update existing test
+        await (_db.update(_db.tests)..where((t) => t.id.equals(existingTest.id))).write(
+          TestsCompanion(
+            subjectId: subjectId != null ? Value(subjectId) : const Value.absent(),
+            updatedAt: Value(DateTime.now()),
+          ),
+        );
+        if (userId != null) {
+          await _insertChangeSet(
+            table: 'tests',
+            recordId: existingTest.id.toString(),
+            operation: 'UPDATE',
+            payload: {
+              'score': existingTest.score,
+              if (existingTest.label != null) 'label': existingTest.label,
+              if (subjectId != null) 'subjectId': subjectId,
+            },
+            userId: userId,
+            version: 1,
+          );
+        }
+      } else {
+        // Create new test with default score of 0
+        final companion = TestsCompanion.insert(
+          studentId: studentId,
+          score: 0,
+          subjectId: subjectId != null ? Value(subjectId) : const Value.absent(),
+          createdAt: Value(DateTime.now()),
+        );
+        final id = await _db.into(_db.tests).insert(companion);
+        if (userId != null) {
+          await _insertChangeSet(
+            table: 'tests',
+            recordId: id.toString(),
+            operation: 'INSERT',
+            payload: {
+              'studentId': studentId,
+              'score': 0,
+              if (subjectId != null) 'subjectId': subjectId,
+            },
+            userId: userId,
+            version: 1,
+          );
+        }
+      }
     }
   }
 

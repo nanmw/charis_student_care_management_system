@@ -10,6 +10,7 @@ class SyncConstants {
   static const String operationInsert = 'INSERT';
   static const String operationUpdate = 'UPDATE';
   static const String operationStatusChange = 'STATUS_CHANGE';
+  static const String operationDelete = 'DELETE';
 
   // Critical fields that require manual conflict resolution
   static const List<String> criticalFields = ['payments', 'status'];

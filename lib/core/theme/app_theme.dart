@@ -105,7 +105,7 @@ class AppTheme {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
           borderSide: const BorderSide(
-            color: AppColors.charisRedPrimary,
+            color: AppColors.primaryActionRed,
             width: 2,
           ),
         ),
@@ -175,7 +175,7 @@ class AppTheme {
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primaryActionRed,
+          backgroundColor: AppColors.charisRedPrimary,
           foregroundColor: AppColors.charisWhite,
           elevation: 2,
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -200,7 +200,7 @@ class AppTheme {
         color: AppColors.charisWhite,
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: AppColors.charisWhite,
+        backgroundColor: AppColors.surfaceDarkElevated,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
       inputDecorationTheme: InputDecorationTheme(
