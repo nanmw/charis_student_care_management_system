@@ -10,12 +10,13 @@ import 'tables/attendance.dart';
 import 'tables/tests.dart';
 import 'tables/payments.dart';
 import 'tables/subjects.dart';
+import 'tables/app_settings.dart';
 
 part 'app_database.g.dart';
 
 /// Main database class (plain SQLite; encryption can be re-added later with platform-specific setup)
 @DriftDatabase(
-    tables: [Students, ChangeSets, Attendance, Tests, Payments, Subjects],)
+    tables: [Students, ChangeSets, Attendance, Tests, Payments, Subjects, AppSettings],)
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
@@ -24,7 +25,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.test() : super(_openTestConnection());
 
   @override
-  int get schemaVersion => 16;
+  int get schemaVersion => 17;
 
   @override
   MigrationStrategy get migration {
@@ -686,6 +687,14 @@ class AppDatabase extends _$AppDatabase {
           await customStatement('ALTER TABLE tests ADD COLUMN academic_session TEXT');
           await customStatement(
               'CREATE INDEX IF NOT EXISTS idx_tests_academic_session ON tests(academic_session)',);
+        }
+        if (from < 17) {
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS app_settings (
+              key TEXT PRIMARY KEY NOT NULL,
+              value TEXT
+            )
+          ''');
         }
       },
     );

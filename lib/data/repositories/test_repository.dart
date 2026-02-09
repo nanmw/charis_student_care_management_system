@@ -125,27 +125,8 @@ class TestRepository {
     return dates;
   }
 
-  /// Returns distinct academic session values from tests plus default options (current/next session).
-  Future<List<String>> getAcademicSessionOptions() async {
-    final allTests = await (_db.select(_db.tests)).get();
-    final fromDb = <String>{};
-    for (final t in allTests) {
-      if (t.academicSession != null && t.academicSession!.trim().isNotEmpty) {
-        fromDb.add(t.academicSession!.trim());
-      }
-    }
-    final now = DateTime.now();
-    final year = now.year;
-    final currentSession = now.month >= 7 ? '$year-${year + 1}' : '${year - 1}-$year';
-    final defaultSessions = [
-      currentSession,
-      '$year-${year + 1}',
-      '${year - 1}-$year',
-    ];
-    final combined = <String>{...fromDb, ...defaultSessions};
-    final list = combined.toList()..sort((a, b) => b.compareTo(a));
-    return list;
-  }
+  // getAcademicSessionOptions() has been moved to AcademicSessionRepository
+  // Use academicSessionOptionsProvider from academic_session_providers.dart instead
 
   /// Adds a test. Requires canEnterTests; [userId] for change-set.
   /// [academicSession] optional; when set, enforces one passing test per session and rewrite cap.

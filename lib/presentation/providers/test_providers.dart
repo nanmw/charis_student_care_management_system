@@ -28,12 +28,8 @@ final totalOutstandingCountProvider = StreamProvider.autoDispose<int>((ref) {
   return repo.watchTotalOutstandingCount();
 });
 
-/// Academic session options for dropdown (defaults + distinct from DB).
-final academicSessionOptionsProvider =
-    FutureProvider.autoDispose<List<String>>((ref) async {
-  final repo = ref.watch(testRepositoryProvider);
-  return repo.getAcademicSessionOptions();
-});
+// academicSessionOptionsProvider is now provided by academic_session_providers.dart
+// Import academic_session_providers.dart to use it
 
 /// Dates (as DateTime at midnight UTC) on which tests were created or updated.
 /// Optional [session] filters by academic session.

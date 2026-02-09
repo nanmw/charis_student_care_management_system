@@ -15,6 +15,7 @@ import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/subject_providers.dart';
 import 'package:charis_student_care/presentation/providers/test_providers.dart';
+import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/searchable_dropdown.dart';
 import 'package:charis_student_care/presentation/widgets/student_summary_dialog.dart';
@@ -60,10 +61,27 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
   int? _bulkSubjectId;
   DateTime? _selectedDate; // Date filter for tests
 
+  bool _hasInitializedSession = false;
+
   @override
   void initState() {
     super.initState();
     _selectedAcademicSession ??= _defaultCurrentAcademicSession();
+  }
+
+  void _initializeSessionFromGlobal(WidgetRef ref) {
+    if (_hasInitializedSession) return;
+    final currentSessionAsync = ref.read(currentAcademicSessionProvider);
+    currentSessionAsync.whenData((currentSession) {
+      if (mounted && !_hasInitializedSession) {
+        _hasInitializedSession = true;
+        if (currentSession != null) {
+          setState(() {
+            _selectedAcademicSession = currentSession;
+          });
+        }
+      }
+    });
   }
 
   // Edit tracking
@@ -136,6 +154,9 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
     final allTestsAsync = ref.watch(allTestsProvider);
+    
+    // Initialize session from global current session on first build
+    _initializeSessionFromGlobal(ref);
 
     return Container(
       color: colorScheme.surface,
@@ -155,7 +176,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Manage and record student test scores and assignment submission status for various courses.',
+            'Manage and record students\' test scores.',
             style: TextStyle(
               color: colorScheme.onSurfaceVariant,
               fontSize: 14,
@@ -301,6 +322,15 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                       }).toList();
                     }
                     
+                    // Filter by cohort (year + mode) - only include tests from students in the cohort
+                    final cohortStudentIds = allStudents
+                        .where((s) => s.mode == _selectedMode && s.year == _studentYear)
+                        .map((s) => s.id)
+                        .toSet();
+                    filteredTests = filteredTests
+                        .where((test) => cohortStudentIds.contains(test.studentId))
+                        .toList();
+                    
                     // Build test map (latest test per student for the selected subject)
                     final testMap = <int, Test>{};
                     for (final test in filteredTests) {
@@ -331,7 +361,9 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                     _cachedTests = testMap;
 
                     // At least one test in cohort for this subject/session (for "Outstanding" label)
-                    final cohortHasTestForSubjectSession = filteredTests.isNotEmpty;
+                    // cohortStudentIds already computed above for filtering
+                    final cohortHasTestForSubjectSession = filteredTests
+                        .any((test) => cohortStudentIds.contains(test.studentId));
 
                     // Initialize edits if needed
                     _initializeEdits(displayedStudents, testMap);
@@ -504,6 +536,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                         _searchQuery = v;
                         _displayedCount = 25;
                         _cachedFilteredStudents = null;
+                        _cachedTests = null;
+                        _dataSource = null;
                       });
                     }
                   });
@@ -630,6 +664,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                         }
                       }
                       _cachedFilteredStudents = null; // Reset cache
+                      _cachedTests = null;
+                      _dataSource = null;
                       _displayedCount = 25; // Reset scroll
                     });
                   },
@@ -675,6 +711,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         setState(() {
           _selectedMode = _modeOptions[index];
           _cachedFilteredStudents = null;
+          _cachedTests = null;
+          _dataSource = null;
           _displayedCount = 25;
         });
       },
@@ -729,6 +767,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
             setState(() {
               _studentYear = v;
               _cachedFilteredStudents = null;
+              _cachedTests = null;
+              _dataSource = null;
               _displayedCount = 25;
             });
           },
@@ -776,13 +816,19 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                         ),
                       ),)
                   .toList(),
-              onChanged: (v) {
+              onChanged: (v) async {
                 setState(() {
                   _selectedAcademicSession = v;
                   _cachedFilteredStudents = null;
                   _cachedTests = null;
+                  _dataSource = null;
                   _displayedCount = 25;
                 });
+                // Persist the selection as the global current session
+                final repo = ref.read(academicSessionRepositoryProvider);
+                await repo.setCurrentSession(v);
+                // Invalidate the current session provider to update other features
+                ref.invalidate(currentAcademicSessionProvider);
               },
             ),
           ),
@@ -809,9 +855,23 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         final datesWithChanges = await ref.read(
             datesWithTestChangesProvider(_selectedAcademicSession).future,);
         if (!mounted) return;
+        
+        // Compute initial date that satisfies the predicate
+        final DateTime initialDate;
+        if (_selectedDate != null) {
+          // Use selected date if set (it should already satisfy predicate)
+          initialDate = _selectedDate!;
+        } else if (datesWithChanges.isNotEmpty) {
+          // Use most recent date from datesWithChanges when predicate is active
+          initialDate = datesWithChanges.reduce((a, b) => a.isAfter(b) ? a : b);
+        } else {
+          // Use DateTime.now() when predicate is null (empty datesWithChanges)
+          initialDate = DateTime.now();
+        }
+        
         final picked = await showDatePicker(
           context: context,
-          initialDate: _selectedDate ?? DateTime.now(),
+          initialDate: initialDate,
           firstDate: DateTime(2020),
           lastDate: DateTime(2030),
           selectableDayPredicate: datesWithChanges.isEmpty
@@ -828,6 +888,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
           setState(() {
             _selectedDate = picked;
             _cachedFilteredStudents = null;
+            _cachedTests = null;
+            _dataSource = null;
             _displayedCount = 25;
           });
         }
@@ -861,6 +923,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                   setState(() {
                     _selectedDate = null;
                     _cachedFilteredStudents = null;
+                    _cachedTests = null;
+                    _dataSource = null;
                     _displayedCount = 25;
                   });
                 },
@@ -887,27 +951,29 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
   void _initializeEdits(List<Student> students, Map<int, Test> testMap) {
     for (final student in students) {
       final test = testMap[student.id];
-      if (!_edits.containsKey(student.id)) {
-        _edits[student.id] = TestRowEdit(
-          subjectId: test?.subjectId,
-          score: test?.score ?? 0,
-          label: test?.label,
-        );
-      }
+      // Always update/edit with current test data from filtered results
+      // This ensures that when filters (date/session) change, edits reflect the new filtered data
+      _edits[student.id] = TestRowEdit(
+        subjectId: test?.subjectId,
+        score: test?.score ?? 0,
+        label: test?.label,
+      );
 
-      // Initialize controllers (unscored = no test: show empty for score)
+      // Update controllers with current test data (unscored = no test: show empty for score)
       final scoreKey = '${student.id}_score';
       final labelKey = '${student.id}_label';
-      if (!_controllers.containsKey(scoreKey)) {
-        final sc = test?.score ?? 0;
-        _controllers[scoreKey] = TextEditingController(
-          text: test != null ? sc.toString() : '',
-        );
-      }
-      if (!_controllers.containsKey(labelKey)) {
-        _controllers[labelKey] =
-            TextEditingController(text: _edits[student.id]?.label ?? '');
-      }
+      
+      // Dispose old controller if it exists to prevent memory leaks
+      _controllers[scoreKey]?.dispose();
+      final sc = test?.score ?? 0;
+      _controllers[scoreKey] = TextEditingController(
+        text: test != null ? sc.toString() : '',
+      );
+      
+      // Dispose old controller if it exists to prevent memory leaks
+      _controllers[labelKey]?.dispose();
+      _controllers[labelKey] =
+          TextEditingController(text: test?.label ?? '');
     }
   }
 
