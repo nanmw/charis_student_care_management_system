@@ -951,29 +951,48 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
   void _initializeEdits(List<Student> students, Map<int, Test> testMap) {
     for (final student in students) {
       final test = testMap[student.id];
-      // Always update/edit with current test data from filtered results
-      // This ensures that when filters (date/session) change, edits reflect the new filtered data
-      _edits[student.id] = TestRowEdit(
-        subjectId: test?.subjectId,
-        score: test?.score ?? 0,
-        label: test?.label,
+      final existingEdit = _edits[student.id];
+      
+      // Check if existing edit has unsaved changes
+      final hasUnsavedChanges = existingEdit != null && (
+        existingEdit.subjectId != test?.subjectId ||
+        existingEdit.score != (test?.score ?? 0) ||
+        existingEdit.label != test?.label
       );
-
-      // Update controllers with current test data (unscored = no test: show empty for score)
+      
+      // Only update edit if no unsaved changes (preserve user edits)
+      if (!hasUnsavedChanges) {
+        // Preserve bulk-applied subjectId when no test exists
+        final subjectId = test?.subjectId ?? existingEdit?.subjectId;
+        
+        _edits[student.id] = TestRowEdit(
+          subjectId: subjectId,
+          score: test?.score ?? 0,
+          label: test?.label,
+        );
+      }
+      
+      // Update controllers without disposing (preserve user input)
+      final edit = _edits[student.id]!;
       final scoreKey = '${student.id}_score';
       final labelKey = '${student.id}_label';
       
-      // Dispose old controller if it exists to prevent memory leaks
-      _controllers[scoreKey]?.dispose();
-      final sc = test?.score ?? 0;
-      _controllers[scoreKey] = TextEditingController(
-        text: test != null ? sc.toString() : '',
-      );
+      // Update score controller
+      final isUnscored = test == null && edit.score == 0;
+      final expectedScoreText = isUnscored ? '' : edit.score.toString();
+      if (!_controllers.containsKey(scoreKey)) {
+        _controllers[scoreKey] = TextEditingController(text: expectedScoreText);
+      } else if (_controllers[scoreKey]!.text != expectedScoreText) {
+        _controllers[scoreKey]!.text = expectedScoreText;
+      }
       
-      // Dispose old controller if it exists to prevent memory leaks
-      _controllers[labelKey]?.dispose();
-      _controllers[labelKey] =
-          TextEditingController(text: test?.label ?? '');
+      // Update label controller
+      final expectedLabelText = edit.label ?? '';
+      if (!_controllers.containsKey(labelKey)) {
+        _controllers[labelKey] = TextEditingController(text: expectedLabelText);
+      } else if (_controllers[labelKey]!.text != expectedLabelText) {
+        _controllers[labelKey]!.text = expectedLabelText;
+      }
     }
   }
 
@@ -1262,6 +1281,12 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     final allTestsAsync = ref.read(allTestsProvider);
     allTestsAsync.whenData((allTests) {
       setState(() {
+        // Invalidate data source to force rebuild
+        _dataSource = null;
+        
+        // Initialize or clear cached test map
+        _cachedTests ??= <int, Test>{};
+        
         for (final student in students) {
           // Find test for this student+subject+date combination
           final test = _findTestForStudentAndSubject(
@@ -1288,27 +1313,28 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
             _edits[student.id]!.label = null;
           }
 
-          // Update controllers
+          // Update controllers - dispose old ones first to prevent memory leaks
           final scoreKey = '${student.id}_score';
-          if (!_controllers.containsKey(scoreKey)) {
-            _controllers[scoreKey] = TextEditingController();
-          }
-          _controllers[scoreKey]!.text = (test?.score ?? 0).toString();
+          final isUnscored = test == null && _edits[student.id]!.score == 0;
+          final expectedScoreText = isUnscored ? '' : _edits[student.id]!.score.toString();
+          
+          // Dispose old controller if it exists
+          _controllers[scoreKey]?.dispose();
+          _controllers[scoreKey] = TextEditingController(text: expectedScoreText);
 
           final labelKey = '${student.id}_label';
-          if (!_controllers.containsKey(labelKey)) {
-            _controllers[labelKey] = TextEditingController();
-          }
-          _controllers[labelKey]!.text = test?.label ?? '';
+          final expectedLabelText = _edits[student.id]!.label ?? '';
+          
+          // Dispose old controller if it exists
+          _controllers[labelKey]?.dispose();
+          _controllers[labelKey] = TextEditingController(text: expectedLabelText);
 
           // Update cached test map
-          if (_cachedTests != null) {
-            if (test != null) {
-              _cachedTests![student.id] = test;
-            } else {
-              // Remove from cache if no test found
-              _cachedTests!.remove(student.id);
-            }
+          if (test != null) {
+            _cachedTests![student.id] = test;
+          } else {
+            // Remove from cache if no test found
+            _cachedTests!.remove(student.id);
           }
         }
 
@@ -1599,8 +1625,16 @@ class TestDataSource extends DataGridSource {
   Widget _buildScoreField(Student student, int currentScore, {bool hasTest = true}) {
     final key = '${student.id}_score';
     final isUnscored = !hasTest && currentScore == 0;
+    final expectedText = isUnscored ? '' : currentScore.toString();
+    
+    // Get or create controller
     final controller = _controllers[key] ??=
-        TextEditingController(text: isUnscored ? '' : currentScore.toString());
+        TextEditingController(text: expectedText);
+    
+    // Sync controller text with current edit value if it doesn't match
+    if (controller.text != expectedText) {
+      controller.text = expectedText;
+    }
 
     return SizedBox(
       width: 80,
@@ -1690,8 +1724,16 @@ class TestDataSource extends DataGridSource {
 
   Widget _buildNotesField(Student student, String? currentLabel) {
     final key = '${student.id}_label';
+    final expectedText = currentLabel ?? '';
+    
+    // Get or create controller
     final controller =
-        _controllers[key] ??= TextEditingController(text: currentLabel ?? '');
+        _controllers[key] ??= TextEditingController(text: expectedText);
+    
+    // Sync controller text with current edit value if it doesn't match
+    if (controller.text != expectedText) {
+      controller.text = expectedText;
+    }
 
     return TextField(
       controller: controller,
