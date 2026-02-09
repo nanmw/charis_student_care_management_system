@@ -11,6 +11,7 @@ import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
+import 'package:charis_student_care/presentation/widgets/student_summary_dialog.dart';
 
 // #region agent log (disabled for performance - synchronous file I/O was blocking UI)
 void _debugLog(String location, String message, Map<String, dynamic> data, String hypothesisId) {
@@ -189,10 +190,10 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                 );
               },
               loading: () => Center(
-                  child: CircularProgressIndicator(color: colorScheme.onSurface)),
+                  child: CircularProgressIndicator(color: colorScheme.onSurface),),
               error: (err, _) => Center(
                   child: Text('Error: $err',
-                      style: TextStyle(color: colorScheme.onSurface))),
+                      style: TextStyle(color: colorScheme.onSurface),),),
             ),
           ),
         ],
@@ -273,7 +274,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
             style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
                 fontSize: 14,
-                fontFamily: 'Questrial')),
+                fontFamily: 'Questrial',),),
         const SizedBox(width: 8),
         _buildModeToggle(colorScheme, redColor),
         const SizedBox(width: 24),
@@ -281,7 +282,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
             style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
                 fontSize: 14,
-                fontFamily: 'Questrial')),
+                fontFamily: 'Questrial',),),
         const SizedBox(width: 8),
         _buildAcademicYearDropdown(colorScheme),
         const SizedBox(width: 24),
@@ -289,7 +290,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
             style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
                 fontSize: 14,
-                fontFamily: 'Questrial')),
+                fontFamily: 'Questrial',),),
         const SizedBox(width: 8),
         _buildDateField(colorScheme),
       ],
@@ -335,7 +336,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
               .map((y) => DropdownMenuItem<String?>(
                     value: y,
                     child: Text(y ?? 'All', style: TextStyle(color: colorScheme.onSurface, fontSize: 14)),
-                  ))
+                  ),)
               .toList(),
           onChanged: (v) {
             setState(() {
@@ -401,12 +402,13 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
             child: SizedBox(
               width: tableWidth,
               child: Table(
-                columnWidths: {
+                columnWidths: const {
                   0: FlexColumnWidth(0.5),
                   1: FlexColumnWidth(2),
                   2: FlexColumnWidth(0.6),
                   3: FlexColumnWidth(2),
                   4: FlexColumnWidth(0.5),
+                  5: FlexColumnWidth(0.4),
                 },
                 border: TableBorder.all(color: colorScheme.outlineVariant),
                 children: [
@@ -418,6 +420,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                       _tableHeader(context, 'Present'),
                       _tableHeader(context, 'Notes'),
                       _tableHeader(context, '%'),
+                      _tableHeader(context, 'View'),
                     ],
                   ),
                   ...students.asMap().entries.map((e) {
@@ -457,8 +460,22 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                             isDense: true,
                           ),
                           style: TextStyle(color: colorScheme.onSurface, fontSize: 13),
-                        )),
+                        ),),
                         _cell(context, colorScheme, Text('${edit.percent}%', style: TextStyle(color: colorScheme.onSurface, fontSize: 14, fontFamily: 'Questrial'))),
+                        _cell(context, colorScheme, Center(
+                          child: IconButton(
+                            onPressed: () {
+                              StudentSummaryDialog.show(
+                                context: context,
+                                student: student,
+                              );
+                            },
+                            icon: Icon(Icons.visibility_outlined, size: 20, color: colorScheme.onSurfaceVariant),
+                            tooltip: 'View Student Summary',
+                            padding: const EdgeInsets.all(8),
+                            constraints: const BoxConstraints(),
+                          ),
+                        ),),
                       ],
                     );
                   }),
@@ -554,7 +571,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     // Get current filtered students
     final studentsAsync = ref.read(studentsStreamProvider('Active'));
-    final allStudents = await studentsAsync.when(
+    final allStudents = studentsAsync.when(
       data: (students) => students,
       loading: () => <Student>[],
       error: (_, __) => <Student>[],
@@ -675,7 +692,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
           studentId: student.id,
           present: edit.present,
           notes: edit.notes.trim().isEmpty ? null : edit.notes.trim(),
-        ));
+        ),);
       }
     }
     // #region agent log

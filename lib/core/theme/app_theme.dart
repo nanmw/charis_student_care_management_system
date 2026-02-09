@@ -121,7 +121,7 @@ class AppTheme {
       useMaterial3: true,
       fontFamily: _fontFamily,
       brightness: Brightness.dark,
-      colorScheme: ColorScheme.dark(
+      colorScheme: const ColorScheme.dark(
         primary: AppColors.primaryActionRed,
         surface: AppColors.surfaceDark,
         onSurface: AppColors.textOnDark,

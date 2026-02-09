@@ -57,7 +57,7 @@ class PaymentRepository {
   Future<Payment?> getPaymentRow(int studentId, String year) async {
     return (_db.select(_db.payments)
           ..where((t) =>
-              t.studentId.equals(studentId) & t.year.equals(year))
+              t.studentId.equals(studentId) & t.year.equals(year),)
           ..limit(1))
         .getSingleOrNull();
   }
@@ -201,7 +201,7 @@ class PaymentRepository {
     // Fetch all existing payment rows for these students and year in one query
     final existingPayments = await (_db.select(_db.payments)
           ..where((t) =>
-              t.year.equals(year) & t.studentId.isIn(studentIds)))
+              t.year.equals(year) & t.studentId.isIn(studentIds),))
         .get();
 
     final existingMap = {for (final p in existingPayments) p.studentId: p};
@@ -264,7 +264,7 @@ class PaymentRepository {
           );
         }
         
-        if (userId != null && paymentId != null) {
+        if (userId != null) {
           await _insertChangeSet(
             table: 'payments',
             recordId: paymentId.toString(),
@@ -320,7 +320,7 @@ class PaymentRepository {
         .watch()
         .map((rows) => rows.isNotEmpty
             ? (rows.single.read<double>(totalPaidExpr.sum()) ?? 0.0)
-            : 0.0);
+            : 0.0,);
   }
 
   Future<void> _insertChangeSet({

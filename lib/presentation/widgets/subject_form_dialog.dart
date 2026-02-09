@@ -232,7 +232,7 @@ class _SubjectFormDialogState extends ConsumerState<SubjectFormDialog> {
         ),
         const SizedBox(height: 6),
         DropdownButtonFormField<String>(
-          value: _year,
+          initialValue: _year,
           decoration: InputDecoration(
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(

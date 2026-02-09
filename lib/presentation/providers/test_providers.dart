@@ -27,3 +27,18 @@ final totalOutstandingCountProvider = StreamProvider.autoDispose<int>((ref) {
   final repo = ref.watch(testRepositoryProvider);
   return repo.watchTotalOutstandingCount();
 });
+
+/// Academic session options for dropdown (defaults + distinct from DB).
+final academicSessionOptionsProvider =
+    FutureProvider.autoDispose<List<String>>((ref) async {
+  final repo = ref.watch(testRepositoryProvider);
+  return repo.getAcademicSessionOptions();
+});
+
+/// Dates (as DateTime at midnight UTC) on which tests were created or updated.
+/// Optional [session] filters by academic session.
+final datesWithTestChangesProvider = FutureProvider.autoDispose
+    .family<Set<DateTime>, String?>((ref, session) async {
+  final repo = ref.watch(testRepositoryProvider);
+  return repo.getDatesWithTestChanges(academicSession: session);
+});

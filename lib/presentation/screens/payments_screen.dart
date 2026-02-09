@@ -31,7 +31,7 @@ const List<String> _monthLabels = [
   'Jul',
   'Aug',
   'Sep',
-  'Oct'
+  'Oct',
 ];
 
 const List<String> _modeOptions = ['Full-time', 'Hybrid'];
@@ -39,19 +39,19 @@ const List<String?> _academicYearOptions = [null, 'Year 1', 'Year 2', 'Year 3'];
 
 /// Individual editable payment cell widget to isolate rebuilds
 class _PaymentCell extends StatefulWidget {
+  static const double _defaultWidth = 70;
+
   const _PaymentCell({
     required this.controller,
     required this.colorScheme,
     required this.onChanged,
     required this.isDark,
-    this.width = 70,
   });
 
   final TextEditingController controller;
   final ColorScheme colorScheme;
   final void Function(double) onChanged;
   final bool isDark;
-  final double width;
 
   @override
   State<_PaymentCell> createState() => _PaymentCellState();
@@ -70,14 +70,14 @@ class _PaymentCellState extends State<_PaymentCell> {
   Widget build(BuildContext context) {
     return RepaintBoundary(
       child: SizedBox(
-        width: widget.width,
+        width: _PaymentCell._defaultWidth,
         child: TextField(
           controller: widget.controller,
           keyboardType: TextInputType.number,
           decoration: InputDecoration(
             hintText: '0',
             hintStyle: TextStyle(
-                color: widget.colorScheme.onSurfaceVariant, fontSize: 13),
+                color: widget.colorScheme.onSurfaceVariant, fontSize: 13,),
             border: InputBorder.none,
             filled: true,
             fillColor: widget.isDark ? AppColors.surfaceDark : AppColors.charisWhite,
@@ -153,7 +153,7 @@ class _LumpSumToggleSwitch extends StatelessWidget {
         child: Switch(
           value: value,
           onChanged: isEnabled ? onChanged : null,
-          activeColor: redColor,
+          activeThumbColor: redColor,
           inactiveThumbColor: colorScheme.outlineVariant,
           inactiveTrackColor: colorScheme.outlineVariant.withValues(alpha: 0.3),
         ),
@@ -317,7 +317,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
 
   // Debounced update method
   void _debouncedUpdate(String key, void Function() update,
-      {Duration delay = const Duration(milliseconds: 300)}) {
+      {Duration delay = const Duration(milliseconds: 300),}) {
     _debounceTimers[key]?.cancel();
     _debounceTimers[key] = Timer(delay, () {
       update();
@@ -389,27 +389,27 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                         foregroundColor: colorScheme.onSurfaceVariant,
                         side: BorderSide(color: colorScheme.outline),
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 12),
+                            horizontal: 20, vertical: 12,),
                         shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
+                            borderRadius: BorderRadius.circular(8),),
                       ),
                     ),
                     const SizedBox(width: 12),
                     ElevatedButton.icon(
                       onPressed: _save,
                       icon: const Icon(Icons.save,
-                          size: 20, color: AppColors.charisWhite),
+                          size: 20, color: AppColors.charisWhite,),
                       label: const Text('Save',
                           style: TextStyle(
                               color: AppColors.charisWhite,
                               fontFamily: 'Questrial',
-                              fontWeight: FontWeight.w600)),
+                              fontWeight: FontWeight.w600,),),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: redColor,
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 24, vertical: 12),
+                            horizontal: 24, vertical: 12,),
                         shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
+                            borderRadius: BorderRadius.circular(8),),
                       ),
                     ),
                   ],
@@ -433,8 +433,9 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                       // Mode filter
                       if (s.mode != _selectedMode) return false;
                       // Academic year filter
-                      if (_academicYear != null && s.year != _academicYear)
+                      if (_academicYear != null && s.year != _academicYear) {
                         return false;
+                      }
                       // Search filter
                       if (searchQueryLower.isNotEmpty) {
                         if (!s.surname
@@ -472,7 +473,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                     data: (paymentRows) {
                       // Initialize edits for ALL filtered students, but controllers only for displayed students
                       _refillEditsIfNeeded(allFilteredStudents, paymentRows,
-                          pageStudents: displayedStudents);
+                          pageStudents: displayedStudents,);
 
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -512,7 +513,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                                       return false;
                                     },
                                     child: _buildTable(
-                                        context, colorScheme, redColor, isDark, displayedStudents),
+                                        context, colorScheme, redColor, isDark, displayedStudents,),
                                   ),
                           ),
                         ],
@@ -520,19 +521,19 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                     },
                     loading: () => Center(
                         child: CircularProgressIndicator(
-                            color: colorScheme.onSurface)),
+                            color: colorScheme.onSurface,),),
                     error: (err, _) => Center(
                       child: Text('Error loading payments: $err',
-                          style: TextStyle(color: colorScheme.onSurface)),
+                          style: TextStyle(color: colorScheme.onSurface),),
                     ),
                   );
                 },
                 loading: () => Center(
                     child: CircularProgressIndicator(
-                        color: colorScheme.onSurface)),
+                        color: colorScheme.onSurface,),),
                 error: (err, _) => Center(
                   child: Text('Error: $err',
-                      style: TextStyle(color: colorScheme.onSurface)),
+                      style: TextStyle(color: colorScheme.onSurface),),
                 ),
               ),
             ),
@@ -543,7 +544,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   }
 
   void _refillEditsIfNeeded(List<Student> students, List<Payment> paymentRows,
-      {List<Student>? pageStudents}) {
+      {List<Student>? pageStudents,}) {
     // Optimized hash calculation using Object.hashAll instead of string concatenation
     final paymentHash = paymentRows.isEmpty
         ? 0
@@ -559,7 +560,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
             p.aug,
             p.sep,
             p.oct,
-            p.lumpSum)));
+            p.lumpSum,),),);
 
     // Cache payment map if hash hasn't changed
     Map<int, Payment> paymentMap;
@@ -729,7 +730,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
             style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
                 fontSize: 14,
-                fontFamily: 'Questrial')),
+                fontFamily: 'Questrial',),),
         const SizedBox(width: 8),
         _buildModeToggle(colorScheme, redColor),
         const SizedBox(width: 24),
@@ -737,7 +738,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
             style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
                 fontSize: 14,
-                fontFamily: 'Questrial')),
+                fontFamily: 'Questrial',),),
         const SizedBox(width: 8),
         _buildAcademicYearDropdown(colorScheme),
         const SizedBox(width: 24),
@@ -745,7 +746,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
             style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
                 fontSize: 14,
-                fontFamily: 'Questrial')),
+                fontFamily: 'Questrial',),),
         const SizedBox(width: 8),
         _buildPaymentYearField(colorScheme),
         const SizedBox(width: 24),
@@ -767,12 +768,12 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
               hintStyle:
                   TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
               prefixIcon: Icon(Icons.search,
-                  color: colorScheme.onSurfaceVariant, size: 22),
+                  color: colorScheme.onSurfaceVariant, size: 22,),
               filled: true,
               fillColor: colorScheme.surfaceContainerHighest,
               border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none),
+                  borderSide: BorderSide.none,),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             ),
@@ -800,7 +801,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       },
       children: _modeOptions
           .map((l) => Text(l,
-              style: const TextStyle(fontFamily: 'Questrial', fontSize: 14)))
+              style: const TextStyle(fontFamily: 'Questrial', fontSize: 14),),)
           .toList(),
     );
   }
@@ -820,7 +821,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           value: _academicYear,
           hint: Text('All',
               style:
-                  TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14)),
+                  TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),),
           isExpanded: true,
           underline: const SizedBox.shrink(),
           borderRadius: BorderRadius.circular(8),
@@ -829,8 +830,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                     value: y,
                     child: Text(y ?? 'All',
                         style: TextStyle(
-                            color: colorScheme.onSurface, fontSize: 14)),
-                  ))
+                            color: colorScheme.onSurface, fontSize: 14,),),
+                  ),)
               .toList(),
           onChanged: (v) {
             setState(() {
@@ -865,8 +866,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                     value: y,
                     child: Text(y,
                         style: TextStyle(
-                            color: colorScheme.onSurface, fontSize: 14)),
-                  ))
+                            color: colorScheme.onSurface, fontSize: 14,),),
+                  ),)
               .toList(),
           onChanged: (v) {
             if (v != null) {
@@ -897,7 +898,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   }
 
   Widget _buildTable(
-      BuildContext context, ColorScheme colorScheme, Color redColor, bool isDark, List<Student> students) {
+      BuildContext context, ColorScheme colorScheme, Color redColor, bool isDark, List<Student> students,) {
     final edits = _currentYearEdits;
 
     return LayoutBuilder(
@@ -912,7 +913,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                 columnWidths: {
                   0: const FixedColumnWidth(160),
                   ...Map.fromEntries(List.generate(_monthLabels.length,
-                      (i) => MapEntry(i + 1, const FixedColumnWidth(72)))),
+                      (i) => MapEntry(i + 1, const FixedColumnWidth(72)),),),
                   _monthLabels.length + 1: const FixedColumnWidth(80),
                   _monthLabels.length + 2: const FixedColumnWidth(100),
                   _monthLabels.length + 3: const FixedColumnWidth(110),
@@ -922,7 +923,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                   // Table header row - using const where possible
                   TableRow(
                     decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHighest),
+                        color: colorScheme.surfaceContainerHighest,),
                     children: [
                       _tableHeader(context, 'Student Name'),
                       ..._monthLabels.map((l) => _tableHeader(context, l)),
@@ -951,8 +952,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                                   style: TextStyle(
                                       color: colorScheme.onSurface,
                                       fontSize: 14,
-                                      fontFamily: 'Questrial')),
-                            )),
+                                      fontFamily: 'Questrial',),),
+                            ),),
                         ..._monthLabels.asMap().entries.map((entry) {
                           final i = entry.key;
                           final field = entry.value.toLowerCase();
@@ -1014,7 +1015,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                                     });
                                   }
                                 },
-                              ));
+                              ),);
                         }),
                         _cell(
                             context,
@@ -1036,14 +1037,14 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                                   });
                                 }
                               },
-                            )),
+                            ),),
                         _cell(
                             context,
                             colorScheme,
                             _PaymentDisplayCell(
                               text: edit.totalPaidFormatted,
                               colorScheme: colorScheme,
-                            )),
+                            ),),
                         _cell(
                             context,
                             colorScheme,
@@ -1053,7 +1054,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                               textColor: edit.balance > 0
                                   ? colorScheme.error
                                   : colorScheme.onSurface,
-                            )),
+                            ),),
                       ],
                     );
                   }),
@@ -1102,7 +1103,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       if (edits.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('No payments to save.')));
+              const SnackBar(content: Text('No payments to save.')),);
         }
         return;
       }
@@ -1169,7 +1170,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       if (paymentDataMap.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('No changes to save.')));
+              const SnackBar(content: Text('No changes to save.')),);
         }
         return;
       }
@@ -1188,7 +1189,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
             content:
-                Text('Successfully saved $savedCount payment record(s).')));
+                Text('Successfully saved $savedCount payment record(s).'),),);
       }
     } catch (e) {
       if (mounted) {
@@ -1236,7 +1237,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         edit.lumpSum.toStringAsFixed(0),
         edit.totalPaid.toStringAsFixed(2),
         edit.balance.toStringAsFixed(2),
-      ].join(','));
+      ].join(','),);
     }
     final csv = rows.join('\n');
     if (mounted) {

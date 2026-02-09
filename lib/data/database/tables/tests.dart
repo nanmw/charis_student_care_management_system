@@ -24,6 +24,9 @@ class Tests extends Table {
   /// When the test was last updated (null for tests that haven't been updated)
   DateTimeColumn get updatedAt => dateTime().nullable()();
 
+  /// Academic session (e.g. "2024-2025"). Nullable for legacy records.
+  TextColumn get academicSession => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 

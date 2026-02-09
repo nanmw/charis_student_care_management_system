@@ -428,11 +428,11 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                           // Items list
                           Flexible(
                             child: _filteredItems.isEmpty
-                                ? Padding(
-                                    padding: const EdgeInsets.all(16.0),
+                                ? const Padding(
+                                    padding: EdgeInsets.all(16.0),
                                     child: Text(
                                       'No items found',
-                                      style: const TextStyle(
+                                      style: TextStyle(
                                         color: AppColors.charisMidGray,
                                         fontSize: 14,
                                         fontFamily: 'Questrial',
@@ -465,7 +465,7 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                                               ),
                                             ),
                                             tileColor: isHighlighted
-                                                ? AppColors.charisLightGray.withOpacity(0.5)
+                                                ? AppColors.charisLightGray.withValues(alpha: 0.5)
                                                 : null,
                                             onTap: () {
                                               widget.onChanged(null);
@@ -516,9 +516,9 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                                         child: ListTile(
                                           title: titleWidget,
                                           selected: isSelected,
-                                          selectedTileColor: AppColors.charisLightGray.withOpacity(0.3),
+                                          selectedTileColor: AppColors.charisLightGray.withValues(alpha: 0.3),
                                           tileColor: isHighlighted && !isSelected
-                                              ? AppColors.charisLightGray.withOpacity(0.5)
+                                              ? AppColors.charisLightGray.withValues(alpha: 0.5)
                                               : null,
                                           onTap: () {
                                             widget.onChanged(item);

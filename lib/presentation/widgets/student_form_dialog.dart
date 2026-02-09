@@ -25,14 +25,14 @@ class StudentFormDialog extends ConsumerStatefulWidget {
     'Year 1',
     'Year 2',
     'Year 3',
-    'Year 4'
+    'Year 4',
   ];
   static const List<String> modeOptions = ['Full-time', 'Hybrid'];
   static const List<String> statusOptions = [
     'Active',
     'Withdrawn',
     'Transferred',
-    'Correspondence'
+    'Correspondence',
   ];
 
   /// Admission year options: current year - 10 to current year + 1
@@ -158,7 +158,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
                     _buildField('Surname', _surnameController, redColor, colorScheme, isDark, hint: 'Surname'),
                     const SizedBox(height: 16),
                     _buildField('First Names', _firstNameController, redColor, colorScheme, isDark,
-                        hint: 'First Names'),
+                        hint: 'First Names',),
                     const SizedBox(height: 16),
                     _buildOptionalDropdown(
                         'Year',
@@ -168,7 +168,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
                         redColor,
                         colorScheme,
                         isDark,
-                        (v) => setState(() => _year = v)),
+                        (v) => setState(() => _year = v),),
                     const SizedBox(height: 16),
                     _buildOptionalDropdown(
                         'Mode',
@@ -178,7 +178,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
                         redColor,
                         colorScheme,
                         isDark,
-                        (v) => setState(() => _mode = v)),
+                        (v) => setState(() => _mode = v),),
                     const SizedBox(height: 16),
                     _buildOptionalDropdown(
                         'Admission year',
@@ -188,7 +188,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
                         redColor,
                         colorScheme,
                         isDark,
-                        (v) => setState(() => _admissionYear = v)),
+                        (v) => setState(() => _admissionYear = v),),
                     const SizedBox(height: 16),
                     _buildDropdown(
                         'Status',
@@ -198,20 +198,20 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
                         redColor,
                         colorScheme,
                         isDark,
-                        (v) => setState(() => _status = v)),
+                        (v) => setState(() => _status = v),),
                     const SizedBox(height: 16),
                     _buildPhoneField(redColor, colorScheme, isDark),
                     const SizedBox(height: 16),
                     _buildEmailField(redColor, colorScheme, isDark),
                     const SizedBox(height: 16),
                     _buildCheckboxField('Handbook', _handbook, redColor, isDark,
-                        (v) => setState(() => _handbook = v)),
+                        (v) => setState(() => _handbook = v),),
                     const SizedBox(height: 12),
                     _buildCheckboxField('Media Release', _mediaRelease, redColor, isDark,
-                        (v) => setState(() => _mediaRelease = v)),
+                        (v) => setState(() => _mediaRelease = v),),
                     const SizedBox(height: 12),
                     _buildCheckboxField('Accident Waiver', _accidentWaiver, redColor, isDark,
-                        (v) => setState(() => _accidentWaiver = v)),
+                        (v) => setState(() => _accidentWaiver = v),),
                     const SizedBox(height: 24),
                     _buildActions(context, redColor, isDark),
                   ],
@@ -268,7 +268,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
   }
 
   Widget _buildField(String label, TextEditingController controller, Color redColor,
-      ColorScheme colorScheme, bool isDark, {String? hint}) {
+      ColorScheme colorScheme, bool isDark, {String? hint,}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -310,7 +310,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
   }
 
   Widget _buildDropdown(String label, List<String> options, String? value,
-      String hint, Color redColor, ColorScheme colorScheme, bool isDark, ValueChanged<String?> onChanged) {
+      String hint, Color redColor, ColorScheme colorScheme, bool isDark, ValueChanged<String?> onChanged,) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -325,7 +325,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
         ),
         const SizedBox(height: 6),
         DropdownButtonFormField<String>(
-          value: value,
+          initialValue: value,
           decoration: InputDecoration(
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(
@@ -344,7 +344,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
           ),
           hint: Text(hint,
               style: TextStyle(
-                  color: colorScheme.onSurfaceVariant, fontSize: 14)),
+                  color: colorScheme.onSurfaceVariant, fontSize: 14,),),
           items: options
               .map((s) => DropdownMenuItem(value: s, child: Text(s)))
               .toList(),
@@ -357,7 +357,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
 
   /// Builds a dropdown with a "Clear" option for optional fields
   Widget _buildOptionalDropdown(String label, List<String> options,
-      String? value, String hint, Color redColor, ColorScheme colorScheme, bool isDark, ValueChanged<String?> onChanged) {
+      String? value, String hint, Color redColor, ColorScheme colorScheme, bool isDark, ValueChanged<String?> onChanged,) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -372,7 +372,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
         ),
         const SizedBox(height: 6),
         DropdownButtonFormField<String>(
-          value: value,
+          initialValue: value,
           decoration: InputDecoration(
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(
@@ -391,7 +391,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
           ),
           hint: Text(hint,
               style: TextStyle(
-                  color: colorScheme.onSurfaceVariant, fontSize: 14)),
+                  color: colorScheme.onSurfaceVariant, fontSize: 14,),),
           items: [
             // Add a "Clear" option at the beginning if a value is selected
             if (value != null)
@@ -400,7 +400,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
                 child: Text('Clear',
                     style: TextStyle(
                         color: colorScheme.onSurfaceVariant,
-                        fontStyle: FontStyle.italic)),
+                        fontStyle: FontStyle.italic,),),
               ),
             ...options.map((s) => DropdownMenuItem(value: s, child: Text(s))),
           ],
@@ -494,7 +494,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
   }
 
   Widget _buildCheckboxField(
-      String label, bool value, Color redColor, bool isDark, ValueChanged<bool> onChanged) {
+      String label, bool value, Color redColor, bool isDark, ValueChanged<bool> onChanged,) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Material(

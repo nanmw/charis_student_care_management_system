@@ -12,6 +12,7 @@ import 'package:charis_student_care/presentation/providers/student_providers.dar
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:charis_student_care/presentation/widgets/student_form_dialog.dart';
+import 'package:charis_student_care/presentation/widgets/student_summary_dialog.dart';
 
 /// Main content for Students List (shell provides header/sidebar/footer).
 class StudentListScreen extends ConsumerStatefulWidget {
@@ -171,6 +172,7 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
                   students: displayedStudents,
                   colorScheme: colorScheme,
                   redColor: redColor,
+                  onView: (s) => StudentSummaryDialog.show(context: context, student: s),
                   onEdit: (s) => _openEditStudent(context, s, ref),
                   onWithdraw: (s) => _applyStatus(context, ref, s, 'Withdrawn'),
                   onTransfer: (s) => _toggleMode(context, ref, s),
@@ -183,6 +185,7 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
                   displayedStudents,
                   colorScheme,
                   (
+                    (s) => StudentSummaryDialog.show(context: context, student: s),
                     (s) => _openEditStudent(context, s, ref),
                     (s) => _applyStatus(context, ref, s, 'Withdrawn'),
                     (s) => _toggleMode(context, ref, s),
@@ -322,7 +325,7 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
         items: _yearFilterOptions.map((v) => DropdownMenuItem<String?>(
           value: v,
           child: Text(v ?? 'All', style: TextStyle(color: colorScheme.onSurface, fontSize: 14)),
-        )).toList(),
+        ),).toList(),
         onChanged: (v) => setState(() {
           _yearFilter = v;
           _displayedCount = 20; // Reset to initial batch
@@ -353,7 +356,7 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
         items: _modeFilterOptions.map((v) => DropdownMenuItem<String?>(
           value: v,
           child: Text(v ?? 'All', style: TextStyle(color: colorScheme.onSurface, fontSize: 14)),
-        )).toList(),
+        ),).toList(),
         onChanged: (v) => setState(() {
           _modeFilter = v;
           _displayedCount = 20; // Reset to initial batch
@@ -593,6 +596,7 @@ class StudentDataSource extends DataGridSource {
     required List<Student> students,
     required ColorScheme colorScheme,
     required Color redColor,
+    required void Function(Student) onView,
     required void Function(Student) onEdit,
     required void Function(Student) onWithdraw,
     required void Function(Student) onTransfer,
@@ -601,6 +605,7 @@ class StudentDataSource extends DataGridSource {
   })  : _students = students,
         _colorScheme = colorScheme,
         _redColor = redColor,
+        _onView = onView,
         _onEdit = onEdit,
         _onWithdraw = onWithdraw,
         _onTransfer = onTransfer,
@@ -611,7 +616,8 @@ class StudentDataSource extends DataGridSource {
 
   List<Student> _students;
   ColorScheme _colorScheme;
-  Color _redColor;
+  final Color _redColor;
+  void Function(Student) _onView;
   void Function(Student) _onEdit;
   void Function(Student) _onWithdraw;
   void Function(Student) _onTransfer;
@@ -623,15 +629,16 @@ class StudentDataSource extends DataGridSource {
   void updateData(
     List<Student> students,
     ColorScheme colorScheme,
-    (void Function(Student), void Function(Student), void Function(Student), void Function(Student), bool) callbacks,
+    (void Function(Student), void Function(Student), void Function(Student), void Function(Student), void Function(Student), bool) callbacks,
   ) {
     _students = students;
     _colorScheme = colorScheme;
-    _onEdit = callbacks.$1;
-    _onWithdraw = callbacks.$2;
-    _onTransfer = callbacks.$3;
-    _onCorrespondence = callbacks.$4;
-    _canManage = callbacks.$5;
+    _onView = callbacks.$1;
+    _onEdit = callbacks.$2;
+    _onWithdraw = callbacks.$3;
+    _onTransfer = callbacks.$4;
+    _onCorrespondence = callbacks.$5;
+    _canManage = callbacks.$6;
     _buildRows();
     notifyListeners();
   }
@@ -653,7 +660,7 @@ class StudentDataSource extends DataGridSource {
               DataGridCell<bool>(columnName: 'mediaRelease', value: e.value.mediaRelease),
               DataGridCell<bool>(columnName: 'accidentWaiver', value: e.value.accidentWaiver),
               DataGridCell<Student>(columnName: 'actions', value: e.value),
-            ]))
+            ],),)
         .toList();
   }
 
@@ -675,12 +682,23 @@ class StudentDataSource extends DataGridSource {
               mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
+                Tooltip(
+                  message: 'View Summary',
+                  child: IconButton(
+                    onPressed: () => _onView(student),
+                    icon: const Icon(Icons.visibility_outlined, size: 20),
+                    color: _colorScheme.onSurfaceVariant,
+                    padding: const EdgeInsets.all(8),
+                    constraints: const BoxConstraints(),
+                  ),
+                ),
                 if (_canManage) ...[
+                  const SizedBox(width: 4),
                   Tooltip(
                     message: 'Edit',
                     child: IconButton(
                       onPressed: () => _onEdit(student),
-                      icon: Icon(Icons.edit_outlined, size: 20),
+                      icon: const Icon(Icons.edit_outlined, size: 20),
                       color: _colorScheme.onSurfaceVariant,
                       padding: const EdgeInsets.all(8),
                       constraints: const BoxConstraints(),
@@ -721,7 +739,7 @@ class StudentDataSource extends DataGridSource {
                           children: [
                             Icon(Icons.swap_horiz, size: 18, color: _colorScheme.onSurfaceVariant),
                             const SizedBox(width: 8),
-                            Text('Transfer'),
+                            const Text('Transfer'),
                           ],
                         ),
                       ),
@@ -731,7 +749,7 @@ class StudentDataSource extends DataGridSource {
                           children: [
                             Icon(Icons.email_outlined, size: 18, color: _colorScheme.onSurfaceVariant),
                             const SizedBox(width: 8),
-                            Text('Correspondence'),
+                            const Text('Correspondence'),
                           ],
                         ),
                       ),
@@ -784,7 +802,7 @@ class StudentDataSource extends DataGridSource {
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: AppColors.correspondenceStatusGreen),
                 ),
-                child: Text(
+                child: const Text(
                   'Correspondence',
                   style: TextStyle(
                     color: AppColors.correspondenceStatusGreen,

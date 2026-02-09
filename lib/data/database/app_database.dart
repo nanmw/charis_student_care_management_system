@@ -15,7 +15,7 @@ part 'app_database.g.dart';
 
 /// Main database class (plain SQLite; encryption can be re-added later with platform-specific setup)
 @DriftDatabase(
-    tables: [Students, ChangeSets, Attendance, Tests, Payments, Subjects])
+    tables: [Students, ChangeSets, Attendance, Tests, Payments, Subjects],)
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
@@ -24,7 +24,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.test() : super(_openTestConnection());
 
   @override
-  int get schemaVersion => 14;
+  int get schemaVersion => 16;
 
   @override
   MigrationStrategy get migration {
@@ -48,7 +48,7 @@ class AppDatabase extends _$AppDatabase {
           'CREATE INDEX IF NOT EXISTS idx_changesets_user_id ON change_sets(user_id)',
         );
         await customStatement(
-            'CREATE INDEX IF NOT EXISTS idx_subjects_year ON subjects(year)');
+            'CREATE INDEX IF NOT EXISTS idx_subjects_year ON subjects(year)',);
 
         // Seed first-year subjects
         final firstYearSubjects = [
@@ -205,7 +205,7 @@ class AppDatabase extends _$AppDatabase {
         // #region agent log
         try {
           final logFile = File(
-              r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log');
+              r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log',);
           final entry = jsonEncode({
             'id': 'log_${DateTime.now().millisecondsSinceEpoch}',
             'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -217,25 +217,27 @@ class AppDatabase extends _$AppDatabase {
             'hypothesisId': 'A',
           });
           logFile.writeAsStringSync('$entry\n', mode: FileMode.append);
-        } catch (e) {}
+        } catch (e) {
+          // Debug migration logging only; ignore failures.
+        }
         // #endregion
         if (from < 2) {
           await customStatement('ALTER TABLE students ADD COLUMN year TEXT');
           await customStatement('ALTER TABLE students ADD COLUMN mode TEXT');
           await customStatement(
-              'ALTER TABLE students ADD COLUMN contact_info TEXT');
+              'ALTER TABLE students ADD COLUMN contact_info TEXT',);
           await customStatement('ALTER TABLE students ADD COLUMN email TEXT');
         }
         if (from < 3) {
           // Remove Correspondence: migrate status and mode to valid values
           await customStatement(
-              "UPDATE students SET status = 'Transferred' WHERE status = 'Correspondence'");
+              "UPDATE students SET status = 'Transferred' WHERE status = 'Correspondence'",);
           await customStatement(
-              "UPDATE students SET mode = 'Hybrid' WHERE mode = 'Part-time' OR mode = 'Correspondence'");
+              "UPDATE students SET mode = 'Hybrid' WHERE mode = 'Part-time' OR mode = 'Correspondence'",);
         }
         if (from < 5) {
           await customStatement(
-              'ALTER TABLE students ADD COLUMN admission_year TEXT');
+              'ALTER TABLE students ADD COLUMN admission_year TEXT',);
         }
         if (from < 6) {
           await customStatement('''
@@ -249,26 +251,26 @@ class AppDatabase extends _$AppDatabase {
             )
           ''');
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_tests_student_id ON tests(student_id)');
+              'CREATE INDEX IF NOT EXISTS idx_tests_student_id ON tests(student_id)',);
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_tests_student_created ON tests(student_id, created_at)');
+              'CREATE INDEX IF NOT EXISTS idx_tests_student_created ON tests(student_id, created_at)',);
         }
         if (from < 7) {
           // Populate admissionYear based on year level
           await customStatement(
-              "UPDATE students SET admission_year = '2026' WHERE year = 'Year 1' AND admission_year IS NULL");
+              "UPDATE students SET admission_year = '2026' WHERE year = 'Year 1' AND admission_year IS NULL",);
           await customStatement(
-              "UPDATE students SET admission_year = '2025' WHERE year = 'Year 2' AND admission_year IS NULL");
+              "UPDATE students SET admission_year = '2025' WHERE year = 'Year 2' AND admission_year IS NULL",);
           await customStatement(
-              "UPDATE students SET admission_year = '2024' WHERE year = 'Year 3' AND admission_year IS NULL");
+              "UPDATE students SET admission_year = '2024' WHERE year = 'Year 3' AND admission_year IS NULL",);
         }
         if (from < 8) {
           await customStatement(
-              'ALTER TABLE students ADD COLUMN handbook INTEGER DEFAULT 0');
+              'ALTER TABLE students ADD COLUMN handbook INTEGER DEFAULT 0',);
           await customStatement(
-              'ALTER TABLE students ADD COLUMN media_release INTEGER DEFAULT 0');
+              'ALTER TABLE students ADD COLUMN media_release INTEGER DEFAULT 0',);
           await customStatement(
-              'ALTER TABLE students ADD COLUMN accident_waiver INTEGER DEFAULT 0');
+              'ALTER TABLE students ADD COLUMN accident_waiver INTEGER DEFAULT 0',);
         }
         if (from < 4) {
           await customStatement('''
@@ -283,13 +285,13 @@ class AppDatabase extends _$AppDatabase {
             )
           ''');
           await customStatement(
-              'CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_date_student ON attendance(date, student_id)');
+              'CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_date_student ON attendance(date, student_id)',);
         }
         if (from < 9) {
           // #region agent log
           try {
             final logFile = File(
-                r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log');
+                r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log',);
             final entry = jsonEncode({
               'id': 'log_${DateTime.now().millisecondsSinceEpoch}',
               'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -301,7 +303,9 @@ class AppDatabase extends _$AppDatabase {
               'hypothesisId': 'A',
             });
             logFile.writeAsStringSync('$entry\n', mode: FileMode.append);
-          } catch (e) {}
+          } catch (e) {
+            // Debug migration logging only; ignore failures.
+          }
           // #endregion
           // Remove handbook, media_release, and accident_waiver columns from attendance table
           // SQLite doesn't support DROP COLUMN, so we recreate the table
@@ -322,13 +326,13 @@ class AppDatabase extends _$AppDatabase {
           ''');
           await customStatement('DROP TABLE attendance');
           await customStatement(
-              'ALTER TABLE attendance_new RENAME TO attendance');
+              'ALTER TABLE attendance_new RENAME TO attendance',);
           await customStatement(
-              'CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_date_student ON attendance(date, student_id)');
+              'CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_date_student ON attendance(date, student_id)',);
           // #region agent log
           try {
             final logFile = File(
-                r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log');
+                r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log',);
             final entry = jsonEncode({
               'id': 'log_${DateTime.now().millisecondsSinceEpoch}',
               'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -340,7 +344,9 @@ class AppDatabase extends _$AppDatabase {
               'hypothesisId': 'A',
             });
             logFile.writeAsStringSync('$entry\n', mode: FileMode.append);
-          } catch (e) {}
+          } catch (e) {
+            // Debug migration logging only; ignore failures.
+          }
           // #endregion
         }
         if (from < 10) {
@@ -368,7 +374,7 @@ class AppDatabase extends _$AppDatabase {
             )
           ''');
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_payments_student_year ON payments(student_id, year)');
+              'CREATE INDEX IF NOT EXISTS idx_payments_student_year ON payments(student_id, year)',);
         }
         if (from < 11) {
           await customStatement('''
@@ -380,7 +386,7 @@ class AppDatabase extends _$AppDatabase {
             )
           ''');
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_subjects_year ON subjects(year)');
+              'CREATE INDEX IF NOT EXISTS idx_subjects_year ON subjects(year)',);
 
           // Seed first-year subjects
           final firstYearSubjects = [
@@ -659,14 +665,14 @@ class AppDatabase extends _$AppDatabase {
           ''');
           await customStatement('DROP TABLE change_sets');
           await customStatement(
-              'ALTER TABLE change_sets_new RENAME TO change_sets');
+              'ALTER TABLE change_sets_new RENAME TO change_sets',);
           // Recreate indexes
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_changesets_table_record ON change_sets("table", record_id)');
+              'CREATE INDEX IF NOT EXISTS idx_changesets_table_record ON change_sets("table", record_id)',);
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_changesets_timestamp ON change_sets(timestamp)');
+              'CREATE INDEX IF NOT EXISTS idx_changesets_timestamp ON change_sets(timestamp)',);
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_changesets_user_id ON change_sets(user_id)');
+              'CREATE INDEX IF NOT EXISTS idx_changesets_user_id ON change_sets(user_id)',);
         }
         if (from < 14) {
           await customStatement('ALTER TABLE tests ADD COLUMN subject_id INTEGER');
@@ -675,6 +681,11 @@ class AppDatabase extends _$AppDatabase {
         if (from < 15) {
           await customStatement('ALTER TABLE tests ADD COLUMN updated_at INTEGER');
           await customStatement('CREATE INDEX IF NOT EXISTS idx_tests_updated_at ON tests(updated_at)');
+        }
+        if (from < 16) {
+          await customStatement('ALTER TABLE tests ADD COLUMN academic_session TEXT');
+          await customStatement(
+              'CREATE INDEX IF NOT EXISTS idx_tests_academic_session ON tests(academic_session)',);
         }
       },
     );

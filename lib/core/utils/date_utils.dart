@@ -31,7 +31,7 @@ class DateUtils {
   static String formatAttendanceDate(DateTime date) {
     final month = DateFormat('MMMM').format(date);
     final day = date.day;
-    return '$month ${day}${_ordinal(day)}, ${date.year}';
+    return '$month $day${_ordinal(day)}, ${date.year}';
   }
 
   /// Format date as ISO string (e.g., "2026-01-28")

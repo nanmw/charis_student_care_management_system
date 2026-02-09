@@ -387,7 +387,7 @@ class SubjectDataSource extends DataGridSource {
               DataGridCell<int>(columnName: 'sn', value: e.key + 1),
               DataGridCell<String>(columnName: 'name', value: e.value.name),
               DataGridCell<Subject>(columnName: 'actions', value: e.value),
-            ]))
+            ],),)
         .toList();
   }
 

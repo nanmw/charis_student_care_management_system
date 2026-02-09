@@ -58,7 +58,7 @@ class AppShell extends ConsumerWidget {
     final headerBgColor = isDark ? colorScheme.surfaceContainerHighest : AppColors.charisRedPrimary;
     final headerTextColor = isDark ? colorScheme.onSurface : AppColors.charisWhite;
     final headerTitleColor = isDark ? AppColors.primaryActionRed : AppColors.charisWhite;
-    final headerRoleColor = isDark ? colorScheme.onSurfaceVariant : AppColors.charisWhite.withOpacity(0.8);
+    final headerRoleColor = isDark ? colorScheme.onSurfaceVariant : AppColors.charisWhite.withValues(alpha: 0.8);
     
     return Container(
       height: 56,

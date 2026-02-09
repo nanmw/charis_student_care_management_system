@@ -5,12 +5,6 @@ import 'package:uuid/uuid.dart';
 
 import 'package:charis_student_care/data/database/app_database.dart';
 
-// #region agent log (disabled for performance - synchronous file I/O was blocking UI)
-void _debugLog(String location, String message, Map<String, dynamic> data, String hypothesisId) {
-  // No-op: was causing UI jank due to synchronous file writes during attendance upsert.
-}
-// #endregion
-
 /// Normalizes [date] to date-only (midnight UTC) for storage/comparison.
 DateTime _dateOnly(DateTime date) {
   return DateTime.utc(date.year, date.month, date.day);
@@ -65,7 +59,7 @@ class AttendanceRepository {
     // Fetch all existing attendance rows for this date and students in one query
     final existingAttendance = await (_db.select(_db.attendance)
           ..where((t) =>
-              t.date.equals(d) & t.studentId.isIn(studentIds)))
+              t.date.equals(d) & t.studentId.isIn(studentIds),))
         .get();
 
     final existingMap = {for (final a in existingAttendance) a.studentId: a};
@@ -102,7 +96,7 @@ class AttendanceRepository {
           );
         }
         
-        if (userId != null && attendanceId != null) {
+        if (userId != null) {
           await _insertChangeSet(
             table: 'attendance',
             recordId: attendanceId.toString(),
