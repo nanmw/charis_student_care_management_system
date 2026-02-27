@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:charis_student_care/core/config/auth_config.dart';
 import 'package:charis_student_care/data/services/auth_service.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
+import 'package:charis_student_care/presentation/providers/student_providers.dart';
 
 /// Listenable for router refresh when auth state changes.
 class AuthRefreshNotifier extends ChangeNotifier {
@@ -16,7 +17,8 @@ final authRefreshNotifierProvider = Provider<AuthRefreshNotifier>((ref) {
 });
 
 final authServiceProvider = Provider<AuthService>((ref) {
-  return AuthService();
+  final userRepository = ref.watch(userRepositoryProvider);
+  return AuthService(userRepository: userRepository);
 });
 
 final authStateProvider =
@@ -37,14 +39,25 @@ class AuthNotifier extends AsyncNotifier<AuthState> {
     return authState;
   }
 
+  Future<void> signInWithCredentials(String username, String password) async {
+    state = const AsyncValue.loading();
+    state = await AsyncValue.guard(() async {
+      final service = ref.read(authServiceProvider);
+      await service.loginWithCredentials(username, password);
+      return _stateFromService(service);
+    });
+    _notifyRefresh();
+  }
+
+  /// Microsoft OAuth (e.g. for OneDrive connection).
   Future<void> signIn() async {
     state = const AsyncValue.loading();
     state = await AsyncValue.guard(() async {
       final service = ref.read(authServiceProvider);
       await service.login();
-      _notifyRefresh();
       return _stateFromService(service);
     });
+    _notifyRefresh();
   }
 
   void signOut() {

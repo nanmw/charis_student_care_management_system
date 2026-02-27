@@ -1,5 +1,7 @@
 import 'package:drift/drift.dart';
 
+import 'classes.dart';
+
 /// Students table definition
 /// Stores student information with alphabetical sorting support
 class Students extends Table {
@@ -16,8 +18,8 @@ class Students extends Table {
   /// Defaults to 'Active'
   TextColumn get status => text().withDefault(const Constant('Active'))();
 
-  /// Year (e.g. Year 1, Year 2)
-  TextColumn get year => text().nullable()();
+  /// Class (year level) – references classes.id
+  IntColumn get classId => integer().nullable().references(Classes, #id)();
 
   /// Mode (e.g. Full-time, Hybrid)
   TextColumn get mode => text().nullable()();

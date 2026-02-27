@@ -6,7 +6,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
+import 'package:charis_student_care/core/constants/app_constants.dart';
+import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
+import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
+import 'package:go_router/go_router.dart';
 import 'package:charis_student_care/core/utils/date_utils.dart' as app_date_utils;
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/domain/use_cases/sort_students_alphabetically.dart';
@@ -16,12 +20,12 @@ import 'package:charis_student_care/presentation/providers/student_providers.dar
 import 'package:charis_student_care/presentation/providers/subject_providers.dart';
 import 'package:charis_student_care/presentation/providers/test_providers.dart';
 import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
+import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/searchable_dropdown.dart';
 import 'package:charis_student_care/presentation/widgets/student_summary_dialog.dart';
 
 const List<String> _modeOptions = ['Full-time', 'Hybrid'];
-const List<String?> _studentYearOptions = [null, 'Year 1', 'Year 2', 'Year 3'];
 
 /// Returns current academic session string (e.g. "2025-2026") for default selection.
 String _defaultCurrentAcademicSession() {
@@ -55,13 +59,14 @@ class TestsScreen extends ConsumerStatefulWidget {
 
 class _TestsScreenState extends ConsumerState<TestsScreen> {
   String _selectedMode = 'Full-time';
-  String? _studentYear = 'Year 1'; // Student year filter (Year 1, 2, 3)
-  String? _selectedAcademicSession; // Academic session (e.g. 2024-2025); null = All
+  int? _studentClassId; // Student class filter (from DB classes)
+  String? _selectedAcademicSession; // Academic session (e.g. 2024-2025)
   String _searchQuery = '';
   int? _bulkSubjectId;
   DateTime? _selectedDate; // Date filter for tests
 
   bool _hasInitializedSession = false;
+  bool _defaultClassScheduled = false;
 
   @override
   void initState() {
@@ -91,6 +96,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
   // Memoization for filtered/sorted lists
   List<Student>? _cachedFilteredStudents;
   String _lastFilterKey = '';
+  String _lastEditFilterKey = '';
 
   // Test data cache
   Map<int, Test>? _cachedTests;
@@ -101,6 +107,10 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
   // Infinite scroll state
   int _displayedCount = 25;
   bool _isLoadingMore = false;
+
+  /// When true, build must not overwrite _cachedTests with DB-derived testMap so
+  /// "Clear fields" state (blank subject, Passed "-") persists across rebuilds.
+  bool _cohortFieldsCleared = false;
 
   TestDataSource? _dataSource;
 
@@ -158,6 +168,24 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     // Initialize session from global current session on first build
     _initializeSessionFromGlobal(ref);
 
+    final visibleClasses = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull;
+    final auth = ref.watch(authStateProvider).valueOrNull;
+    if (auth is Authenticated &&
+        visibleClasses != null &&
+        visibleClasses.isNotEmpty &&
+        !_defaultClassScheduled &&
+        _studentClassId == null) {
+      _defaultClassScheduled = true;
+      final year1 = visibleClasses.where((c) => c.name == 'Year 1');
+      final defaultClassId = auth.role == UserRole.facilitator
+          ? visibleClasses.first.id
+          : (year1.isEmpty ? visibleClasses.first.id : year1.first.id);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _studentClassId = defaultClassId);
+      });
+    }
+
     return Container(
       color: colorScheme.surface,
       padding: const EdgeInsets.all(24),
@@ -165,23 +193,42 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Header
-          Text(
-            'Tests Entry',
-            style: TextStyle(
-              color: colorScheme.onSurface,
-              fontWeight: FontWeight.w700,
-              fontSize: 24,
-              fontFamily: 'Questrial',
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Manage and record students\' test scores.',
-            style: TextStyle(
-              color: colorScheme.onSurfaceVariant,
-              fontSize: 14,
-              fontFamily: 'Questrial',
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Tests Entry',
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 24,
+                        fontFamily: 'Questrial',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Manage and record students\' test scores.',
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 14,
+                        fontFamily: 'Questrial',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              RoleGuard(
+                canShow: RolePermissions.canExportReports,
+                child: OutlinedButton.icon(
+                  onPressed: () => context.go('/reports?type=tests'),
+                  icon: const Icon(Icons.download_outlined, size: 18),
+                  label: const Text('Export'),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 24),
 
@@ -189,53 +236,375 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
           _buildFiltersAndBulkActions(colorScheme, redColor),
           const SizedBox(height: 16),
 
-          // Section title
-          Text(
-            'Student Test Results',
-            style: TextStyle(
-              color: colorScheme.onSurface,
-              fontWeight: FontWeight.w600,
-              fontSize: 18,
-              fontFamily: 'Questrial',
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Action buttons
-          Row(
-            children: [
-              FilledButton.icon(
-                onPressed: _hasUnsavedChanges() ? _saveAllChanges : null,
-                icon: const Icon(Icons.save, size: 20),
-                label: const Text('Save All Changes'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: redColor,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                ),
-              ),
-              const SizedBox(width: 12),
-              DropdownButton<String>(
-                hint: const Text('Bulk Actions'),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'export',
-                    child: Text('Export to CSV'),
+          // Tabs: Report (default) and Data Entry
+          Expanded(
+            child: DefaultTabController(
+              length: 2,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TabBar(
+                    labelColor: redColor,
+                    unselectedLabelColor: colorScheme.onSurfaceVariant,
+                    indicatorColor: redColor,
+                    labelStyle: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      fontFamily: 'Questrial',
+                    ),
+                    tabs: const [
+                      Tab(text: 'Report'),
+                      Tab(text: 'Data Entry'),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: TabBarView(
+                      children: [
+                        _buildReportTab(context, colorScheme, redColor),
+                        _buildDataEntryTab(
+                          context,
+                          colorScheme,
+                          redColor,
+                          isDark,
+                          studentsAsync,
+                          allTestsAsync,
+                        ),
+                      ],
+                    ),
                   ),
                 ],
-                onChanged: (value) {
-                  if (value == 'export') {
-                    _exportCsv(context);
-                  }
-                },
               ),
-            ],
+            ),
           ),
-          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
 
-          // Table
-          Expanded(
-            child: studentsAsync.when(
+  /// Report tab: pivot layout — students as rows, NAME(S) and SURNAME on the left, subjects as column headers.
+  Widget _buildReportTab(
+    BuildContext context,
+    ColorScheme colorScheme,
+    Color redColor,
+  ) {
+    final studentsAsync = ref.watch(studentsStreamProvider('Active'));
+    final allTestsAsync = ref.watch(allTestsProvider);
+    final classesAsync = ref.watch(allClassesFutureProvider);
+    final classes = classesAsync.valueOrNull ?? [];
+    int id1 = 0, id2 = 0, id3 = 0;
+    for (final c in classes) {
+      if (c.name == 'Year 1') {
+        id1 = c.id;
+      } else if (c.name == 'Year 2') {
+        id2 = c.id;
+      } else if (c.name == 'Year 3') {
+        id3 = c.id;
+      }
+    }
+    final y1 = ref.watch(subjectsForClassStreamProvider(id1));
+    final y2 = ref.watch(subjectsForClassStreamProvider(id2));
+    final y3 = ref.watch(subjectsForClassStreamProvider(id3));
+
+    if (!studentsAsync.hasValue ||
+        !allTestsAsync.hasValue ||
+        !y1.hasValue ||
+        !y2.hasValue ||
+        !y3.hasValue) {
+      if (studentsAsync.isLoading || allTestsAsync.isLoading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      if (studentsAsync.hasError) {
+        return Center(
+          child: Text(
+            'Error loading students: ${studentsAsync.error}',
+            style: TextStyle(color: colorScheme.error, fontSize: 14),
+          ),
+        );
+      }
+      if (allTestsAsync.hasError) {
+        return Center(
+          child: Text(
+            'Error loading tests: ${allTestsAsync.error}',
+            style: TextStyle(color: colorScheme.error, fontSize: 14),
+          ),
+        );
+      }
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final allStudents = studentsAsync.value!;
+    final allTests = allTestsAsync.value!;
+    final reportStudents = _getReportStudents(allStudents);
+    final cohortStudents = _getCohortStudents(allStudents);
+    final subjectColumns = _getReportSubjectColumns(
+      y1.value!,
+      y2.value!,
+      y3.value!,
+      _studentClassId,
+      id1,
+      id2,
+      id3,
+    );
+    final scoreMap = _buildReportScoreMap(allTests, reportStudents);
+    final cohortScoreMap = _buildReportScoreMap(allTests, cohortStudents);
+    final outstandingSet = _buildReportOutstandingSet(
+      reportStudents,
+      subjectColumns,
+      scoreMap,
+      cohortScoreMap,
+    );
+
+    if (reportStudents.isEmpty) {
+      return Center(
+        child: Text(
+          'No students found.',
+          style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 14,
+            fontFamily: 'Questrial',
+          ),
+        ),
+      );
+    }
+
+    final reportDataSource = TestsReportPivotDataSource(
+      students: reportStudents,
+      subjectColumns: subjectColumns,
+      scoreMap: scoreMap,
+      outstandingSet: outstandingSet,
+      colorScheme: colorScheme,
+      redColor: redColor,
+    );
+
+    final columns = <GridColumn>[
+      GridColumn(
+        columnName: 'sno',
+        width: 50,
+        label: _buildHeader('#', colorScheme),
+      ),
+      GridColumn(
+        columnName: 'name',
+        width: 180,
+        label: _buildHeader('Name', colorScheme),
+      ),
+      ...subjectColumns.map(
+        (subject) => GridColumn(
+          columnName: 'subject_${subject.id}',
+          width: 130,
+          label: _buildReportSubjectHeader(subject.name, colorScheme),
+        ),
+      ),
+    ];
+
+    return SfDataGrid(
+      source: reportDataSource,
+      columnWidthMode: ColumnWidthMode.none,
+      gridLinesVisibility: GridLinesVisibility.horizontal,
+      headerGridLinesVisibility: GridLinesVisibility.both,
+      columns: columns,
+    );
+  }
+
+  /// Cohort for report: same mode and year as current filters, no search.
+  /// Used to compute "outstanding" so a searched student still sees their cohort's tests.
+  List<Student> _getCohortStudents(List<Student> allStudents) {
+    final filtered = allStudents.where((s) {
+      if (s.mode != _selectedMode) return false;
+      if (_studentClassId != null && s.classId != _studentClassId) return false;
+      return true;
+    }).toList();
+    return sortStudentsAlphabetically(filtered);
+  }
+
+  /// Filtered and sorted students for the report (same filters as Data Entry).
+  List<Student> _getReportStudents(List<Student> allStudents) {
+    final searchQueryLower = _searchQuery.toLowerCase();
+    final filtered = allStudents.where((s) {
+      if (s.mode != _selectedMode) return false;
+      if (_studentClassId != null && s.classId != _studentClassId) return false;
+      if (searchQueryLower.isNotEmpty) {
+        if (!s.surname.toLowerCase().contains(searchQueryLower) &&
+            !s.firstName.toLowerCase().contains(searchQueryLower) &&
+            !(s.email?.toLowerCase().contains(searchQueryLower) ?? false)) {
+          return false;
+        }
+      }
+      return true;
+    }).toList();
+    return sortStudentsAlphabetically(filtered);
+  }
+
+  /// Ordered list of subjects for report columns. When [selectedClassId] is set, only that class's subjects; when null (All), all classes.
+  List<Subject> _getReportSubjectColumns(
+    List<Subject> y1,
+    List<Subject> y2,
+    List<Subject> y3,
+    int? selectedClassId,
+    int id1,
+    int id2,
+    int id3,
+  ) {
+    final List<Subject> list;
+    if (selectedClassId == id1) {
+      list = List<Subject>.from(y1);
+    } else if (selectedClassId == id2) {
+      list = List<Subject>.from(y2);
+    } else if (selectedClassId == id3) {
+      list = List<Subject>.from(y3);
+    } else {
+      list = [...y1, ...y2, ...y3];
+      list.sort((a, b) {
+        final classCmp = a.classId.compareTo(b.classId);
+        if (classCmp != 0) return classCmp;
+        return a.name.compareTo(b.name);
+      });
+      return list;
+    }
+    list.sort((a, b) => a.name.compareTo(b.name));
+    return list;
+  }
+
+  /// Builds studentId -> subjectId -> Test (latest per student+subject under current filters).
+  Map<int, Map<int, Test>> _buildReportScoreMap(
+    List<Test> allTests,
+    List<Student> reportStudents,
+  ) {
+    final studentIds = reportStudents.map((s) => s.id).toSet();
+    var filtered = allTests;
+    if (_selectedAcademicSession != null &&
+        _selectedAcademicSession!.trim().isNotEmpty) {
+      filtered = filtered
+          .where((t) => t.academicSession == _selectedAcademicSession)
+          .toList();
+    }
+    if (_selectedDate != null) {
+      final selectedDateOnly = DateTime(
+        _selectedDate!.year,
+        _selectedDate!.month,
+        _selectedDate!.day,
+      );
+      filtered = filtered.where((t) {
+        final testDate = t.updatedAt ?? t.createdAt;
+        final d = DateTime(
+          testDate.year,
+          testDate.month,
+          testDate.day,
+        );
+        return d.isAtSameMomentAs(selectedDateOnly);
+      }).toList();
+    }
+    filtered = filtered.where((t) => studentIds.contains(t.studentId)).toList();
+    filtered = filtered.where((t) => t.subjectId != null).toList();
+
+    final map = <int, Map<int, Test>>{};
+    for (final test in filtered) {
+      final sid = test.studentId;
+      final subid = test.subjectId!;
+      final existing = map[sid]?[subid];
+      final testDate = test.updatedAt ?? test.createdAt;
+      if (existing == null ||
+          (testDate.isAfter(existing.updatedAt ?? existing.createdAt))) {
+        map.putIfAbsent(sid, () => {})[subid] = test;
+      }
+    }
+    return map;
+  }
+
+  /// (studentId, subjectId) pairs where the student has no score for that subject
+  /// but at least one student in the cohort (same mode/year) does (same session).
+  /// Uses [cohortScoreMap] so outstanding is correct when report is filtered by search.
+  Set<(int, int)> _buildReportOutstandingSet(
+    List<Student> reportStudents,
+    List<Subject> subjectColumns,
+    Map<int, Map<int, Test>> scoreMap,
+    Map<int, Map<int, Test>> cohortScoreMap,
+  ) {
+    if (_selectedAcademicSession == null ||
+        _selectedAcademicSession!.trim().isEmpty) {
+      return {};
+    }
+    final set = <(int, int)>{};
+    for (final subject in subjectColumns) {
+      final cohortHasSubject = cohortScoreMap.values
+          .any((m) => m[subject.id] != null);
+      if (!cohortHasSubject) continue;
+      for (final student in reportStudents) {
+        if (scoreMap[student.id]?[subject.id] == null) {
+          set.add((student.id, subject.id));
+        }
+      }
+    }
+    return set;
+  }
+
+  /// Data Entry tab: section title, action buttons, and entry table.
+  Widget _buildDataEntryTab(
+    BuildContext context,
+    ColorScheme colorScheme,
+    Color redColor,
+    bool isDark,
+    AsyncValue<List<Student>> studentsAsync,
+    AsyncValue<List<Test>> allTestsAsync,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Student Test Results',
+          style: TextStyle(
+            color: colorScheme.onSurface,
+            fontWeight: FontWeight.w600,
+            fontSize: 18,
+            fontFamily: 'Questrial',
+          ),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            FilledButton.icon(
+              onPressed: _hasUnsavedChanges() ? _saveAllChanges : null,
+              icon: const Icon(Icons.save, size: 20),
+              label: const Text('Save All Changes'),
+              style: FilledButton.styleFrom(
+                backgroundColor: redColor,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
+            ),
+            const SizedBox(width: 12),
+            DropdownButton<String>(
+              hint: const Text('Bulk Actions'),
+              items: const [
+                DropdownMenuItem(
+                  value: 'export',
+                  child: Text('Export to CSV'),
+                ),
+              ],
+              onChanged: (value) {
+                if (value == 'export') {
+                  _exportCsv(context);
+                }
+              },
+            ),
+            const SizedBox(width: 12),
+            OutlinedButton.icon(
+              onPressed: _cachedFilteredStudents != null &&
+                      _cachedFilteredStudents!.isNotEmpty
+                  ? _clearFieldsForCohort
+                  : null,
+              icon: const Icon(Icons.clear_all, size: 20),
+              label: const Text('Clear fields'),
+              style: OutlinedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: studentsAsync.when(
               data: (allStudents) {
                 // Filter and sort students
                 final dateKey = _selectedDate != null
@@ -243,13 +612,14 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                     : 'all';
                 final sessionKey = _selectedAcademicSession ?? 'all';
                 final filterKey =
-                    '$_selectedMode|$_studentYear|$_searchQuery|$dateKey|$_bulkSubjectId|$sessionKey';
+                    '$_selectedMode|$_studentClassId|$_searchQuery|$dateKey|$_bulkSubjectId|$sessionKey';
                 if (_cachedFilteredStudents == null ||
                     _lastFilterKey != filterKey) {
+                  _cohortFieldsCleared = false;
                   final searchQueryLower = _searchQuery.toLowerCase();
                   final filtered = allStudents.where((s) {
                     if (s.mode != _selectedMode) return false;
-                    if (_studentYear != null && s.year != _studentYear) {
+                    if (_studentClassId != null && s.classId != _studentClassId) {
                       return false;
                     }
                     if (searchQueryLower.isNotEmpty) {
@@ -324,7 +694,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                     
                     // Filter by cohort (year + mode) - only include tests from students in the cohort
                     final cohortStudentIds = allStudents
-                        .where((s) => s.mode == _selectedMode && s.year == _studentYear)
+                        .where((s) => s.mode == _selectedMode && s.classId == _studentClassId)
                         .map((s) => s.id)
                         .toSet();
                     filteredTests = filteredTests
@@ -358,7 +728,10 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                         }
                       }
                     }
-                    _cachedTests = testMap;
+                    if (!_cohortFieldsCleared) {
+                      _cachedTests = testMap;
+                    }
+                    final mapForDisplay = _cachedTests ?? testMap;
 
                     // At least one test in cohort for this subject/session (for "Outstanding" label)
                     // cohortStudentIds already computed above for filtering
@@ -366,12 +739,12 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                         .any((test) => cohortStudentIds.contains(test.studentId));
 
                     // Initialize edits if needed
-                    _initializeEdits(displayedStudents, testMap);
+                    _initializeEdits(displayedStudents, mapForDisplay, filterKey: filterKey);
 
                     // Build data source
                     _dataSource ??= TestDataSource(
                       students: displayedStudents,
-                      testMap: testMap,
+                      testMap: mapForDisplay,
                       edits: _edits,
                       controllers: _controllers,
                       colorScheme: colorScheme,
@@ -403,7 +776,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                     );
                     _dataSource!.updateData(
                       displayedStudents,
-                      testMap,
+                      mapForDisplay,
                       _edits,
                       cohortHasTestForSubjectSession: cohortHasTestForSubjectSession,
                     );
@@ -439,6 +812,11 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                           gridLinesVisibility: GridLinesVisibility.horizontal,
                           headerGridLinesVisibility: GridLinesVisibility.both,
                           columns: [
+                            GridColumn(
+                              columnName: 'sno',
+                              width: 50,
+                              label: _buildHeader('#', colorScheme),
+                            ),
                             GridColumn(
                               columnName: 'studentName',
                               width: 200,
@@ -494,8 +872,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
             ),
           ),
         ],
-      ),
-    );
+      );
   }
 
   Widget _buildHeader(String text, ColorScheme colorScheme) {
@@ -504,6 +881,25 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       alignment: Alignment.centerLeft,
       child: Text(
         text,
+        style: TextStyle(
+          color: colorScheme.onSurface,
+          fontWeight: FontWeight.w600,
+          fontSize: 14,
+          fontFamily: 'Questrial',
+        ),
+      ),
+    );
+  }
+
+  /// Header for report subject columns: wraps up to 4 lines for longer names.
+  Widget _buildReportSubjectHeader(String text, ColorScheme colorScheme) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      alignment: Alignment.centerLeft,
+      child: Text(
+        text,
+        maxLines: 4,
+        softWrap: true,
         style: TextStyle(
           color: colorScheme.onSurface,
           fontWeight: FontWeight.w600,
@@ -600,67 +996,95 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
   }
 
   Widget _buildBulkSubjectSelector(ColorScheme colorScheme) {
-    // Get all subjects from all years
-    final allSubjectsAsync = ref.watch(subjectsForYearStreamProvider('Year 1'));
+    final classesAsync = ref.watch(classesVisibleToCurrentUserProvider);
+    final classes = classesAsync.valueOrNull ?? [];
+    final classIdToName = {for (final c in classes) c.id: c.name};
 
-    return allSubjectsAsync.when(
-      data: (year1Subjects) {
-        final year2Async = ref.watch(subjectsForYearStreamProvider('Year 2'));
-        final year3Async = ref.watch(subjectsForYearStreamProvider('Year 3'));
+    if (classes.isEmpty) {
+      return const SizedBox(
+        height: 44,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
 
-        return year2Async.when(
-          data: (year2Subjects) {
-            return year3Async.when(
-              data: (year3Subjects) {
-                final allSubjects = [
-                  ...year1Subjects,
-                  ...year2Subjects,
-                  ...year3Subjects,
-                ];
-                final subjectMap = {for (final s in allSubjects) s.id: s};
+    // Watch subjects for each visible class only.
+    final subjectAsyncs = classes
+        .map((c) => ref.watch(subjectsForClassStreamProvider(c.id)))
+        .toList();
+    final allHaveValue = subjectAsyncs.every((a) => a.hasValue);
+    if (!allHaveValue) {
+      return const SizedBox(
+        height: 44,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
 
-                return SearchableDropdown<int>(
-                  key: const ValueKey('bulk_subject_selector'),
-                  items: allSubjects.map((s) => s.id).toList(),
-                  selectedValue: _bulkSubjectId,
-                  hint: 'Select subject...',
-                  searchHint: 'Search subjects...',
-                  itemBuilder: (context, subjectId) {
-                    final subject = subjectMap[subjectId];
-                    return Text(
-                      subject != null
-                          ? '${subject.name} (${subject.year})'
-                          : 'Unknown',
-                      style: const TextStyle(
-                        color: AppColors.charisBlack,
-                        fontSize: 14,
-                        fontFamily: 'Questrial',
-                      ),
-                    );
-                  },
-                  displayTextBuilder: (subjectId) {
-                    final subject = subjectMap[subjectId];
-                    return subject != null
-                        ? '${subject.name} (${subject.year})'
-                        : 'Unknown';
-                  },
-                  searchFilter: (subjectId, query) {
-                    final subject = subjectMap[subjectId];
-                    if (subject == null) return false;
-                    return subject.name
-                            .toLowerCase()
-                            .contains(query.toLowerCase()) ||
-                        subject.year
-                            .toLowerCase()
-                            .contains(query.toLowerCase());
-                  },
+    final allSubjects = <Subject>[];
+    for (final a in subjectAsyncs) {
+      allSubjects.addAll(a.value!);
+    }
+    final subjectMap = {for (final s in allSubjects) s.id: s};
+
+    // Clear selection if current selection is not in visible list.
+    if (_bulkSubjectId != null &&
+        !allSubjects.any((s) => s.id == _bulkSubjectId)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _bulkSubjectId = null;
+          _studentClassId =
+              classes.isNotEmpty ? classes.first.id : null;
+          _cachedFilteredStudents = null;
+          _cachedTests = null;
+          _dataSource = null;
+          _displayedCount = 25;
+        });
+      });
+    }
+
+    final effectiveBulkSubjectId = _bulkSubjectId != null &&
+            allSubjects.any((s) => s.id == _bulkSubjectId)
+        ? _bulkSubjectId
+        : null;
+
+    return SearchableDropdown<int>(
+      key: const ValueKey('bulk_subject_selector'),
+      items: allSubjects.map((s) => s.id).toList(),
+      selectedValue: effectiveBulkSubjectId,
+      hint: 'Select subject...',
+      searchHint: 'Search subjects...',
+      itemBuilder: (context, subjectId) {
+        final subject = subjectMap[subjectId];
+        final className = subject != null ? (classIdToName[subject.classId] ?? '') : '';
+        return Text(
+          subject != null ? '${subject.name} ($className)' : 'Unknown',
+          style: const TextStyle(
+            color: AppColors.charisBlack,
+            fontSize: 14,
+            fontFamily: 'Questrial',
+          ),
+        );
+      },
+      displayTextBuilder: (subjectId) {
+        final subject = subjectMap[subjectId];
+        final className = subject != null ? (classIdToName[subject.classId] ?? '') : '';
+        return subject != null ? '${subject.name} ($className)' : 'Unknown';
+      },
+      searchFilter: (subjectId, query) {
+        final subject = subjectMap[subjectId];
+        if (subject == null) return false;
+        final q = query.toLowerCase();
+        final className = classIdToName[subject.classId] ?? '';
+        return subject.name.toLowerCase().contains(q) ||
+            className.toLowerCase().contains(q);
+      },
                   onChanged: (value) {
                     setState(() {
                       _bulkSubjectId = value;
                       if (value != null) {
                         final subject = subjectMap[value];
                         if (subject != null) {
-                          _studentYear = subject.year; // Auto-filter by student year
+                          _studentClassId = subject.classId; // Auto-filter by student class
                         }
                       }
                       _cachedFilteredStudents = null; // Reset cache
@@ -670,33 +1094,6 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                     });
                   },
                 );
-              },
-              loading: () => const SizedBox(
-                height: 44,
-                child: Center(
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
-              error: (_, __) => const SizedBox(),
-            );
-          },
-          loading: () => const SizedBox(
-            height: 44,
-            child: Center(
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
-          error: (_, __) => const SizedBox(),
-        );
-      },
-      loading: () => const SizedBox(
-        height: 44,
-        child: Center(
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-      ),
-      error: (_, __) => const SizedBox(),
-    );
   }
 
   Widget _buildModeToggle(ColorScheme colorScheme, Color redColor) {
@@ -739,41 +1136,59 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: colorScheme.outline),
         ),
-        child: DropdownButton<String?>(
-          value: _studentYear,
-          hint: Text(
-            'All',
-            style: TextStyle(
-              color: colorScheme.onSurfaceVariant,
-              fontSize: 14,
-            ),
-          ),
-          isExpanded: true,
-          underline: const SizedBox.shrink(),
-          borderRadius: BorderRadius.circular(8),
-          items: _studentYearOptions
-              .map((y) => DropdownMenuItem<String?>(
-                    value: y,
-                    child: Text(
-                      y ?? 'All',
-                      style: TextStyle(
-                        color: colorScheme.onSurface,
-                        fontSize: 14,
-                      ),
-                    ),
-                  ),)
-              .toList(),
-          onChanged: (v) {
-            setState(() {
-              _studentYear = v;
-              _cachedFilteredStudents = null;
-              _cachedTests = null;
-              _dataSource = null;
-              _displayedCount = 25;
-            });
-          },
+        child: _buildStudentClassDropdown(colorScheme),
+      ),
+    );
+  }
+
+  Widget _buildStudentClassDropdown(ColorScheme colorScheme) {
+    final classes = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull ?? [];
+    final effectiveClassId = classes.isEmpty
+        ? null
+        : (classes.any((c) => c.id == _studentClassId)
+            ? _studentClassId
+            : classes.first.id);
+    if (classes.isNotEmpty && effectiveClassId != _studentClassId) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _studentClassId = effectiveClassId;
+          _bulkSubjectId = null;
+          _cachedFilteredStudents = null;
+          _cachedTests = null;
+          _dataSource = null;
+          _displayedCount = 25;
+        });
+      });
+    }
+    return DropdownButton<int?>(
+      value: classes.isEmpty ? null : effectiveClassId,
+      hint: Text(
+        'Class',
+        style: TextStyle(
+          color: colorScheme.onSurfaceVariant,
+          fontSize: 14,
         ),
       ),
+      isExpanded: true,
+      underline: const SizedBox.shrink(),
+      borderRadius: BorderRadius.circular(8),
+      items: classes
+          .map((c) => DropdownMenuItem<int?>(
+                value: c.id,
+                child: Text(c.name, style: TextStyle(color: colorScheme.onSurface, fontSize: 14),),
+              ),
+            )
+          .toList(),
+      onChanged: (v) {
+        setState(() {
+          _studentClassId = v;
+          _cachedFilteredStudents = null;
+          _cachedTests = null;
+          _dataSource = null;
+          _displayedCount = 25;
+        });
+      },
     );
   }
 
@@ -781,7 +1196,18 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     final sessionOptionsAsync = ref.watch(academicSessionOptionsProvider);
     return sessionOptionsAsync.when(
       data: (options) {
-        final effectiveOptions = [null, ...options];
+        if (options.isNotEmpty &&
+            (_selectedAcademicSession == null || !options.contains(_selectedAcademicSession!))) {
+          final defaultSession = options.contains(_defaultCurrentAcademicSession())
+              ? _defaultCurrentAcademicSession()
+              : options.first;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              setState(() => _selectedAcademicSession = defaultSession);
+            }
+          });
+        }
+        final effectiveOptions = options.isEmpty ? <String>[] : options;
         return SizedBox(
           width: 140,
           child: Container(
@@ -793,9 +1219,9 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
               border: Border.all(color: colorScheme.outline),
             ),
             child: DropdownButton<String?>(
-              value: _selectedAcademicSession,
+              value: effectiveOptions.isEmpty ? null : _selectedAcademicSession,
               hint: Text(
-                'All sessions',
+                'Session',
                 style: TextStyle(
                   color: colorScheme.onSurfaceVariant,
                   fontSize: 14,
@@ -808,7 +1234,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                   .map((s) => DropdownMenuItem<String?>(
                         value: s,
                         child: Text(
-                          s ?? 'All sessions',
+                          s,
                           style: TextStyle(
                             color: colorScheme.onSurface,
                             fontSize: 14,
@@ -817,6 +1243,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                       ),)
                   .toList(),
               onChanged: (v) async {
+                if (v == null) return;
                 setState(() {
                   _selectedAcademicSession = v;
                   _cachedFilteredStudents = null;
@@ -948,35 +1375,36 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     );
   }
 
-  void _initializeEdits(List<Student> students, Map<int, Test> testMap) {
+  void _initializeEdits(List<Student> students, Map<int, Test> testMap, {String? filterKey}) {
+    final filterChanged = filterKey != null && filterKey != _lastEditFilterKey;
+    if (filterKey != null) {
+      _lastEditFilterKey = filterKey;
+    }
+
     for (final student in students) {
       final test = testMap[student.id];
       final existingEdit = _edits[student.id];
-      
-      // Check if existing edit has unsaved changes
-      final hasUnsavedChanges = existingEdit != null && (
+
+      final hasUnsavedChanges = !filterChanged && existingEdit != null && (
         existingEdit.subjectId != test?.subjectId ||
         existingEdit.score != (test?.score ?? 0) ||
         existingEdit.label != test?.label
       );
-      
-      // Only update edit if no unsaved changes (preserve user edits)
-      if (!hasUnsavedChanges) {
-        // Preserve bulk-applied subjectId when no test exists
+
+      if (filterChanged || !hasUnsavedChanges) {
         final subjectId = test?.subjectId ?? existingEdit?.subjectId;
-        
         _edits[student.id] = TestRowEdit(
           subjectId: subjectId,
           score: test?.score ?? 0,
           label: test?.label,
         );
       }
-      
+
       // Update controllers without disposing (preserve user input)
       final edit = _edits[student.id]!;
       final scoreKey = '${student.id}_score';
       final labelKey = '${student.id}_label';
-      
+
       // Update score controller
       final isUnscored = test == null && edit.score == 0;
       final expectedScoreText = isUnscored ? '' : edit.score.toString();
@@ -985,7 +1413,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       } else if (_controllers[scoreKey]!.text != expectedScoreText) {
         _controllers[scoreKey]!.text = expectedScoreText;
       }
-      
+
       // Update label controller
       final expectedLabelText = edit.label ?? '';
       if (!_controllers.containsKey(labelKey)) {
@@ -1059,12 +1487,14 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       if (subjectId != null) {
         final allTestsAsync = ref.read(allTestsProvider);
         allTestsAsync.whenData((allTests) {
-          // Find test respecting date filter
+          // Find any test for (student, subject, session) for save logic — do not
+          // filter by date, so we correctly treat "existing test" when a passing
+          // test exists on another date and avoid duplicate addTest().
           final test = _findTestForStudentAndSubject(
             allTests,
             studentId,
             subjectId,
-            _selectedDate,
+            null,
             academicSession: _selectedAcademicSession,
           );
           
@@ -1162,15 +1592,56 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     });
   }
 
-  /// True when there is at least one new (no existing test) row with subject and score set.
+  /// Clears subject, score, notes, and Passed (shows "-") for all students in the
+  /// current filtered cohort. Does not delete any database records.
+  void _clearFieldsForCohort() {
+    final students = _cachedFilteredStudents ?? [];
+    if (students.isEmpty) return;
+
+    setState(() {
+      _cohortFieldsCleared = true;
+      _cachedTests ??= <int, Test>{};
+      for (final student in students) {
+        final id = student.id;
+        _edits[id] = TestRowEdit(subjectId: null, score: 0, label: null);
+        _cachedTests!.remove(id);
+
+        final scoreKey = '${id}_score';
+        _controllers[scoreKey]?.text = '';
+        final labelKey = '${id}_label';
+        _controllers[labelKey]?.text = '';
+      }
+    });
+
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_dataSource != null && _cachedTests != null && _cachedFilteredStudents != null) {
+        final list = _cachedFilteredStudents!;
+        final total = list.length;
+        final displayed = list.sublist(0, _displayedCount.clamp(0, total));
+        _dataSource!.updateData(displayed, _cachedTests!, _edits);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Fields cleared. No data was deleted.'),
+          ),
+        );
+      }
+    });
+  }
+
+  /// True when there is at least one row that can be saved: new test or rewrite of failed test.
+  /// Only a passing test blocks new input (guidelines 6 & 7).
   bool _hasUnsavedChanges() {
     if (_cachedTests == null) return false;
     for (final entry in _edits.entries) {
       final studentId = entry.key;
       final edit = entry.value;
       final test = _cachedTests![studentId];
-      // Main screen: save only new insertions (guideline 10)
-      if (test == null && edit.subjectId != null) {
+      // Allow save for new test or rewrite (existing test is failed)
+      final canSaveRow = test == null || test.score < AppConstants.passingTestScore;
+      if (canSaveRow && edit.subjectId != null) {
         return true;
       }
     }
@@ -1203,7 +1674,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         final edit = entry.value;
         final test = _cachedTests![studentId];
 
-        if (test != null) continue; // Edit only in Student Summary (guideline 10)
+        if (test != null && test.score >= AppConstants.passingTestScore) continue; // Passing test: edit only in Student Summary (guideline 10). Rewrites of failed tests are allowed.
 
         if (edit.subjectId == null) continue; // Subject required (guideline 8)
         // Score required: use edit.score (0-100)
@@ -1221,6 +1692,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
           academicSession: _selectedAcademicSession,
           userRole: auth.role,
           userId: auth.user.id,
+          userDisplayName: auth.user.displayName,
+          screen: 'Tests',
         );
         savedCount++;
       }
@@ -1372,13 +1845,14 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
 
   void _exportCsv(BuildContext context) {
     final rows = <String>[];
-    final header = ['Student Name', 'Subject', 'Score', 'Passed', 'Notes'];
+    final header = ['#', 'Student Name', 'Subject', 'Score', 'Passed', 'Notes'];
     rows.add(header.join(','));
 
     final students = _cachedFilteredStudents ?? [];
     final testMap = _cachedTests ?? {};
 
     // This is a simplified export - in a real implementation, you'd fetch all subjects
+    var serial = 1;
     for (final entry in _edits.entries) {
       final studentId = entry.key;
       final edit = entry.value;
@@ -1395,13 +1869,15 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       final passed = edit.passed ? 'Passed' : 'Failed';
       final notes = edit.label ?? test?.label ?? '';
 
-      rows.add([
+      final rowList = <String>[
+        (serial++).toString(),
         '"$name"',
         '"$subjectName"',
         score,
         passed,
         '"$notes"',
-      ].join(','),);
+      ];
+      rows.add(rowList.join(','));
     }
 
     final csv = rows.join('\n');
@@ -1413,6 +1889,129 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         ),
       );
     }
+  }
+}
+
+/// Pivot data source for the report tab: one row per student, columns Name | subject1 | subject2 | ...
+class TestsReportPivotDataSource extends DataGridSource {
+  TestsReportPivotDataSource({
+    required List<Student> students,
+    required List<Subject> subjectColumns,
+    required Map<int, Map<int, Test>> scoreMap,
+    required Set<(int, int)> outstandingSet,
+    required ColorScheme colorScheme,
+    required Color redColor,
+  })  : _students = students,
+        _subjectColumns = subjectColumns,
+        _scoreMap = scoreMap,
+        _outstandingSet = outstandingSet,
+        _colorScheme = colorScheme,
+        _redColor = redColor {
+    _dataGridRows = _students.asMap().entries.map((entry) {
+      final index = entry.key;
+      final student = entry.value;
+      final cells = <DataGridCell<dynamic>>[
+        DataGridCell<int>(columnName: 'sno', value: index + 1),
+        DataGridCell<String>(
+          columnName: 'name',
+          value: '${student.surname}, ${student.firstName}',
+        ),
+      ];
+      for (final subject in _subjectColumns) {
+        final test = _scoreMap[student.id]?[subject.id];
+        cells.add(DataGridCell<int?>(
+          columnName: 'subject_${subject.id}',
+          value: test?.score,
+        ),);
+      }
+      return DataGridRow(cells: cells);
+    }).toList();
+  }
+
+  final List<Student> _students;
+  final List<Subject> _subjectColumns;
+  final Map<int, Map<int, Test>> _scoreMap;
+  final Set<(int, int)> _outstandingSet;
+  final ColorScheme _colorScheme;
+  final Color _redColor;
+  late List<DataGridRow> _dataGridRows;
+
+  @override
+  List<DataGridRow> get rows => _dataGridRows;
+
+  @override
+  DataGridRowAdapter buildRow(DataGridRow row) {
+    final index = _dataGridRows.indexOf(row);
+    if (index < 0 || index >= _students.length) {
+      return const DataGridRowAdapter(cells: []);
+    }
+    final cells = row.getCells().toList();
+    return DataGridRowAdapter(
+      cells: cells.map((cell) {
+        if (cell.columnName == 'sno') {
+          return _buildCell(Text(
+            '${cell.value as int}',
+            style: TextStyle(
+              color: _colorScheme.onSurface,
+              fontSize: 14,
+              fontFamily: 'Questrial',
+            ),
+          ),);
+        }
+        if (cell.columnName == 'name') {
+          return _buildCell(Text(
+            cell.value as String,
+            style: TextStyle(
+              color: _colorScheme.onSurface,
+              fontSize: 14,
+              fontFamily: 'Questrial',
+            ),
+          ),);
+        }
+        final score = cell.value as int?;
+        final student = _students[index];
+        final subjectId = _subjectIdFromColumnName(cell.columnName);
+        final isOutstanding = subjectId != null &&
+            score == null &&
+            _outstandingSet.contains((student.id, subjectId));
+        if (score == null) {
+          return _buildCell(Text(
+            isOutstanding ? 'Outstanding' : '-',
+            style: TextStyle(
+              color: isOutstanding
+                  ? _redColor
+                  : _colorScheme.onSurfaceVariant,
+              fontSize: 14,
+              fontFamily: 'Questrial',
+              fontWeight: isOutstanding ? FontWeight.w600 : null,
+            ),
+          ),);
+        }
+        final isFailed = score < AppConstants.passingTestScore;
+        return _buildCell(Text(
+          score.toString(),
+          style: TextStyle(
+            color: isFailed ? _redColor : _colorScheme.onSurface,
+            fontSize: 14,
+            fontFamily: 'Questrial',
+            fontWeight: isFailed ? FontWeight.w600 : null,
+          ),
+        ),);
+      }).toList(),
+    );
+  }
+
+  int? _subjectIdFromColumnName(String columnName) {
+    if (!columnName.startsWith('subject_')) return null;
+    return int.tryParse(columnName.substring(8));
+  }
+
+  Widget _buildCell(Widget child) {
+    return Container(
+      padding: const EdgeInsets.all(8),
+      alignment: Alignment.centerLeft,
+      child: child,
+    );
   }
 }
 
@@ -1479,7 +2078,9 @@ class TestDataSource extends DataGridSource {
   }
 
   void _buildRows() {
-    _dataGridRows = _students.map((student) {
+    _dataGridRows = _students.asMap().entries.map((entry) {
+      final index = entry.key;
+      final student = entry.value;
       final test = _testMap[student.id];
       final edit = _edits[student.id] ??
           TestRowEdit(
@@ -1489,6 +2090,7 @@ class TestDataSource extends DataGridSource {
           );
 
       return DataGridRow(cells: [
+        DataGridCell<int>(columnName: 'sno', value: index + 1),
         DataGridCell<String>(
           columnName: 'studentName',
           value: '${student.surname}, ${student.firstName}',
@@ -1531,6 +2133,15 @@ class TestDataSource extends DataGridSource {
           .where((cell) => cell.columnName != 'student')
           .map((cell) {
         switch (cell.columnName) {
+          case 'sno':
+            return _buildCell(Text(
+              '${cell.value as int}',
+              style: TextStyle(
+                color: _colorScheme.onSurface,
+                fontSize: 14,
+                fontFamily: 'Questrial',
+              ),
+            ),);
           case 'studentName':
             return _buildCell(Text(
               cell.value as String,
@@ -1576,9 +2187,13 @@ class TestDataSource extends DataGridSource {
   }
 
   Widget _buildSubjectDropdown(Student student, int? currentSubjectId) {
-    // Get subjects for student's year
-    final year = student.year ?? 'Year 1';
-    final subjectsAsync = _ref.watch(subjectsForYearStreamProvider(year));
+    final classId = student.classId;
+    final classesAsync = _ref.watch(allClassesFutureProvider);
+    final classes = classesAsync.valueOrNull ?? [];
+    int fallbackClassId = 0;
+    if (classes.isNotEmpty) fallbackClassId = classes.first.id;
+    final effectiveClassId = classId ?? fallbackClassId;
+    final subjectsAsync = _ref.watch(subjectsForClassStreamProvider(effectiveClassId));
 
     return subjectsAsync.when(
       data: (subjects) {

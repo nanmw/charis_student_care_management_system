@@ -17,11 +17,30 @@ class AttendanceRepository {
   final AppDatabase _db;
   static const _uuid = Uuid();
 
+  Future<String?> _classNameForId(int? classId) async {
+    if (classId == null) return null;
+    final c = await (_db.select(_db.classes)..where((c) => c.id.equals(classId))).getSingleOrNull();
+    return c?.name;
+  }
+
+  static Map<String, dynamic> _studentYearEntry(String? name) =>
+      (name != null && name.isNotEmpty) ? {'studentYear': name} : {};
+
   /// Stream of attendance rows for [date] (date-only).
-  Stream<List<AttendanceData>> watchAttendanceForDate(DateTime date) {
+  /// When [studentIds] is non-null and non-empty, restrict to those students (for facilitator scope).
+  Stream<List<AttendanceData>> watchAttendanceForDate(
+    DateTime date, {
+    List<int>? studentIds,
+  }) {
     final d = _dateOnly(date);
     return (_db.select(_db.attendance)
-          ..where((t) => t.date.equals(d))
+          ..where((t) {
+            var pred = t.date.equals(d);
+            if (studentIds != null && studentIds.isNotEmpty) {
+              pred = pred & t.studentId.isIn(studentIds);
+            }
+            return pred;
+          })
           ..orderBy([(t) => OrderingTerm.asc(t.studentId)]))
         .watch();
   }
@@ -43,13 +62,31 @@ class AttendanceRepository {
     return (query..orderBy([(t) => OrderingTerm.asc(t.studentId)])).get();
   }
 
+  /// Returns the set of distinct dates that have at least one attendance record.
+  /// When [studentIds] is null, all dates are returned (admin scope).
+  /// When [studentIds] is non-null, only dates with attendance for those students are included;
+  /// empty list returns no dates (facilitator with no students).
+  Future<Set<DateTime>> getDatesWithAttendance({List<int>? studentIds}) async {
+    if (studentIds != null && studentIds.isEmpty) return {};
+    var query = _db.select(_db.attendance);
+    if (studentIds != null && studentIds.isNotEmpty) {
+      query = query..where((t) => t.studentId.isIn(studentIds));
+    }
+    final rows = await query.get();
+    return rows.map((r) => _dateOnly(r.date)).toSet();
+  }
+
   /// Upserts attendance for [date]. Each entry has studentId + present, notes.
   /// One row per (date, studentId); replaces existing for that date/student.
   /// Optimized to use batch operations for better performance.
+  /// [userId], [deviceId], [userDisplayName], [screen] used for change-set if provided.
   Future<void> upsertAttendanceForDate(
     DateTime date,
     List<AttendanceEntry> rows, {
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     if (rows.isEmpty) return;
     
@@ -97,22 +134,52 @@ class AttendanceRepository {
         }
         
         if (userId != null) {
+          final studentRow = await (_db.select(_db.students)
+                ..where((t) => t.id.equals(e.studentId)))
+              .getSingleOrNull();
+          final payload = <String, dynamic>{
+            'date': d.toIso8601String(),
+            'studentId': e.studentId,
+            'present': e.present,
+            if (e.notes != null && e.notes!.trim().isNotEmpty) 'notes': e.notes!.trim(),
+            if (studentRow != null) 'studentName': '${studentRow.surname}, ${studentRow.firstName}',
+            if (studentRow != null) ..._studentYearEntry(await _classNameForId(studentRow.classId)),
+            if (studentRow != null && studentRow.mode != null && studentRow.mode!.isNotEmpty) 'studentMode': studentRow.mode,
+            if (userDisplayName != null) 'userDisplayName': userDisplayName,
+            if (screen != null) 'screen': screen,
+          };
           await _insertChangeSet(
             table: 'attendance',
             recordId: attendanceId.toString(),
             operation: operation,
-            payload: {
-              'date': d.toIso8601String(),
-              'studentId': e.studentId,
-              'present': e.present,
-              if (e.notes != null && e.notes!.trim().isNotEmpty) 'notes': e.notes!.trim(),
-            },
+            payload: payload,
             userId: userId,
             version: 1,
+            deviceId: deviceId ?? 'legacy',
+            userDisplayName: userDisplayName,
+            screen: screen,
           );
         }
       }
     });
+  }
+
+  /// Stream of all attendance records in the last [days] days.
+  /// When [studentIds] is non-null and non-empty, restrict to those students (for facilitator scope).
+  Stream<List<AttendanceData>> watchAttendanceLastDays(int days, {List<int>? studentIds}) {
+    final endDate = _dateOnly(DateTime.now());
+    final startDate = _dateOnly(endDate.subtract(Duration(days: days - 1)));
+    return (_db.select(_db.attendance)
+          ..where((t) {
+            var pred = t.date.isBiggerOrEqualValue(startDate) &
+                t.date.isSmallerOrEqualValue(endDate);
+            if (studentIds != null && studentIds.isNotEmpty) {
+              pred = pred & t.studentId.isIn(studentIds);
+            }
+            return pred;
+          })
+          ..orderBy([(t) => OrderingTerm.asc(t.date), (t) => OrderingTerm.asc(t.studentId)]))
+        .watch();
   }
 
   /// Calculates average attendance percentage for the last [days] days.
@@ -167,16 +234,23 @@ class AttendanceRepository {
     required Map<String, dynamic> payload,
     required String userId,
     required int version,
+    required String deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
+    final fullPayload = Map<String, dynamic>.from(payload);
+    if (userDisplayName != null) fullPayload['userDisplayName'] = userDisplayName;
+    if (screen != null) fullPayload['screen'] = screen;
     await _db.into(_db.changeSets).insert(
           ChangeSetsCompanion.insert(
             id: _uuid.v4(),
             table: table,
             recordId: recordId,
             operation: operation,
-            payload: jsonEncode(payload),
+            payload: jsonEncode(fullPayload),
             userId: userId,
             version: version,
+            deviceId: deviceId,
           ),
         );
   }

@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'tables/classes.dart';
 import 'tables/students.dart';
 import 'tables/change_sets.dart';
 import 'tables/attendance.dart';
@@ -11,21 +12,52 @@ import 'tables/tests.dart';
 import 'tables/payments.dart';
 import 'tables/subjects.dart';
 import 'tables/app_settings.dart';
+import 'tables/ministry_entries.dart';
+import 'tables/mission_payment_schedule.dart';
+import 'tables/mission_participations.dart';
+import 'tables/mission_payments.dart';
+import 'tables/mission_locations.dart';
+import 'tables/missions.dart';
+import 'tables/users.dart';
+import 'tables/sync_record_mapping.dart';
+import 'tables/sync_conflicts.dart';
 
 part 'app_database.g.dart';
 
 /// Main database class (plain SQLite; encryption can be re-added later with platform-specific setup)
 @DriftDatabase(
-    tables: [Students, ChangeSets, Attendance, Tests, Payments, Subjects, AppSettings],)
+  tables: [
+    Classes,
+    Students,
+    ChangeSets,
+    Attendance,
+    Tests,
+    Payments,
+    Subjects,
+    AppSettings,
+    MinistryEntries,
+    MissionPaymentSchedule,
+    MissionLocations,
+    Missions,
+    MissionParticipations,
+    MissionPayments,
+    Users,
+    SyncRecordMapping,
+    SyncConflicts,
+  ],
+)
 class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
+
+  /// Opens the database from a specific file (e.g. for scripts or backup).
+  AppDatabase.fromFile(File file) : super(_openFileConnection(file));
 
   /// Creates a test database instance using in-memory database
   /// Useful for unit testing without file system dependencies
   AppDatabase.test() : super(_openTestConnection());
 
   @override
-  int get schemaVersion => 17;
+  int get schemaVersion => 30;
 
   @override
   MigrationStrategy get migration {
@@ -49,9 +81,24 @@ class AppDatabase extends _$AppDatabase {
           'CREATE INDEX IF NOT EXISTS idx_changesets_user_id ON change_sets(user_id)',
         );
         await customStatement(
-            'CREATE INDEX IF NOT EXISTS idx_subjects_year ON subjects(year)',);
+          'CREATE INDEX IF NOT EXISTS idx_classes_name ON classes(name)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_classes_facilitator_user_id ON classes(facilitator_user_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_students_class_id ON students(class_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_subjects_class_id ON subjects(class_id)',
+        );
 
-        // Seed first-year subjects
+        // Seed classes (Year 1, Year 2, Year 3)
+        await customStatement(
+          "INSERT OR IGNORE INTO classes (name, sort_order) VALUES ('Year 1', 1), ('Year 2', 2), ('Year 3', 3)",
+        );
+
+        // Seed first-year subjects (class_id = 1)
         final firstYearSubjects = [
           'A Sure Foundation',
           'Healing',
@@ -102,11 +149,11 @@ class AppDatabase extends _$AppDatabase {
         for (final subjectName in firstYearSubjects) {
           final escapedName = subjectName.replaceAll("'", "''");
           await customStatement('''
-            INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 1')
+            INSERT OR IGNORE INTO subjects (name, class_id) VALUES ('$escapedName', 1)
           ''');
         }
 
-        // Seed second-year subjects
+        // Seed second-year subjects (class_id = 2)
         final secondYearSubjects = [
           'How To Get Along With People',
           'Laws of The Kingdom',
@@ -155,11 +202,11 @@ class AppDatabase extends _$AppDatabase {
         for (final subjectName in secondYearSubjects) {
           final escapedName = subjectName.replaceAll("'", "''");
           await customStatement('''
-            INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 2')
+            INSERT OR IGNORE INTO subjects (name, class_id) VALUES ('$escapedName', 2)
           ''');
         }
 
-        // Seed third-year subjects
+        // Seed third-year subjects (class_id = 3)
         final thirdYearSubjects = [
           'Vision Development Intro',
           'Advice From an Older Minister',
@@ -198,7 +245,7 @@ class AppDatabase extends _$AppDatabase {
         for (final subjectName in thirdYearSubjects) {
           final escapedName = subjectName.replaceAll("'", "''");
           await customStatement('''
-            INSERT OR IGNORE INTO subjects (name, year) VALUES ('$escapedName', 'Year 3')
+            INSERT OR IGNORE INTO subjects (name, class_id) VALUES ('$escapedName', 3)
           ''');
         }
       },
@@ -206,7 +253,8 @@ class AppDatabase extends _$AppDatabase {
         // #region agent log
         try {
           final logFile = File(
-              r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log',);
+            r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log',
+          );
           final entry = jsonEncode({
             'id': 'log_${DateTime.now().millisecondsSinceEpoch}',
             'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -226,19 +274,23 @@ class AppDatabase extends _$AppDatabase {
           await customStatement('ALTER TABLE students ADD COLUMN year TEXT');
           await customStatement('ALTER TABLE students ADD COLUMN mode TEXT');
           await customStatement(
-              'ALTER TABLE students ADD COLUMN contact_info TEXT',);
+            'ALTER TABLE students ADD COLUMN contact_info TEXT',
+          );
           await customStatement('ALTER TABLE students ADD COLUMN email TEXT');
         }
         if (from < 3) {
           // Remove Correspondence: migrate status and mode to valid values
           await customStatement(
-              "UPDATE students SET status = 'Transferred' WHERE status = 'Correspondence'",);
+            "UPDATE students SET status = 'Transferred' WHERE status = 'Correspondence'",
+          );
           await customStatement(
-              "UPDATE students SET mode = 'Hybrid' WHERE mode = 'Part-time' OR mode = 'Correspondence'",);
+            "UPDATE students SET mode = 'Hybrid' WHERE mode = 'Part-time' OR mode = 'Correspondence'",
+          );
         }
         if (from < 5) {
           await customStatement(
-              'ALTER TABLE students ADD COLUMN admission_year TEXT',);
+            'ALTER TABLE students ADD COLUMN admission_year TEXT',
+          );
         }
         if (from < 6) {
           await customStatement('''
@@ -252,26 +304,34 @@ class AppDatabase extends _$AppDatabase {
             )
           ''');
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_tests_student_id ON tests(student_id)',);
+            'CREATE INDEX IF NOT EXISTS idx_tests_student_id ON tests(student_id)',
+          );
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_tests_student_created ON tests(student_id, created_at)',);
+            'CREATE INDEX IF NOT EXISTS idx_tests_student_created ON tests(student_id, created_at)',
+          );
         }
         if (from < 7) {
           // Populate admissionYear based on year level
           await customStatement(
-              "UPDATE students SET admission_year = '2026' WHERE year = 'Year 1' AND admission_year IS NULL",);
+            "UPDATE students SET admission_year = '2026' WHERE year = 'Year 1' AND admission_year IS NULL",
+          );
           await customStatement(
-              "UPDATE students SET admission_year = '2025' WHERE year = 'Year 2' AND admission_year IS NULL",);
+            "UPDATE students SET admission_year = '2025' WHERE year = 'Year 2' AND admission_year IS NULL",
+          );
           await customStatement(
-              "UPDATE students SET admission_year = '2024' WHERE year = 'Year 3' AND admission_year IS NULL",);
+            "UPDATE students SET admission_year = '2024' WHERE year = 'Year 3' AND admission_year IS NULL",
+          );
         }
         if (from < 8) {
           await customStatement(
-              'ALTER TABLE students ADD COLUMN handbook INTEGER DEFAULT 0',);
+            'ALTER TABLE students ADD COLUMN handbook INTEGER DEFAULT 0',
+          );
           await customStatement(
-              'ALTER TABLE students ADD COLUMN media_release INTEGER DEFAULT 0',);
+            'ALTER TABLE students ADD COLUMN media_release INTEGER DEFAULT 0',
+          );
           await customStatement(
-              'ALTER TABLE students ADD COLUMN accident_waiver INTEGER DEFAULT 0',);
+            'ALTER TABLE students ADD COLUMN accident_waiver INTEGER DEFAULT 0',
+          );
         }
         if (from < 4) {
           await customStatement('''
@@ -286,13 +346,15 @@ class AppDatabase extends _$AppDatabase {
             )
           ''');
           await customStatement(
-              'CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_date_student ON attendance(date, student_id)',);
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_date_student ON attendance(date, student_id)',
+          );
         }
         if (from < 9) {
           // #region agent log
           try {
             final logFile = File(
-                r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log',);
+              r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log',
+            );
             final entry = jsonEncode({
               'id': 'log_${DateTime.now().millisecondsSinceEpoch}',
               'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -327,13 +389,16 @@ class AppDatabase extends _$AppDatabase {
           ''');
           await customStatement('DROP TABLE attendance');
           await customStatement(
-              'ALTER TABLE attendance_new RENAME TO attendance',);
+            'ALTER TABLE attendance_new RENAME TO attendance',
+          );
           await customStatement(
-              'CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_date_student ON attendance(date, student_id)',);
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_attendance_date_student ON attendance(date, student_id)',
+          );
           // #region agent log
           try {
             final logFile = File(
-                r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log',);
+              r'c:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\.cursor\debug.log',
+            );
             final entry = jsonEncode({
               'id': 'log_${DateTime.now().millisecondsSinceEpoch}',
               'timestamp': DateTime.now().millisecondsSinceEpoch,
@@ -375,7 +440,8 @@ class AppDatabase extends _$AppDatabase {
             )
           ''');
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_payments_student_year ON payments(student_id, year)',);
+            'CREATE INDEX IF NOT EXISTS idx_payments_student_year ON payments(student_id, year)',
+          );
         }
         if (from < 11) {
           await customStatement('''
@@ -387,7 +453,8 @@ class AppDatabase extends _$AppDatabase {
             )
           ''');
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_subjects_year ON subjects(year)',);
+            'CREATE INDEX IF NOT EXISTS idx_subjects_year ON subjects(year)',
+          );
 
           // Seed first-year subjects
           final firstYearSubjects = [
@@ -666,27 +733,37 @@ class AppDatabase extends _$AppDatabase {
           ''');
           await customStatement('DROP TABLE change_sets');
           await customStatement(
-              'ALTER TABLE change_sets_new RENAME TO change_sets',);
+            'ALTER TABLE change_sets_new RENAME TO change_sets',
+          );
           // Recreate indexes
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_changesets_table_record ON change_sets("table", record_id)',);
+            'CREATE INDEX IF NOT EXISTS idx_changesets_table_record ON change_sets("table", record_id)',
+          );
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_changesets_timestamp ON change_sets(timestamp)',);
+            'CREATE INDEX IF NOT EXISTS idx_changesets_timestamp ON change_sets(timestamp)',
+          );
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_changesets_user_id ON change_sets(user_id)',);
+            'CREATE INDEX IF NOT EXISTS idx_changesets_user_id ON change_sets(user_id)',
+          );
         }
         if (from < 14) {
-          await customStatement('ALTER TABLE tests ADD COLUMN subject_id INTEGER');
-          await customStatement('CREATE INDEX IF NOT EXISTS idx_tests_subject_id ON tests(subject_id)');
+          await customStatement(
+              'ALTER TABLE tests ADD COLUMN subject_id INTEGER',);
+          await customStatement(
+              'CREATE INDEX IF NOT EXISTS idx_tests_subject_id ON tests(subject_id)',);
         }
         if (from < 15) {
-          await customStatement('ALTER TABLE tests ADD COLUMN updated_at INTEGER');
-          await customStatement('CREATE INDEX IF NOT EXISTS idx_tests_updated_at ON tests(updated_at)');
+          await customStatement(
+              'ALTER TABLE tests ADD COLUMN updated_at INTEGER',);
+          await customStatement(
+              'CREATE INDEX IF NOT EXISTS idx_tests_updated_at ON tests(updated_at)',);
         }
         if (from < 16) {
-          await customStatement('ALTER TABLE tests ADD COLUMN academic_session TEXT');
           await customStatement(
-              'CREATE INDEX IF NOT EXISTS idx_tests_academic_session ON tests(academic_session)',);
+              'ALTER TABLE tests ADD COLUMN academic_session TEXT',);
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_tests_academic_session ON tests(academic_session)',
+          );
         }
         if (from < 17) {
           await customStatement('''
@@ -695,6 +772,358 @@ class AppDatabase extends _$AppDatabase {
               value TEXT
             )
           ''');
+        }
+        if (from < 18) {
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS ministry_entries (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              student_id INTEGER NOT NULL,
+              year TEXT NOT NULL,
+              ministry_type TEXT NOT NULL,
+              date INTEGER NOT NULL,
+              hours REAL NOT NULL,
+              supervisor TEXT,
+              approved INTEGER NOT NULL DEFAULT 0,
+              notes TEXT,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER
+            )
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_ministry_entries_student_id ON ministry_entries(student_id)',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_ministry_entries_date ON ministry_entries(date)',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_ministry_entries_approved ON ministry_entries(approved)',
+          );
+        }
+        if (from < 20) {
+          // Ministry entries: add term and context for spreadsheet-style summary (Year/Mode tabs, Term 1/2/3).
+          // term: default 1 for existing rows; academic_year/study_mode backfilled from students.
+          await customStatement(
+            'ALTER TABLE ministry_entries ADD COLUMN term INTEGER NOT NULL DEFAULT 1',
+          );
+          await customStatement(
+            'ALTER TABLE ministry_entries ADD COLUMN academic_year TEXT',
+          );
+          await customStatement(
+            'ALTER TABLE ministry_entries ADD COLUMN study_mode TEXT',
+          );
+          await customStatement('''
+            UPDATE ministry_entries SET
+              academic_year = (SELECT year FROM students WHERE students.id = ministry_entries.student_id),
+              study_mode = (SELECT mode FROM students WHERE students.id = ministry_entries.student_id)
+            WHERE academic_year IS NULL
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_ministry_entries_student_academic_mode_term ON ministry_entries(student_id, academic_year, study_mode, term)',
+          );
+        }
+        if (from < 22) {
+          await customStatement('DROP TABLE IF EXISTS mission_payments');
+          await customStatement('DROP TABLE IF EXISTS mission_participations');
+          await customStatement('DROP TABLE IF EXISTS missions');
+        }
+        if (from < 23) {
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS mission_payment_schedule (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              student_id INTEGER NOT NULL,
+              year TEXT NOT NULL,
+              trip_selected TEXT,
+              date INTEGER,
+              amount REAL NOT NULL DEFAULT 0,
+              mar REAL NOT NULL DEFAULT 0,
+              apr REAL NOT NULL DEFAULT 0,
+              may REAL NOT NULL DEFAULT 0,
+              jun REAL NOT NULL DEFAULT 0,
+              jul REAL NOT NULL DEFAULT 0,
+              aug REAL NOT NULL DEFAULT 0,
+              sep REAL NOT NULL DEFAULT 0,
+              oct REAL NOT NULL DEFAULT 0,
+              comment TEXT,
+              UNIQUE(student_id, year)
+            )
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_mission_payment_schedule_student_year ON mission_payment_schedule(student_id, year)',
+          );
+        }
+        if (from < 24) {
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS users (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              username TEXT NOT NULL,
+              password_hash TEXT NOT NULL,
+              display_name TEXT,
+              role TEXT NOT NULL,
+              is_active INTEGER NOT NULL DEFAULT 1,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            )
+          ''');
+          await customStatement(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)',
+          );
+        }
+        if (from < 25) {
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS missions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              title TEXT NOT NULL,
+              location TEXT NOT NULL,
+              start_date INTEGER NOT NULL,
+              end_date INTEGER NOT NULL,
+              slots_total INTEGER NOT NULL,
+              description TEXT,
+              is_active INTEGER NOT NULL DEFAULT 1,
+              year TEXT NOT NULL,
+              amount REAL,
+              mode TEXT NOT NULL,
+              created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
+              updated_at INTEGER
+            )
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_missions_year ON missions(year)',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_missions_start_date ON missions(start_date)',
+          );
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS mission_participations (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              mission_id INTEGER NOT NULL,
+              student_id INTEGER NOT NULL,
+              role TEXT NOT NULL,
+              amount REAL NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
+              UNIQUE(mission_id, student_id)
+            )
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_mission_participations_mission_id ON mission_participations(mission_id)',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_mission_participations_student_id ON mission_participations(student_id)',
+          );
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS mission_payments (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              mission_participation_id INTEGER NOT NULL,
+              payment_date INTEGER NOT NULL,
+              amount REAL NOT NULL,
+              created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec'))
+            )
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_mission_payments_participation ON mission_payments(mission_participation_id)',
+          );
+        }
+        if (from < 26) {
+          await customStatement(
+            "ALTER TABLE change_sets ADD COLUMN device_id TEXT NOT NULL DEFAULT 'legacy'",
+          );
+        }
+        if (from < 27) {
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS mission_locations (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              name TEXT NOT NULL UNIQUE,
+              description TEXT,
+              is_active INTEGER NOT NULL DEFAULT 1
+            )
+          ''');
+          await customStatement(
+            'CREATE UNIQUE INDEX IF NOT EXISTS idx_mission_locations_name ON mission_locations(name)',
+          );
+        }
+        if (from < 28) {
+          const seedLocations = [
+            'Walsall',
+            'Knysna',
+            'Port Elizabeth',
+            'Bloemfontein',
+            'Durban',
+            'Johannesburg I',
+            'Lesotho',
+            'Cape Town I',
+            'Uganda',
+            'Heidelberg I',
+            'Kenya',
+            'Cape Town II',
+            'Nigeria',
+            'Johannesburg II',
+            'Zimbabwe',
+            'Botswana',
+            'Heidelberg II',
+            'Vietnam',
+          ];
+          for (final name in seedLocations) {
+            final escaped = name.replaceAll("'", "''");
+            await customStatement(
+              "INSERT OR IGNORE INTO mission_locations (name, is_active) VALUES ('$escaped', 1)",
+            );
+          }
+        }
+        if (from < 29) {
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS sync_record_mapping (
+              table_name TEXT NOT NULL,
+              record_id TEXT NOT NULL,
+              local_id INTEGER NOT NULL,
+              PRIMARY KEY (table_name, record_id)
+            )
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_sync_record_mapping_table ON sync_record_mapping(table_name)',
+          );
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS sync_conflicts (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              change_set_id TEXT NOT NULL,
+              table_name TEXT NOT NULL,
+              record_id TEXT NOT NULL,
+              incoming_payload TEXT NOT NULL,
+              local_snapshot TEXT NOT NULL,
+              detected_at INTEGER NOT NULL,
+              source_device_id TEXT NOT NULL
+            )
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_sync_conflicts_table ON sync_conflicts(table_name)',
+          );
+        }
+        if (from < 30) {
+          // Classes table and migrate students/subjects/ministry_entries to class_id
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS classes (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              name TEXT NOT NULL UNIQUE,
+              sort_order INTEGER NOT NULL DEFAULT 0,
+              facilitator_user_id INTEGER REFERENCES users(id),
+              created_at INTEGER NOT NULL DEFAULT (unixepoch('subsec')),
+              updated_at INTEGER
+            )
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_classes_name ON classes(name)',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_classes_facilitator_user_id ON classes(facilitator_user_id)',
+          );
+          await customStatement(
+            "INSERT OR IGNORE INTO classes (name, sort_order) VALUES ('Year 1', 1), ('Year 2', 2), ('Year 3', 3)",
+          );
+
+          // Students: add class_id, backfill, recreate without year
+          await customStatement(
+            'ALTER TABLE students ADD COLUMN class_id INTEGER REFERENCES classes(id)',
+          );
+          await customStatement('''
+            UPDATE students SET class_id = (SELECT id FROM classes WHERE name = students.year) WHERE year IS NOT NULL
+          ''');
+          await customStatement('''
+            CREATE TABLE students_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              surname TEXT NOT NULL,
+              first_name TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'Active',
+              class_id INTEGER REFERENCES classes(id),
+              mode TEXT,
+              admission_year TEXT,
+              contact_info TEXT,
+              email TEXT,
+              handbook INTEGER NOT NULL DEFAULT 0,
+              media_release INTEGER NOT NULL DEFAULT 0,
+              accident_waiver INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL,
+              version INTEGER NOT NULL DEFAULT 1,
+              CHECK(status IN ('Active', 'Withdrawn', 'Transferred', 'Correspondence'))
+            )
+          ''');
+          await customStatement('''
+            INSERT INTO students_new (id, surname, first_name, status, class_id, mode, admission_year, contact_info, email, handbook, media_release, accident_waiver, created_at, updated_at, version)
+            SELECT id, surname, first_name, status, class_id, mode, admission_year, contact_info, email, handbook, media_release, accident_waiver, created_at, updated_at, version FROM students
+          ''');
+          await customStatement('DROP TABLE students');
+          await customStatement('ALTER TABLE students_new RENAME TO students');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_students_surname ON students(surname)',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_students_status ON students(status)',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_students_class_id ON students(class_id)',
+          );
+
+          // Subjects: add class_id, backfill, recreate without year
+          await customStatement(
+            'ALTER TABLE subjects ADD COLUMN class_id INTEGER REFERENCES classes(id)',
+          );
+          await customStatement('''
+            UPDATE subjects SET class_id = (SELECT id FROM classes WHERE name = subjects.year)
+          ''');
+          await customStatement('''
+            CREATE TABLE subjects_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              name TEXT NOT NULL,
+              class_id INTEGER NOT NULL REFERENCES classes(id),
+              UNIQUE(name, class_id)
+            )
+          ''');
+          await customStatement('''
+            INSERT INTO subjects_new (id, name, class_id) SELECT id, name, class_id FROM subjects
+          ''');
+          await customStatement('DROP TABLE subjects');
+          await customStatement('ALTER TABLE subjects_new RENAME TO subjects');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_subjects_class_id ON subjects(class_id)',
+          );
+
+          // Ministry entries: add class_id, backfill, recreate without academic_year (keep year = calendar year)
+          await customStatement(
+            'ALTER TABLE ministry_entries ADD COLUMN class_id INTEGER REFERENCES classes(id)',
+          );
+          await customStatement('''
+            UPDATE ministry_entries SET class_id = (SELECT id FROM classes WHERE name = ministry_entries.academic_year) WHERE academic_year IS NOT NULL
+          ''');
+          await customStatement('''
+            CREATE TABLE ministry_entries_new (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              student_id INTEGER NOT NULL,
+              year TEXT NOT NULL,
+              term INTEGER NOT NULL,
+              class_id INTEGER REFERENCES classes(id),
+              study_mode TEXT,
+              ministry_type TEXT NOT NULL,
+              date INTEGER NOT NULL,
+              hours REAL NOT NULL,
+              supervisor TEXT,
+              approved INTEGER NOT NULL DEFAULT 0,
+              notes TEXT,
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER
+            )
+          ''');
+          await customStatement('''
+            INSERT INTO ministry_entries_new (id, student_id, year, term, class_id, study_mode, ministry_type, date, hours, supervisor, approved, notes, created_at, updated_at)
+            SELECT id, student_id, year, term, class_id, study_mode, ministry_type, date, hours, supervisor, approved, notes, created_at, updated_at FROM ministry_entries
+          ''');
+          await customStatement('DROP TABLE ministry_entries');
+          await customStatement(
+            'ALTER TABLE ministry_entries_new RENAME TO ministry_entries',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_ministry_entries_student_id ON ministry_entries(student_id)',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_ministry_entries_class_id ON ministry_entries(class_id)',
+          );
         }
       },
     );
@@ -707,6 +1136,18 @@ LazyDatabase _openConnection() {
     final dbFolder = await getApplicationDocumentsDirectory();
     final file = File(p.join(dbFolder.path, 'charis_student_care.db'));
 
+    return NativeDatabase.createInBackground(
+      file,
+      setup: (database) {
+        database.execute('PRAGMA foreign_keys = ON');
+      },
+    );
+  });
+}
+
+/// Opens a database connection from a specific file (for scripts).
+LazyDatabase _openFileConnection(File file) {
+  return LazyDatabase(() async {
     return NativeDatabase.createInBackground(
       file,
       setup: (database) {

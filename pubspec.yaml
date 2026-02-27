@@ -35,12 +35,18 @@ dependencies:
   # UI Components
   syncfusion_flutter_datagrid: ^24.1.41 # Data grid for tables
   syncfusion_flutter_core: ^24.1.41
+  table_calendar: ^3.0.9
   pdf: ^3.11.3 # PDF generation
   printing: ^5.13.0 # PDF printing and sharing
+  excel: ^4.0.3 # Excel export for reports
+  file_picker: ^8.0.0+1 # Save report to user-chosen path
   intl: ^0.19.0 # Date/number formatting
 
   # Routing
   go_router: ^13.0.0 # Navigation
+
+  # Password hashing for local user auth
+  bcrypt: ^1.2.0
 
   # Utilities
   uuid: ^4.3.3 # For change-set IDs

@@ -14,18 +14,18 @@ class SubjectRepository {
   final AppDatabase _db;
   static const _uuid = Uuid();
 
-  /// Stream of subjects for [year], ordered by name alphabetically.
-  Stream<List<Subject>> watchSubjectsForYear(String year) {
+  /// Stream of subjects for [classId], ordered by name alphabetically.
+  Stream<List<Subject>> watchSubjectsForClass(int classId) {
     return (_db.select(_db.subjects)
-          ..where((t) => t.year.equals(year))
+          ..where((t) => t.classId.equals(classId))
           ..orderBy([(t) => OrderingTerm.asc(t.name)]))
         .watch();
   }
 
-  /// One-time fetch of subjects for [year], ordered by name alphabetically.
-  Future<List<Subject>> getSubjectsForYear(String year) async {
+  /// One-time fetch of subjects for [classId], ordered by name alphabetically.
+  Future<List<Subject>> getSubjectsForClass(int classId) async {
     return (_db.select(_db.subjects)
-          ..where((t) => t.year.equals(year))
+          ..where((t) => t.classId.equals(classId))
           ..orderBy([(t) => OrderingTerm.asc(t.name)]))
         .get();
   }
@@ -35,12 +35,15 @@ class SubjectRepository {
     return (_db.select(_db.subjects)..where((t) => t.id.equals(id))).getSingleOrNull();
   }
 
-  /// Adds a subject. Requires Admin Level 01; [userId] for change-set.
+  /// Adds a subject. Requires Admin Level 01; [userId], [deviceId], [userDisplayName], [screen] for change-set.
   Future<int> addSubject(
     String name,
-    String year, {
+    int classId, {
     required UserRole userRole,
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     if (!RolePermissions.canManageSubjects(userRole)) {
       throw StateError('Role cannot manage subjects');
@@ -51,7 +54,7 @@ class SubjectRepository {
     }
     final companion = SubjectsCompanion.insert(
       name: trimmedName,
-      year: year,
+      classId: classId,
     );
     final id = await _db.into(_db.subjects).insert(companion);
     if (userId != null) {
@@ -61,22 +64,30 @@ class SubjectRepository {
         operation: 'INSERT',
         payload: {
           'name': trimmedName,
-          'year': year,
+          'classId': classId,
+          if (userDisplayName != null) 'userDisplayName': userDisplayName,
+          if (screen != null) 'screen': screen,
         },
         userId: userId,
         version: 1,
+        deviceId: deviceId ?? 'legacy',
+        userDisplayName: userDisplayName,
+        screen: screen,
       );
     }
     return id;
   }
 
-  /// Updates a subject. Requires Admin Level 01; [userId] for change-set.
+  /// Updates a subject. Requires Admin Level 01; [userId], [userDisplayName], [screen] for change-set.
   /// Note: Year cannot be changed for existing subjects.
   Future<void> updateSubject(
     int id, {
     required String name,
     required UserRole userRole,
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     if (!RolePermissions.canManageSubjects(userRole)) {
       throw StateError('Role cannot manage subjects');
@@ -101,18 +112,26 @@ class SubjectRepository {
         operation: 'UPDATE',
         payload: {
           'name': trimmedName,
+          if (userDisplayName != null) 'userDisplayName': userDisplayName,
+          if (screen != null) 'screen': screen,
         },
         userId: userId,
         version: 1,
+        deviceId: deviceId ?? 'legacy',
+        userDisplayName: userDisplayName,
+        screen: screen,
       );
     }
   }
 
-  /// Deletes a subject. Requires Admin Level 01; [userId] for change-set.
+  /// Deletes a subject. Requires Admin Level 01; [userId], [userDisplayName], [screen] for change-set.
   Future<void> deleteSubject(
     int id, {
     required UserRole userRole,
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     if (!RolePermissions.canManageSubjects(userRole)) {
       throw StateError('Role cannot manage subjects');
@@ -129,10 +148,15 @@ class SubjectRepository {
         operation: 'DELETE',
         payload: {
           'name': row.name,
-          'year': row.year,
+          'classId': row.classId,
+          if (userDisplayName != null) 'userDisplayName': userDisplayName,
+          if (screen != null) 'screen': screen,
         },
         userId: userId,
         version: 1,
+        deviceId: deviceId ?? 'legacy',
+        userDisplayName: userDisplayName,
+        screen: screen,
       );
     }
   }
@@ -144,16 +168,23 @@ class SubjectRepository {
     required Map<String, dynamic> payload,
     required String userId,
     required int version,
+    required String deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
+    final fullPayload = Map<String, dynamic>.from(payload);
+    if (userDisplayName != null) fullPayload['userDisplayName'] = userDisplayName;
+    if (screen != null) fullPayload['screen'] = screen;
     await _db.into(_db.changeSets).insert(
           ChangeSetsCompanion.insert(
             id: _uuid.v4(),
             table: table,
             recordId: recordId,
             operation: operation,
-            payload: jsonEncode(payload),
+            payload: jsonEncode(fullPayload),
             userId: userId,
             version: version,
+            deviceId: deviceId,
           ),
         );
   }

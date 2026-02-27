@@ -1,14 +1,26 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'package:charis_student_care/core/constants/app_constants.dart';
+import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
+import 'package:charis_student_care/data/services/report_service.dart';
+import 'package:charis_student_care/presentation/providers/report_providers.dart';
+import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:charis_student_care/core/utils/currency_utils.dart';
-import 'package:charis_student_care/core/utils/date_utils.dart' as app_date_utils;
+import 'package:charis_student_care/core/utils/date_utils.dart'
+    as app_date_utils;
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
+import 'package:charis_student_care/presentation/providers/class_providers.dart';
+import 'package:charis_student_care/presentation/providers/ministry_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_summary_providers.dart';
 import 'package:charis_student_care/presentation/providers/subject_providers.dart';
 import 'package:charis_student_care/presentation/providers/test_providers.dart';
@@ -38,11 +50,97 @@ class StudentSummaryDialog extends ConsumerStatefulWidget {
 class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  bool _isExporting = false;
+
+  ReportFilters get _exportFilters {
+    final now = DateTime.now();
+    return ReportFilters(
+      mode: widget.student.mode ?? 'Full-time',
+      dateStart: DateTime(now.year, 1, 1),
+      dateEnd: DateTime(now.year, 12, 31),
+      year: widget.student.admissionYear ?? now.year.toString(),
+    );
+  }
+
+  Future<void> _exportStudentSummary({required bool asPdf}) async {
+    setState(() => _isExporting = true);
+    try {
+      final row = await ref.read(singleStudentReportRowProvider(
+        (studentId: widget.student.id, filters: _exportFilters,),
+      ).future,);
+      if (row == null || !mounted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Could not build report for this student.')),
+          );
+        }
+        return;
+      }
+      final extension = asPdf ? 'pdf' : 'xlsx';
+      final name = asPdf ? 'Student_Summary_Report' : 'Student_Summary_Export';
+      final safeName = '${widget.student.surname}_${widget.student.firstName}'
+          .replaceAll(RegExp(r'[^\w\s-]'), '')
+          .replaceAll(RegExp(r'\s+'), '_');
+      final suggestedName =
+          '${name}_${safeName}_${DateFormat('yyyy-MM-dd').format(DateTime.now())}.$extension';
+      final Uint8List bytes = asPdf
+          ? await ReportService.buildPdf([row], _exportFilters)
+          : ReportService.buildExcel([row], _exportFilters);
+      final downloadsDir = await getDownloadsDirectory();
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save student summary',
+        fileName: suggestedName,
+        bytes: bytes,
+        type: FileType.custom,
+        allowedExtensions: [extension],
+        initialDirectory: downloadsDir?.path,
+      );
+      if (mounted && path != null && path.isNotEmpty) {
+        try {
+          String filePath = path;
+          if (!filePath.toLowerCase().endsWith('.$extension')) {
+            filePath = '$filePath.$extension';
+          }
+          await File(filePath).writeAsBytes(bytes);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Report saved to $filePath'),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Export failed: $e'),
+                backgroundColor: Theme.of(context).colorScheme.error,
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Export failed: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 6, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
   }
 
   @override
@@ -100,7 +198,8 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                   ),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    icon: Icon(Icons.close, color: colorScheme.onSurfaceVariant),
+                    icon:
+                        Icon(Icons.close, color: colorScheme.onSurfaceVariant),
                     tooltip: 'Close',
                   ),
                 ],
@@ -119,7 +218,6 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                 Tab(text: 'Tests'),
                 Tab(text: 'Payments'),
                 Tab(text: 'Ministry'),
-                Tab(text: 'Missions'),
               ],
             ),
             // Tab content
@@ -132,24 +230,79 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                   _buildTestsTab(colorScheme),
                   _buildPaymentsTab(colorScheme),
                   _buildMinistryTab(colorScheme),
-                  _buildMissionsTab(colorScheme),
                 ],
               ),
             ),
             // Footer
             Padding(
               padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
-              child: OutlinedButton(
-                onPressed: () => Navigator.of(context).pop(),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: colorScheme.onSurfaceVariant,
-                  side: BorderSide(color: colorScheme.outline),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8),
+              child: Row(
+                children: [
+                  RoleGuard(
+                    canShow: RolePermissions.canExportReports,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _isExporting
+                              ? null
+                              : () => _exportStudentSummary(asPdf: true),
+                          icon: _isExporting
+                              ? SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: colorScheme.primary,
+                                  ),
+                                )
+                              : const Icon(Icons.picture_as_pdf, size: 18),
+                          label: const Text('Download PDF'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: colorScheme.onSurfaceVariant,
+                            side: BorderSide(color: colorScheme.outline),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12,),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton.icon(
+                          onPressed: _isExporting
+                              ? null
+                              : () => _exportStudentSummary(asPdf: false),
+                          icon: const Icon(Icons.table_chart, size: 18),
+                          label: const Text('Download Excel'),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: colorScheme.onSurfaceVariant,
+                            side: BorderSide(color: colorScheme.outline),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 12,),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                      ],
+                    ),
                   ),
-                ),
-                child: const Text('Close'),
+                  const Spacer(),
+                  OutlinedButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: colorScheme.onSurfaceVariant,
+                      side: BorderSide(color: colorScheme.outline),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Text('Close'),
+                  ),
+                ],
               ),
             ),
           ],
@@ -166,16 +319,20 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
         children: [
           _row('Surname', widget.student.surname, colorScheme),
           _row('First names', widget.student.firstName, colorScheme),
-          _row('Year', widget.student.year ?? '—', colorScheme),
+          _ClassYearRow(classId: widget.student.classId, colorScheme: colorScheme),
           _row('Mode', widget.student.mode ?? '—', colorScheme),
-          _row('Admission year', widget.student.admissionYear ?? '—', colorScheme),
+          _row('Admission year', widget.student.admissionYear ?? '—',
+              colorScheme,),
           _row('Status', widget.student.status, colorScheme),
           _row('Phone', widget.student.contactInfo ?? '—', colorScheme),
           _row('Email', widget.student.email ?? '—', colorScheme),
           const SizedBox(height: 16),
-          _checkboxRow('Handbook', widget.student.handbook, colorScheme, redColor),
-          _checkboxRow('Media Release', widget.student.mediaRelease, colorScheme, redColor),
-          _checkboxRow('Accident Waiver', widget.student.accidentWaiver, colorScheme, redColor),
+          _checkboxRow(
+              'Handbook', widget.student.handbook, colorScheme, redColor,),
+          _checkboxRow('Media Release', widget.student.mediaRelease,
+              colorScheme, redColor,),
+          _checkboxRow('Accident Waiver', widget.student.accidentWaiver,
+              colorScheme, redColor,),
         ],
       ),
     );
@@ -222,27 +379,29 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                   ),
                 ),
                 const SizedBox(height: 12),
-                ...summary.recentDates.map((date) => Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.calendar_today,
-                            size: 16,
-                            color: colorScheme.onSurfaceVariant,
+                ...summary.recentDates.map(
+                  (date) => Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.calendar_today,
+                          size: 16,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          app_date_utils.DateUtils.formatDisplayDate(date),
+                          style: TextStyle(
+                            color: colorScheme.onSurface,
+                            fontSize: 14,
+                            fontFamily: 'Questrial',
                           ),
-                          const SizedBox(width: 8),
-                          Text(
-                            app_date_utils.DateUtils.formatDisplayDate(date),
-                            style: TextStyle(
-                              color: colorScheme.onSurface,
-                              fontSize: 14,
-                              fontFamily: 'Questrial',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
               if (summary.totalDays == 0)
                 Center(
@@ -273,13 +432,13 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
   }
 
   Widget _buildTestsTab(ColorScheme colorScheme) {
-    // Default to 'Year 1' if student year is not set (for subject lookup and outstanding count)
-    final studentYear = widget.student.year ?? 'Year 1';
+    final classId = widget.student.classId;
     final studentMode = widget.student.mode ?? 'Full-time';
     final testsAsync = ref.watch(
-      testSummaryForStudentProvider((widget.student.id, studentYear, studentMode)),
+      testSummaryForStudentProvider(
+          (widget.student.id, classId, studentMode),),
     );
-    final subjectsAsync = ref.watch(subjectsForYearStreamProvider(studentYear));
+    final subjectsAsync = ref.watch(subjectsForClassStreamProvider(classId ?? 0));
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -290,13 +449,21 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _statCard('Total Tests', summary.totalTests.toString(), colorScheme),
+                _statCard(
+                    'Total Tests', summary.totalTests.toString(), colorScheme,),
                 const SizedBox(height: 16),
                 _statCard(
                   'Outstanding Tests',
                   summary.outstandingTests.toString(),
                   colorScheme,
                   highlight: summary.outstandingTests > 0,
+                ),
+                const SizedBox(height: 16),
+                _statCard(
+                  'Failed Tests',
+                  summary.failedTestsList.length.toString(),
+                  colorScheme,
+                  highlight: summary.failedTestsList.isNotEmpty,
                 ),
                 const SizedBox(height: 16),
                 _statCard(
@@ -321,13 +488,21 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _statCard('Total Tests', summary.totalTests.toString(), colorScheme),
+                _statCard(
+                    'Total Tests', summary.totalTests.toString(), colorScheme,),
                 const SizedBox(height: 16),
                 _statCard(
                   'Outstanding Tests',
                   summary.outstandingTests.toString(),
                   colorScheme,
                   highlight: summary.outstandingTests > 0,
+                ),
+                const SizedBox(height: 16),
+                _statCard(
+                  'Failed Tests',
+                  summary.failedTestsList.length.toString(),
+                  colorScheme,
+                  highlight: summary.failedTestsList.isNotEmpty,
                 ),
                 const SizedBox(height: 16),
                 _statCard(
@@ -362,13 +537,21 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _statCard('Total Tests', summary.totalTests.toString(), colorScheme),
+              _statCard(
+                  'Total Tests', summary.totalTests.toString(), colorScheme,),
               const SizedBox(height: 16),
               _statCard(
                 'Outstanding Tests',
                 summary.outstandingTests.toString(),
                 colorScheme,
                 highlight: summary.outstandingTests > 0,
+              ),
+              const SizedBox(height: 16),
+              _statCard(
+                'Failed Tests',
+                summary.failedTestsList.length.toString(),
+                colorScheme,
+                highlight: summary.failedTestsList.isNotEmpty,
               ),
               const SizedBox(height: 16),
               _statCard(
@@ -383,23 +566,31 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                 colorScheme,
                 highlight: true,
               ),
-              if (summary.recentTests.isNotEmpty) ...[
-                const SizedBox(height: 24),
+              const SizedBox(height: 24),
+              Text(
+                'Passed tests (current academic year)',
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                  fontFamily: 'Questrial',
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (summary.passedTestsList.isEmpty)
                 Text(
-                  'Recent Tests',
+                  'No passed tests for current academic year.',
                   style: TextStyle(
-                    color: colorScheme.onSurface,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 16,
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 14,
                     fontFamily: 'Questrial',
                   ),
-                ),
-                const SizedBox(height: 12),
-                ...summary.recentTests.map((test) {
+                )
+              else
+                ...summary.passedTestsList.map((test) {
                   final subject = test.subjectId != null
                       ? subjectMap[test.subjectId]
                       : null;
-                  final passed = test.score >= AppConstants.passingTestScore;
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 12),
                     child: Container(
@@ -408,19 +599,15 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                         color: colorScheme.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(
-                          color: passed
-                              ? colorScheme.primaryContainer
-                              : colorScheme.errorContainer,
+                          color: colorScheme.primaryContainer,
                           width: 1,
                         ),
                       ),
                       child: Row(
                         children: [
                           Icon(
-                            passed ? Icons.check_circle : Icons.cancel,
-                            color: passed
-                                ? colorScheme.primary
-                                : colorScheme.error,
+                            Icons.check_circle,
+                            color: colorScheme.primary,
                             size: 20,
                           ),
                           const SizedBox(width: 12),
@@ -437,19 +624,18 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                                     fontFamily: 'Questrial',
                                   ),
                                 ),
-                                if (test.academicSession != null &&
-                                    test.academicSession!.trim().isNotEmpty) ...[
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    'Session: ${test.academicSession}',
-                                    style: TextStyle(
-                                      color: colorScheme.onSurfaceVariant,
-                                      fontSize: 12,
-                                      fontFamily: 'Questrial',
-                                    ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  app_date_utils.DateUtils.formatDisplayDate(
+                                      test.createdAt,),
+                                  style: TextStyle(
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontSize: 12,
+                                    fontFamily: 'Questrial',
                                   ),
-                                ],
-                                if (test.label != null) ...[
+                                ),
+                                if (test.label != null &&
+                                    test.label!.trim().isNotEmpty) ...[
                                   const SizedBox(height: 4),
                                   Text(
                                     test.label!,
@@ -479,7 +665,8 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                               size: 18,
                               color: colorScheme.onSurfaceVariant,
                             ),
-                            onPressed: () => _editTest(context, test, subjectMap, studentYear),
+                            onPressed: () => _editTest(
+                                context, test, subjectMap, classId,),
                             tooltip: 'Edit test',
                             padding: EdgeInsets.zero,
                             constraints: const BoxConstraints(),
@@ -501,21 +688,202 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                     ),
                   );
                 }),
-              ],
-              if (summary.totalTests == 0)
-                Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      'No test records found',
-                      style: TextStyle(
-                        color: colorScheme.onSurfaceVariant,
-                        fontSize: 14,
-                        fontFamily: 'Questrial',
+              const SizedBox(height: 24),
+              Text(
+                'Failed tests (current academic year)',
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                  fontFamily: 'Questrial',
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (summary.failedTestsList.isEmpty)
+                Text(
+                  'No failed tests for current academic year.',
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 14,
+                    fontFamily: 'Questrial',
+                  ),
+                )
+              else
+                ...summary.failedTestsList.map((test) {
+                  final subject = test.subjectId != null
+                      ? subjectMap[test.subjectId]
+                      : null;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: colorScheme.errorContainer,
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.cancel,
+                            color: colorScheme.error,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  subject?.name ?? 'No Subject',
+                                  style: TextStyle(
+                                    color: colorScheme.onSurface,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                    fontFamily: 'Questrial',
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  app_date_utils.DateUtils.formatDisplayDate(
+                                      test.createdAt,),
+                                  style: TextStyle(
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontSize: 12,
+                                    fontFamily: 'Questrial',
+                                  ),
+                                ),
+                                if (test.label != null &&
+                                    test.label!.trim().isNotEmpty) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    test.label!,
+                                    style: TextStyle(
+                                      color: colorScheme.onSurfaceVariant,
+                                      fontSize: 12,
+                                      fontFamily: 'Questrial',
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          Text(
+                            '${test.score}%',
+                            style: TextStyle(
+                              color: colorScheme.onSurface,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 16,
+                              fontFamily: 'Questrial',
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: Icon(
+                              Icons.edit_outlined,
+                              size: 18,
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                            onPressed: () => _editTest(
+                                context, test, subjectMap, classId,),
+                            tooltip: 'Edit test',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            icon: Icon(
+                              Icons.delete_outline,
+                              size: 18,
+                              color: colorScheme.error,
+                            ),
+                            onPressed: () => _deleteTest(context, test),
+                            tooltip: 'Delete test',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
+                  );
+                }),
+              const SizedBox(height: 24),
+              Text(
+                'Outstanding tests (current academic year)',
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                  fontFamily: 'Questrial',
                 ),
+              ),
+              const SizedBox(height: 12),
+              if (summary.outstandingItems.isEmpty)
+                Text(
+                  'No outstanding tests for current academic year.',
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 14,
+                    fontFamily: 'Questrial',
+                  ),
+                )
+              else
+                ...summary.outstandingItems.map((item) {
+                  final subject = subjectMap[item.subjectId];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: colorScheme.outlineVariant,
+                          width: 1,
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.hourglass_empty_outlined,
+                            color: colorScheme.onSurfaceVariant,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  subject?.name ?? 'No Subject',
+                                  style: TextStyle(
+                                    color: colorScheme.onSurface,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                    fontFamily: 'Questrial',
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  app_date_utils.DateUtils.formatDisplayDate(
+                                      item.dateWhenOutstanding,),
+                                  style: TextStyle(
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontSize: 12,
+                                    fontFamily: 'Questrial',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
             ],
           );
         },
@@ -667,74 +1035,237 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
   }
 
   Widget _buildMinistryTab(ColorScheme colorScheme) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.hourglass_empty_outlined,
-              size: 64,
-              color: colorScheme.onSurfaceVariant,
+    final student = widget.student;
+    final entriesAsync =
+        ref.watch(ministryEntriesForStudentProvider(student.id));
+    final hasClassAndMode =
+        student.classId != null && student.mode != null && student.mode!.trim().isNotEmpty;
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (hasClassAndMode) ...[
+            _buildMinistrySummaryWithRequirement(
+              colorScheme,
+              student.classId!,
+              student.mode!,
+              student.id,
             ),
-            const SizedBox(height: 16),
+          ] else ...[
             Text(
-              'Ministry Hours',
+              'Class or study mode not set. Showing total hours only.',
               style: TextStyle(
-                color: colorScheme.onSurface,
-                fontWeight: FontWeight.w600,
-                fontSize: 18,
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 13,
                 fontFamily: 'Questrial',
               ),
             ),
-            const SizedBox(height: 8),
-            Text(
-              'This feature is coming soon',
+            const SizedBox(height: 12),
+            entriesAsync.when(
+              data: (entries) {
+                final total =
+                    entries.fold<double>(0.0, (s, e) => s + e.hours);
+                return _statCard(
+                  'Total hours',
+                  total.toStringAsFixed(1),
+                  colorScheme,
+                );
+              },
+              loading: () => const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(16),
+                    child: CircularProgressIndicator(),
+                  ), ),
+              error: (err, _) => Text(
+                'Error: $err',
+                style: TextStyle(
+                  color: colorScheme.error,
+                  fontSize: 14,
+                  fontFamily: 'Questrial',
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 24),
+          Text(
+            'Ministry entries',
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w600,
+              fontSize: 16,
+              fontFamily: 'Questrial',
+            ),
+          ),
+          const SizedBox(height: 12),
+          entriesAsync.when(
+            data: (entries) {
+              if (entries.isEmpty) {
+                return Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    'No ministry entries recorded',
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontSize: 14,
+                      fontFamily: 'Questrial',
+                    ),
+                  ),
+                );
+              }
+              return Column(
+                children: entries.map((entry) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  entry.ministryType,
+                                  style: TextStyle(
+                                    color: colorScheme.onSurface,
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                    fontFamily: 'Questrial',
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  app_date_utils.DateUtils.formatDisplayDate(
+                                    entry.date,
+                                  ),
+                                  style: TextStyle(
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontSize: 12,
+                                    fontFamily: 'Questrial',
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Text(
+                            '${entry.hours.toStringAsFixed(1)} hrs',
+                            style: TextStyle(
+                              color: colorScheme.onSurface,
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                              fontFamily: 'Questrial',
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(
+                            entry.approved
+                                ? Icons.check_circle
+                                : Icons.pending_outlined,
+                            size: 20,
+                            color: entry.approved
+                                ? colorScheme.primary
+                                : colorScheme.onSurfaceVariant,
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
+              );
+            },
+            loading: () => const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: CircularProgressIndicator(),
+              ),
+            ),
+            error: (err, _) => Text(
+              'Error loading entries: $err',
               style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
+                color: colorScheme.error,
                 fontSize: 14,
                 fontFamily: 'Questrial',
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _buildMissionsTab(ColorScheme colorScheme) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+  Widget _buildMinistrySummaryWithRequirement(
+    ColorScheme colorScheme,
+    int classId,
+    String studyMode,
+    int studentId,
+  ) {
+    final summaryAsync =
+        ref.watch(ministryHoursSummaryProvider((classId, studyMode)));
+    final classAsync = ref.watch(classByIdProvider(classId));
+    final yearLevel = classAsync.valueOrNull?.sortOrder ?? 1;
+    final reqMap = studyMode == 'Full-time'
+        ? AppConstants.ministryHoursRequirements['FullTime']
+        : AppConstants.ministryHoursRequirements['Hybrid'];
+    final requiredHours = (reqMap != null ? reqMap[yearLevel] : null) ?? 0;
+    final requirementText =
+        AppConstants.ministryHoursRequirementText(studyMode, yearLevel);
+
+    return summaryAsync.when(
+      data: (rows) {
+        final matching = rows.where((r) => r.studentId == studentId);
+        final row = matching.isEmpty ? null : matching.first;
+        final term1 = row?.term1Hours ?? 0.0;
+        final term2 = row?.term2Hours ?? 0.0;
+        final term3 = row?.term3Hours ?? 0.0;
+        final total = row?.totalHours ?? 0.0;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Icon(
-              Icons.public_outlined,
-              size: 64,
-              color: colorScheme.onSurfaceVariant,
-            ),
-            const SizedBox(height: 16),
             Text(
-              'Missions',
-              style: TextStyle(
-                color: colorScheme.onSurface,
-                fontWeight: FontWeight.w600,
-                fontSize: 18,
-                fontFamily: 'Questrial',
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'This feature is coming soon',
+              requirementText,
               style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
-                fontSize: 14,
+                fontSize: 13,
                 fontFamily: 'Questrial',
               ),
             ),
+            const SizedBox(height: 16),
+            _statCard(
+              'Term 1',
+              '${term1.toStringAsFixed(1)} / $requiredHours hrs',
+              colorScheme,
+            ),
+            const SizedBox(height: 12),
+            _statCard(
+              'Term 2',
+              '${term2.toStringAsFixed(1)} / $requiredHours hrs',
+              colorScheme,
+            ),
+            const SizedBox(height: 12),
+            _statCard('Term 3', '${term3.toStringAsFixed(1)} hrs', colorScheme),
+            const SizedBox(height: 12),
+            _statCard('Total', total.toStringAsFixed(1), colorScheme, highlight: true),
           ],
+        );
+      },
+      loading: () => const Center(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: CircularProgressIndicator(),
+        ),
+      ),
+      error: (err, _) => Text(
+        'Error loading summary: $err',
+        style: TextStyle(
+          color: colorScheme.error,
+          fontSize: 14,
+          fontFamily: 'Questrial',
         ),
       ),
     );
@@ -863,44 +1394,45 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
     );
   }
 
-  Future<void> _editTest(BuildContext context, Test test, Map<int, Subject> subjectMap, String studentYear) async {
+  Future<void> _editTest(BuildContext context, Test test,
+      Map<int, Subject> subjectMap, int? classId,) async {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
+    final redColor =
+        isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final messenger = ScaffoldMessenger.of(context);
-    
+
     final scoreController = TextEditingController(text: test.score.toString());
     final labelController = TextEditingController(text: test.label ?? '');
-    
-    // Get subjects - use valueOrNull to get the current value or null if loading/error
-    final subjectsAsync = ref.read(subjectsForYearStreamProvider(studentYear));
+
+    final subjectsAsync = ref.read(subjectsForClassStreamProvider(classId ?? 0));
     final subjects = subjectsAsync.valueOrNull ?? [];
     final subjectList = subjects.map((s) => s.id).toList();
-    
-    // If no subjects available, show error
+
     if (subjects.isEmpty && !subjectsAsync.isLoading) {
       if (mounted) {
         messenger.showSnackBar(
           SnackBar(
             content: Text(
-              subjectsAsync.hasError 
-                ? 'Error loading subjects: ${subjectsAsync.error}'
-                : 'No subjects available for $studentYear',
+              subjectsAsync.hasError
+                  ? 'Error loading subjects: ${subjectsAsync.error}'
+                  : 'No subjects available for this class',
             ),
           ),
         );
       }
       return;
     }
-    
+
     // Use a StatefulBuilder to manage the selectedSubjectId state
     int? selectedSubjectId = test.subjectId;
-    
+
     final result = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          backgroundColor: isDark ? AppColors.surfaceDarkElevated : AppColors.charisWhite,
+          backgroundColor:
+              isDark ? AppColors.surfaceDarkElevated : AppColors.charisWhite,
           title: Text(
             'Edit Test',
             style: TextStyle(
@@ -937,7 +1469,10 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                   },
                   searchFilter: (subjectId, query) {
                     final subject = subjectMap[subjectId];
-                    return subject?.name.toLowerCase().contains(query.toLowerCase()) ?? false;
+                    return subject?.name
+                            .toLowerCase()
+                            .contains(query.toLowerCase()) ??
+                        false;
                   },
                   onChanged: (value) {
                     setDialogState(() {
@@ -990,7 +1525,7 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
         ),
       ),
     );
-    
+
     if (result == true) {
       final auth = ref.read(authStateProvider).valueOrNull;
       if (auth is! Authenticated) {
@@ -999,11 +1534,13 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
         );
         return;
       }
-      
+
       try {
         final score = int.tryParse(scoreController.text) ?? 0;
-        final label = labelController.text.trim().isEmpty ? null : labelController.text.trim();
-        
+        final label = labelController.text.trim().isEmpty
+            ? null
+            : labelController.text.trim();
+
         final repo = ref.read(testRepositoryProvider);
         await repo.updateTest(
           test.id,
@@ -1012,8 +1549,10 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
           subjectId: selectedSubjectId,
           userRole: auth.role,
           userId: auth.user.id,
+          userDisplayName: auth.user.displayName,
+          screen: 'Tests',
         );
-        
+
         if (mounted) {
           messenger.showSnackBar(
             const SnackBar(content: Text('Test updated successfully')),
@@ -1033,11 +1572,12 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final messenger = ScaffoldMessenger.of(context);
-    
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: isDark ? AppColors.surfaceDarkElevated : AppColors.charisWhite,
+        backgroundColor:
+            isDark ? AppColors.surfaceDarkElevated : AppColors.charisWhite,
         title: Text(
           'Delete Test',
           style: TextStyle(
@@ -1073,24 +1613,27 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
         ],
       ),
     );
-    
+
     if (confirm == true) {
       final auth = ref.read(authStateProvider).valueOrNull;
       if (auth is! Authenticated) {
         messenger.showSnackBar(
-          const SnackBar(content: Text('You must be logged in to delete tests')),
+          const SnackBar(
+              content: Text('You must be logged in to delete tests'),),
         );
         return;
       }
-      
+
       try {
         final repo = ref.read(testRepositoryProvider);
         await repo.deleteTest(
           test.id,
           userRole: auth.role,
           userId: auth.user.id,
+          userDisplayName: auth.user.displayName,
+          screen: 'Tests',
         );
-        
+
         if (mounted) {
           messenger.showSnackBar(
             const SnackBar(content: Text('Test deleted successfully')),
@@ -1104,5 +1647,50 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
         }
       }
     }
+  }
+}
+
+/// Displays "Year" row with class name from [classId].
+class _ClassYearRow extends ConsumerWidget {
+  const _ClassYearRow({this.classId, required this.colorScheme});
+
+  final int? classId;
+  final ColorScheme colorScheme;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final value = classId != null
+        ? ref.watch(classByIdProvider(classId!)).valueOrNull?.name ?? '—'
+        : '—';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 140,
+            child: Text(
+              'Year',
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 14,
+                fontFamily: 'Questrial',
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontWeight: FontWeight.w500,
+                fontSize: 14,
+                fontFamily: 'Questrial',
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

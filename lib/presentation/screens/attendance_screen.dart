@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
+import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
+import 'package:go_router/go_router.dart';
 import 'package:charis_student_care/core/utils/date_utils.dart' as app_date_utils;
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/attendance_repository.dart';
@@ -9,8 +12,10 @@ import 'package:charis_student_care/domain/use_cases/sort_students_alphabeticall
 import 'package:charis_student_care/presentation/providers/attendance_providers.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
+import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
+import 'package:charis_student_care/presentation/widgets/attendance_date_picker_dialog.dart';
 import 'package:charis_student_care/presentation/widgets/student_summary_dialog.dart';
 
 // #region agent log (disabled for performance - synchronous file I/O was blocking UI)
@@ -21,9 +26,6 @@ void _debugLog(String location, String message, Map<String, dynamic> data, Strin
 
 /// Mode filter options (must match students.mode values).
 const List<String> _modeOptions = ['Full-time', 'Hybrid'];
-
-/// Academic year options for dropdown (Year 1-3 + All).
-const List<String?> _academicYearOptions = [null, 'Year 1', 'Year 2', 'Year 3'];
 
 /// One row's editable state for attendance form.
 class _RowEdit {
@@ -47,7 +49,8 @@ class AttendanceScreen extends ConsumerStatefulWidget {
 
 class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   String _selectedMode = 'Full-time';
-  String? _academicYear;
+  int? _classFilter;
+  bool _defaultClassScheduled = false;
   DateTime _attendanceDate = DateTime.now();
   Map<int, _RowEdit> _edits = {};
   Map<int, _RowEdit> _originalEdits = {};
@@ -97,6 +100,23 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
     final attendanceAsync = ref.watch(attendanceForDateProvider(_attendanceDate));
+    final visibleClasses = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull;
+    final auth = ref.watch(authStateProvider).valueOrNull;
+    if (auth is Authenticated &&
+        visibleClasses != null &&
+        visibleClasses.isNotEmpty &&
+        !_defaultClassScheduled &&
+        _classFilter == null) {
+      _defaultClassScheduled = true;
+      final year1 = visibleClasses.where((c) => c.name == 'Year 1');
+      final defaultClassId = auth.role == UserRole.facilitator
+          ? visibleClasses.first.id
+          : (year1.isEmpty ? visibleClasses.first.id : year1.first.id);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _classFilter = defaultClassId);
+      });
+    }
 
     return Container(
       color: colorScheme.surface,
@@ -104,14 +124,28 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'Attendance Entry',
-            style: TextStyle(
-              color: colorScheme.onSurface,
-              fontWeight: FontWeight.w700,
-              fontSize: 24,
-              fontFamily: 'Questrial',
-            ),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Attendance Entry',
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 24,
+                    fontFamily: 'Questrial',
+                  ),
+                ),
+              ),
+              RoleGuard(
+                canShow: RolePermissions.canExportReports,
+                child: OutlinedButton.icon(
+                  onPressed: () => context.go('/reports?type=attendance'),
+                  icon: const Icon(Icons.download_outlined, size: 18),
+                  label: const Text('Export'),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 16),
           _buildFiltersRow(colorScheme, redColor),
@@ -121,7 +155,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
               data: (allStudents) {
                 final filtered = allStudents
                     .where((s) => s.mode == _selectedMode)
-                    .where((s) => _academicYear == null || s.year == _academicYear)
+                    .where((s) => _classFilter == null || s.classId == _classFilter)
                     .toList();
                 final allStudentsSorted = sortStudentsAlphabetically(filtered);
                 // Reset displayed count if filters changed
@@ -278,13 +312,13 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         const SizedBox(width: 8),
         _buildModeToggle(colorScheme, redColor),
         const SizedBox(width: 24),
-        Text('Academic Year:',
+        Text('Class:',
             style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
                 fontSize: 14,
                 fontFamily: 'Questrial',),),
         const SizedBox(width: 8),
-        _buildAcademicYearDropdown(colorScheme),
+        _buildClassDropdown(colorScheme),
         const SizedBox(width: 24),
         Text('Attendance Date:',
             style: TextStyle(
@@ -315,7 +349,8 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
   }
 
-  Widget _buildAcademicYearDropdown(ColorScheme colorScheme) {
+  Widget _buildClassDropdown(ColorScheme colorScheme) {
+    final classes = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull ?? [];
     return SizedBox(
       width: 120,
       child: Container(
@@ -326,21 +361,22 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: colorScheme.outline),
         ),
-        child: DropdownButton<String?>(
-          value: _academicYear,
-          hint: Text('All', style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14)),
+        child: DropdownButton<int?>(
+          value: classes.isEmpty ? null : _classFilter,
+          hint: Text('Class', style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14)),
           isExpanded: true,
           underline: const SizedBox.shrink(),
           borderRadius: BorderRadius.circular(8),
-          items: _academicYearOptions
-              .map((y) => DropdownMenuItem<String?>(
-                    value: y,
-                    child: Text(y ?? 'All', style: TextStyle(color: colorScheme.onSurface, fontSize: 14)),
-                  ),)
+          items: classes
+              .map((c) => DropdownMenuItem<int?>(
+                    value: c.id,
+                    child: Text(c.name, style: TextStyle(color: colorScheme.onSurface, fontSize: 14),),
+                  ),
+                )
               .toList(),
           onChanged: (v) {
             setState(() {
-              _academicYear = v;
+              _classFilter = v;
               _displayedCount = 30; // Reset to initial batch
             });
           },
@@ -352,18 +388,47 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   Widget _buildDateField(ColorScheme colorScheme) {
     return InkWell(
       onTap: () async {
-        final picked = await showDatePicker(
-          context: context,
-          initialDate: _attendanceDate,
-          firstDate: DateTime(2020),
-          lastDate: DateTime(2030),
-        );
-        if (picked != null && mounted) {
-          setState(() {
-            _attendanceDate = picked;
-            _displayedCount = 30; // Reset to initial batch
-          });
+        int? effectiveClassFilter = _classFilter;
+        if (effectiveClassFilter == null) {
+          final visibleClasses = await ref.read(
+              classesVisibleToCurrentUserProvider.future,
+          );
+          final auth = await ref.read(authStateProvider.future);
+          if (auth is Authenticated && visibleClasses.isNotEmpty) {
+            final year1 = visibleClasses.where((c) => c.name == 'Year 1');
+            effectiveClassFilter = auth.role == UserRole.facilitator
+                ? visibleClasses.first.id
+                : (year1.isEmpty ? visibleClasses.first.id : year1.first.id);
+          }
         }
+        // Always compute dates with attendance fresh for the current class filter.
+        ref.invalidate(datesWithAttendanceProvider(effectiveClassFilter));
+        final datesWithAttendance = await ref.read(
+            datesWithAttendanceProvider(effectiveClassFilter).future,
+        );
+        if (!mounted) return;
+        bool sameDay(DateTime a, DateTime b) =>
+            a.year == b.year && a.month == b.month && a.day == b.day;
+        final initialDate = datesWithAttendance.any((d) => sameDay(d, _attendanceDate))
+            ? _attendanceDate
+            : (datesWithAttendance.isNotEmpty
+                ? datesWithAttendance.reduce((a, b) => a.isAfter(b) ? a : b)
+                : DateTime.now());
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AttendanceDatePickerDialog(
+            initialDate: initialDate,
+            datesWithAttendance: datesWithAttendance,
+            onDateSelected: (date) {
+              if (mounted) {
+                setState(() {
+                  _attendanceDate = date;
+                  _displayedCount = 30;
+                });
+              }
+            },
+          ),
+        );
       },
       borderRadius: BorderRadius.circular(8),
       child: Container(
@@ -579,7 +644,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
 
     final filtered = allStudents
         .where((s) => s.mode == _selectedMode)
-        .where((s) => _academicYear == null || s.year == _academicYear)
+        .where((s) => _classFilter == null || s.classId == _classFilter)
         .toList();
     final students = sortStudentsAlphabetically(filtered);
 
@@ -639,28 +704,22 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     _debugLog('attendance_screen.dart:_save', 'Save method called', {'date': _attendanceDate.toString(), 'editsCount': _edits.length}, 'E');
     // #endregion
     final repo = ref.read(attendanceRepositoryProvider);
-    final studentRepo = ref.read(studentRepositoryProvider);
-    
-    // Get current filtered students list directly from repository
+    // Use scoped students (facilitators see only their class)
     // #region agent log
     _debugLog('attendance_screen.dart:_save', 'Getting students stream', {}, 'C');
     // #endregion
-    final allStudentsStream = studentRepo.watchStudents(statusFilter: 'Active');
-    // #region agent log
-    _debugLog('attendance_screen.dart:_save', 'Waiting for stream first value', {}, 'C');
-    // #endregion
-    final allStudents = await allStudentsStream.first;
+    final allStudents = await ref.read(studentsStreamProvider('Active').future);
     // #region agent log
     _debugLog('attendance_screen.dart:_save', 'Got students from stream', {'count': allStudents.length}, 'C');
     // #endregion
     
     final filtered = allStudents
         .where((s) => s.mode == _selectedMode)
-        .where((s) => _academicYear == null || s.year == _academicYear)
+        .where((s) => _classFilter == null || s.classId == _classFilter)
         .toList();
     final students = sortStudentsAlphabetically(filtered);
     // #region agent log
-    _debugLog('attendance_screen.dart:_save', 'Filtered students', {'filteredCount': students.length, 'selectedMode': _selectedMode, 'academicYear': _academicYear}, 'E');
+    _debugLog('attendance_screen.dart:_save', 'Filtered students', {'filteredCount': students.length, 'selectedMode': _selectedMode, 'classFilter': _classFilter}, 'E');
     // #endregion
     
     // Only include entries that have been changed from their original state
@@ -707,7 +766,14 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       // #region agent log
       _debugLog('attendance_screen.dart:_save', 'Calling upsertAttendanceForDate', {'entriesCount': entries.length}, 'A');
       // #endregion
-      await repo.upsertAttendanceForDate(_attendanceDate, entries, userId: userId);
+      final userDisplayName = auth is Authenticated ? auth.user.displayName : null;
+      await repo.upsertAttendanceForDate(
+        _attendanceDate,
+        entries,
+        userId: userId,
+        userDisplayName: userDisplayName,
+        screen: 'Attendance',
+      );
       // #region agent log
       _debugLog('attendance_screen.dart:_save', 'Upsert completed successfully', {}, 'A');
       // #endregion

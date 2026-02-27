@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/core/utils/currency_utils.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/presentation/providers/class_providers.dart';
 
 /// Read-only dialog showing student details and placeholder rows for
-/// attendance, tests, ministry hours, balance, and mission fund.
-class StudentDetailDialog extends StatelessWidget {
+/// attendance, tests, ministry hours, and balance.
+class StudentDetailDialog extends ConsumerWidget {
   const StudentDetailDialog({super.key, required this.student});
 
   final Student student;
 
-  static Future<void> show({required BuildContext context, required Student student}) {
+  static Future<void> show(
+      {required BuildContext context, required Student student,}) {
     return showDialog<void>(
       context: context,
       builder: (ctx) => StudentDetailDialog(student: student),
@@ -19,12 +22,18 @@ class StudentDetailDialog extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final colorScheme = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
+    final redColor =
+        isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
+    final classAsync = student.classId != null
+        ? ref.watch(classByIdProvider(student.classId!))
+        : const AsyncValue<SchoolClass?>.data(null);
+    final yearLabel = classAsync.valueOrNull?.name ?? '—';
     return Dialog(
-      backgroundColor: isDark ? AppColors.surfaceDarkElevated : AppColors.charisWhite,
+      backgroundColor:
+          isDark ? AppColors.surfaceDarkElevated : AppColors.charisWhite,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 420, maxHeight: 560),
@@ -48,7 +57,8 @@ class StudentDetailDialog extends StatelessWidget {
                   const Spacer(),
                   IconButton(
                     onPressed: () => Navigator.of(context).pop(),
-                    icon: Icon(Icons.close, color: colorScheme.onSurfaceVariant),
+                    icon:
+                        Icon(Icons.close, color: colorScheme.onSurfaceVariant,),
                     tooltip: 'Close',
                   ),
                 ],
@@ -62,16 +72,20 @@ class StudentDetailDialog extends StatelessWidget {
                   children: [
                     _row('Surname', student.surname, colorScheme),
                     _row('First names', student.firstName, colorScheme),
-                    _row('Year', student.year ?? '—', colorScheme),
+                    _row('Year', yearLabel, colorScheme),
                     _row('Mode', student.mode ?? '—', colorScheme),
-                    _row('Admission year', student.admissionYear ?? '—', colorScheme),
+                    _row('Admission year', student.admissionYear ?? '—',
+                        colorScheme,),
                     _row('Status', student.status, colorScheme),
                     _row('Phone', student.contactInfo ?? '—', colorScheme),
                     _row('Email', student.email ?? '—', colorScheme),
                     const SizedBox(height: 8),
-                    _checkboxRow('Handbook', student.handbook, colorScheme, redColor),
-                    _checkboxRow('Media Release', student.mediaRelease, colorScheme, redColor),
-                    _checkboxRow('Accident Waiver', student.accidentWaiver, colorScheme, redColor),
+                    _checkboxRow(
+                        'Handbook', student.handbook, colorScheme, redColor,),
+                    _checkboxRow('Media Release', student.mediaRelease,
+                        colorScheme, redColor,),
+                    _checkboxRow('Accident Waiver', student.accidentWaiver,
+                        colorScheme, redColor,),
                     const SizedBox(height: 16),
                     Text(
                       'Placeholder (data coming later)',
@@ -86,7 +100,6 @@ class StudentDetailDialog extends StatelessWidget {
                     _row('Outstanding tests', '0', colorScheme),
                     _row('Ministry hours', '0', colorScheme),
                     _row('Balance', CurrencyUtils.formatRand(0), colorScheme),
-                    _row('Mission fund', CurrencyUtils.formatRand(0), colorScheme),
                   ],
                 ),
               ),
@@ -99,7 +112,8 @@ class StudentDetailDialog extends StatelessWidget {
                   foregroundColor: colorScheme.onSurfaceVariant,
                   side: BorderSide(color: colorScheme.outline),
                   padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),),
                 ),
                 child: const Text('Close'),
               ),
@@ -143,7 +157,8 @@ class StudentDetailDialog extends StatelessWidget {
     );
   }
 
-  Widget _checkboxRow(String label, bool value, ColorScheme colorScheme, Color redColor) {
+  Widget _checkboxRow(
+      String label, bool value, ColorScheme colorScheme, Color redColor,) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(

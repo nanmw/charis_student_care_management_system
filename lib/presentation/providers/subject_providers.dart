@@ -9,9 +9,9 @@ final subjectRepositoryProvider = Provider<SubjectRepository>((ref) {
   return SubjectRepository(db);
 });
 
-/// Stream of subjects for [year], ordered by name alphabetically.
-final subjectsForYearStreamProvider =
-    StreamProvider.autoDispose.family<List<Subject>, String>((ref, year) {
+/// Stream of subjects for [classId], ordered by name alphabetically.
+final subjectsForClassStreamProvider =
+    StreamProvider.autoDispose.family<List<Subject>, int>((ref, classId) {
   final repo = ref.watch(subjectRepositoryProvider);
-  return repo.watchSubjectsForYear(year);
+  return repo.watchSubjectsForClass(classId);
 });

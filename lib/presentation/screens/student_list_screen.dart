@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
 import 'package:charis_student_care/core/constants/role_constants.dart';
@@ -8,6 +9,7 @@ import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/domain/use_cases/sort_students_alphabetically.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
+import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
@@ -22,16 +24,14 @@ class StudentListScreen extends ConsumerStatefulWidget {
   ConsumerState<StudentListScreen> createState() => _StudentListScreenState();
 }
 
-/// Year options for filter (Year 1–3 + All).
-const List<String?> _yearFilterOptions = [null, 'Year 1', 'Year 2', 'Year 3'];
-
-/// Mode options for filter (Full-time, Hybrid + All).
-const List<String?> _modeFilterOptions = [null, 'Full-time', 'Hybrid'];
+/// Mode options for filter (Full-time, Hybrid).
+const List<String> _modeFilterOptions = ['Full-time', 'Hybrid'];
 
 class _StudentListScreenState extends ConsumerState<StudentListScreen> {
   String? _statusFilter = 'Active';
-  String? _yearFilter;
-  String? _modeFilter;
+  int? _classFilter;
+  String? _modeFilter = 'Full-time';
+  bool _defaultClassScheduled = false;
   String _searchQuery = '';
   int _displayedCount = 20; // Initial batch size
   bool _isLoadingMore = false;
@@ -74,6 +74,24 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
     final isDark = themeMode == ThemeMode.dark;
     final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final studentsAsync = ref.watch(studentsStreamProvider(_statusFilter));
+    final classesAsync = ref.watch(classesVisibleToCurrentUserProvider);
+    final classes = classesAsync.valueOrNull ?? [];
+    final classIdToName = {for (final c in classes) c.id: c.name};
+    final auth = ref.watch(authStateProvider).valueOrNull;
+    if (auth is Authenticated &&
+        classes.isNotEmpty &&
+        !_defaultClassScheduled &&
+        _classFilter == null) {
+      _defaultClassScheduled = true;
+      final year1 = classes.where((c) => c.name == 'Year 1');
+      final defaultClassId = auth.role == UserRole.facilitator
+          ? classes.first.id
+          : (year1.isEmpty ? classes.first.id : year1.first.id);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() => _classFilter = defaultClassId);
+      });
+    }
 
     return Container(
       color: colorScheme.surface,
@@ -95,6 +113,15 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
               ),
               Row(
                 children: [
+                  RoleGuard(
+                    canShow: RolePermissions.canExportReports,
+                    child: OutlinedButton.icon(
+                      onPressed: () => context.go('/reports?type=students'),
+                      icon: const Icon(Icons.download_outlined, size: 18),
+                      label: const Text('Export'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   RoleGuard(
                     canShow: RolePermissions.canManageStudents,
                     child: ElevatedButton.icon(
@@ -133,7 +160,7 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
             children: [
               _buildSearchField(),
               const SizedBox(width: 12),
-              _buildYearDropdown(),
+              _buildClassDropdown(classes),
               const SizedBox(width: 12),
               _buildModeDropdown(),
               const SizedBox(width: 12),
@@ -154,8 +181,8 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
                             (s.email?.toLowerCase().contains(q) ?? false) ||
                             (s.contactInfo?.toLowerCase().contains(q) ?? false);
                       }).toList();
-                if (_yearFilter != null) {
-                  filtered = filtered.where((s) => s.year == _yearFilter).toList();
+                if (_classFilter != null) {
+                  filtered = filtered.where((s) => s.classId == _classFilter).toList();
                 }
                 if (_modeFilter != null) {
                   filtered = filtered.where((s) => s.mode == _modeFilter).toList();
@@ -172,6 +199,7 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
                   students: displayedStudents,
                   colorScheme: colorScheme,
                   redColor: redColor,
+                  classIdToName: classIdToName,
                   onView: (s) => StudentSummaryDialog.show(context: context, student: s),
                   onEdit: (s) => _openEditStudent(context, s, ref),
                   onWithdraw: (s) => _applyStatus(context, ref, s, 'Withdrawn'),
@@ -184,6 +212,7 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
                 _dataSource!.updateData(
                   displayedStudents,
                   colorScheme,
+                  classIdToName,
                   (
                     (s) => StudentSummaryDialog.show(context: context, student: s),
                     (s) => _openEditStudent(context, s, ref),
@@ -304,10 +333,10 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
     );
   }
 
-  Widget _buildYearDropdown() {
+  Widget _buildClassDropdown(List<SchoolClass> classes) {
     final colorScheme = Theme.of(context).colorScheme;
     return SizedBox(
-      width: 100,
+      width: 140,
       child: Container(
         height: 44,
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -316,22 +345,21 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: colorScheme.outline),
         ),
-        child: DropdownButton<String?>(
-        value: _yearFilter,
-        hint: Text('Year', style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14)),
-        isExpanded: true,
-        underline: const SizedBox.shrink(),
-        borderRadius: BorderRadius.circular(8),
-        items: _yearFilterOptions.map((v) => DropdownMenuItem<String?>(
-          value: v,
-          child: Text(v ?? 'All', style: TextStyle(color: colorScheme.onSurface, fontSize: 14)),
-        ),).toList(),
-        onChanged: (v) => setState(() {
-          _yearFilter = v;
-          _displayedCount = 20; // Reset to initial batch
-        }),
+        child: DropdownButton<int?>(
+          value: classes.isEmpty ? null : _classFilter,
+          hint: const Text('Class', style: TextStyle(fontSize: 14)),
+          isExpanded: true,
+          underline: const SizedBox.shrink(),
+          borderRadius: BorderRadius.circular(8),
+          items: classes
+              .map((c) => DropdownMenuItem<int?>(value: c.id, child: Text(c.name, style: const TextStyle(fontSize: 14))))
+              .toList(),
+          onChanged: (v) => setState(() {
+            _classFilter = v;
+            _displayedCount = 20;
+          }),
+        ),
       ),
-    ),
     );
   }
 
@@ -353,10 +381,13 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
         isExpanded: true,
         underline: const SizedBox.shrink(),
         borderRadius: BorderRadius.circular(8),
-        items: _modeFilterOptions.map((v) => DropdownMenuItem<String?>(
-          value: v,
-          child: Text(v ?? 'All', style: TextStyle(color: colorScheme.onSurface, fontSize: 14)),
-        ),).toList(),
+        items: _modeFilterOptions
+            .map((v) => DropdownMenuItem<String?>(
+                  value: v,
+                  child: Text(v, style: TextStyle(color: colorScheme.onSurface, fontSize: 14),),
+                ),
+              )
+            .toList(),
         onChanged: (v) => setState(() {
           _modeFilter = v;
           _displayedCount = 20; // Reset to initial batch
@@ -370,12 +401,11 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
     showMenu<String?>(
       context: context,
       position: const RelativeRect.fromLTRB(0, 80, 200, 0),
-      items: [
-        const PopupMenuItem(value: 'Active', child: Text('Active')),
-        const PopupMenuItem(value: 'Withdrawn', child: Text('Withdrawn')),
-        const PopupMenuItem(value: 'Transferred', child: Text('Transferred')),
-        const PopupMenuItem(value: 'Correspondence', child: Text('Correspondence')),
-        const PopupMenuItem(value: null, child: Text('All')),
+      items: const [
+        PopupMenuItem(value: 'Active', child: Text('Active')),
+        PopupMenuItem(value: 'Withdrawn', child: Text('Withdrawn')),
+        PopupMenuItem(value: 'Transferred', child: Text('Transferred')),
+        PopupMenuItem(value: 'Correspondence', child: Text('Correspondence')),
       ],
     ).then((v) {
       setState(() {
@@ -415,6 +445,8 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
             status: newStatus,
             userRole: auth.role,
             userId: auth.user.id,
+            userDisplayName: auth.user.displayName,
+            screen: 'Students',
           );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Status set to $newStatus')));
@@ -448,6 +480,8 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
         mode: newMode,
         userRole: auth.role,
         userId: auth.user.id,
+        userDisplayName: auth.user.displayName,
+        screen: 'Students',
       );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -501,8 +535,8 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
                 (s.email?.toLowerCase().contains(q) ?? false) ||
                 (s.contactInfo?.toLowerCase().contains(q) ?? false);
           }).toList();
-    if (_yearFilter != null) {
-      filtered = filtered.where((s) => s.year == _yearFilter).toList();
+    if (_classFilter != null) {
+      filtered = filtered.where((s) => s.classId == _classFilter).toList();
     }
     if (_modeFilter != null) {
       filtered = filtered.where((s) => s.mode == _modeFilter).toList();
@@ -567,6 +601,8 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
             studentIds: studentIds,
             userRole: auth.role,
             userId: auth.user.id,
+            userDisplayName: auth.user.displayName,
+            screen: 'Students',
           );
 
       if (context.mounted) {
@@ -596,6 +632,7 @@ class StudentDataSource extends DataGridSource {
     required List<Student> students,
     required ColorScheme colorScheme,
     required Color redColor,
+    Map<int, String> classIdToName = const {},
     required void Function(Student) onView,
     required void Function(Student) onEdit,
     required void Function(Student) onWithdraw,
@@ -605,6 +642,7 @@ class StudentDataSource extends DataGridSource {
   })  : _students = students,
         _colorScheme = colorScheme,
         _redColor = redColor,
+        _classIdToName = classIdToName,
         _onView = onView,
         _onEdit = onEdit,
         _onWithdraw = onWithdraw,
@@ -617,6 +655,7 @@ class StudentDataSource extends DataGridSource {
   List<Student> _students;
   ColorScheme _colorScheme;
   final Color _redColor;
+  Map<int, String> _classIdToName;
   void Function(Student) _onView;
   void Function(Student) _onEdit;
   void Function(Student) _onWithdraw;
@@ -629,10 +668,12 @@ class StudentDataSource extends DataGridSource {
   void updateData(
     List<Student> students,
     ColorScheme colorScheme,
+    Map<int, String> classIdToName,
     (void Function(Student), void Function(Student), void Function(Student), void Function(Student), void Function(Student), bool) callbacks,
   ) {
     _students = students;
     _colorScheme = colorScheme;
+    _classIdToName = classIdToName;
     _onView = callbacks.$1;
     _onEdit = callbacks.$2;
     _onWithdraw = callbacks.$3;
@@ -647,21 +688,24 @@ class StudentDataSource extends DataGridSource {
     _dataGridRows = _students
         .asMap()
         .entries
-        .map((e) => DataGridRow(cells: [
+        .map((e) {
+          final s = e.value;
+          final yearLabel = s.classId != null ? (_classIdToName[s.classId] ?? '—') : '—';
+          return DataGridRow(cells: [
               DataGridCell<int>(columnName: 'sn', value: e.key + 1),
-              DataGridCell<String>(columnName: 'surname', value: e.value.surname),
-              DataGridCell<String>(columnName: 'firstName', value: e.value.firstName),
-              DataGridCell<String>(columnName: 'year', value: e.value.year ?? ''),
-              DataGridCell<String>(columnName: 'mode', value: e.value.mode ?? ''),
-              DataGridCell<String>(columnName: 'status', value: e.value.status),
-              DataGridCell<String>(columnName: 'contactInfo', value: e.value.contactInfo ?? ''),
-              DataGridCell<String>(columnName: 'email', value: e.value.email ?? ''),
-              DataGridCell<bool>(columnName: 'handbook', value: e.value.handbook),
-              DataGridCell<bool>(columnName: 'mediaRelease', value: e.value.mediaRelease),
-              DataGridCell<bool>(columnName: 'accidentWaiver', value: e.value.accidentWaiver),
-              DataGridCell<Student>(columnName: 'actions', value: e.value),
-            ],),)
-        .toList();
+              DataGridCell<String>(columnName: 'surname', value: s.surname),
+              DataGridCell<String>(columnName: 'firstName', value: s.firstName),
+              DataGridCell<String>(columnName: 'year', value: yearLabel),
+              DataGridCell<String>(columnName: 'mode', value: s.mode ?? ''),
+              DataGridCell<String>(columnName: 'status', value: s.status),
+              DataGridCell<String>(columnName: 'contactInfo', value: s.contactInfo ?? ''),
+              DataGridCell<String>(columnName: 'email', value: s.email ?? ''),
+              DataGridCell<bool>(columnName: 'handbook', value: s.handbook),
+              DataGridCell<bool>(columnName: 'mediaRelease', value: s.mediaRelease),
+              DataGridCell<bool>(columnName: 'accidentWaiver', value: s.accidentWaiver),
+              DataGridCell<Student>(columnName: 'actions', value: s),
+            ],);
+        }).toList();
   }
 
   @override

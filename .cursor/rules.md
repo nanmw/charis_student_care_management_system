@@ -2,9 +2,16 @@
 
 ## Project Overview
 
-Flutter desktop application (Windows + macOS) replacing Excel-based Student Care Data Capture System for Charis Bible College Cape Town. Offline-first architecture with multi-user sync via OneDrive using Git-inspired change-sets.
+Flutter desktop application (Windows + macOS) replacing Excel-based Student Care Data Capture System for Charis Bible College Cape Town. Offline-first architecture with multi-user sync via change-sets: each device has its own SQLite DB and syncs by exporting/importing change-sets to a shared folder (e.g. inside the user's OneDrive). No sync API; OneDrive desktop syncs the folder. All users need OneDrive desktop (or a shared folder) for sync.
 
 ## Critical Business Rules (MUST FOLLOW)
+
+## Academic Session
+
+- Academic session is different from year and student year, which are the same thing.
+- Academic session updates at the start of the academic year, for now, this is the start of a new year.
+- All activities and data entry performed in the application should be within an academic session (most likely the current academic session).
+- Academic session is used to generate reports and other analytics.
 
 ### Alphabetical Sorting
 
@@ -36,7 +43,7 @@ Flutter desktop application (Windows + macOS) replacing Excel-based Student Care
 - **NEVER** store aggregated values redundantly
 - Calculate all summaries on-demand from source data:
   - Attendance % ← calculated from Attendance table
-  - Outstanding tests ← count where score < 70 from Tests table
+  <!-- - Outstanding tests ← count where score < 70 from Tests table -->
   - Ministry hours ← sum per term vs required (15/7/5 for FT 1st/2nd/3rd, 6/4/2 for Hybrid)
   - Finance balance ← 19800 Rand full tuition - SUM(payments)
   - Mission fund ← only for 2nd year students
@@ -52,7 +59,7 @@ Enforce at THREE levels:
 
 **Roles:**
 
-- **Facilitator**: Data entry only (attendance, hours, tests) - NO financials, NO student add/edit
+- **Facilitator**: Data entry only (attendance, ministry hours, tests) - NO financials, NO student add/edit
 - **Admin Level 02** (Intern over student care): Full access EXCEPT financials - can add/edit students, attendance, tests, hours
 - **Admin Level 01** (Director/Dean/Admin): Full access including financials
 
@@ -98,7 +105,7 @@ const charisWhite = Color(0xFFffffff);        // #ffffff
 - **Framework**: Flutter 3.x (desktop: Windows + macOS)
 - **State Management**: Riverpod 2.x
 - **Database**: Drift (type-safe SQLite) + sqlcipher_flutter_libs (encryption)
-- **Sync**: Git-inspired change-sets (JSON patches/deltas)
+- **Sync**: Change-set sync via shared OneDrive folder (no API); export/import JSON change-sets; merge by timestamp
 - **Auth**: Microsoft Entra ID (OAuth2)
 - **UI Tables**: syncfusion_flutter_datagrid
 - **PDF Export**: flutter_pdf
@@ -118,7 +125,7 @@ lib/
 - **Repositories**: Business logic + data access, enforce rules
 - **Providers (Riverpod)**: State management, role checks
 - **Use Cases**: Pure business logic (calculations, validations)
-- **Services**: External integrations (Auth, OneDrive, PDF)
+- **Services**: External integrations (Auth, PDF); sync uses bootstrap config + shared folder only (no API)
 
 ## Sync System Design
 
@@ -139,15 +146,12 @@ Every write operation creates a change-set:
 }
 ```
 
-### Sync Flow
+### Sync Flow (change-set sync via shared folder)
 
-1. **Pull**: Fetch remote change-sets from OneDrive
-2. **Compare**: Check versions/timestamps
-3. **Merge**:
-   - Non-critical fields (attendance, tests): Last-write-wins
-   - Critical fields (payments, status): Flag conflict
-4. **Resolve**: Show conflict resolution modal (side-by-side UI)
-5. **Push**: Send local change-sets to OneDrive
+1. **Export**: Write this device's change-sets to `{syncFolder}/device_{deviceId}.json`
+2. **Import**: Read all `device_*.json` from the sync folder; dedupe by change-set id; sort by timestamp
+3. **Apply**: For each change-set not already in local `change_sets`, apply to the DB (INSERT/UPDATE/STATUS_CHANGE/DELETE) then insert into `change_sets` so it is never re-applied
+4. No API: OneDrive desktop (or any file sync) keeps the folder in sync across devices
 
 ### Conflict Resolution
 
@@ -185,7 +189,9 @@ Every write operation creates a change-set:
 
 - Score entry (0-100)
 - Auto-determine pass/fail: `score >= 70` = pass
-- Outstanding count: count where `score < 70`
+- Outstanding count: count of all tests the student has not sat for within the student's cohort.
+- Any rewritten failed tests, if passed, should automatically be set to 70.
+<!-- - Outstanding count: count where `score < 70` -->
 - Display outstanding indicator prominently
 
 ### Ministry Hours (Post-MVP)

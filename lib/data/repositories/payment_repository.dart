@@ -45,10 +45,26 @@ class PaymentRepository {
   final AppDatabase _db;
   static const _uuid = Uuid();
 
+  Future<String?> _classNameForId(int? classId) async {
+    if (classId == null) return null;
+    final c = await (_db.select(_db.classes)..where((c) => c.id.equals(classId))).getSingleOrNull();
+    return c?.name;
+  }
+
+  static Map<String, dynamic> _studentYearEntry(String? name) =>
+      (name != null && name.isNotEmpty) ? {'studentYear': name} : {};
+
   /// Stream of payment rows for [year]. Use for reactive UI.
-  Stream<List<Payment>> watchPaymentsForYear(String year) {
+  /// When [studentIds] is non-null and non-empty, restrict to those students (e.g. facilitator scope for dashboard/student summary view).
+  Stream<List<Payment>> watchPaymentsForYear(String year, {List<int>? studentIds}) {
     return (_db.select(_db.payments)
-          ..where((t) => t.year.equals(year))
+          ..where((t) {
+            var pred = t.year.equals(year);
+            if (studentIds != null && studentIds.isNotEmpty) {
+              pred = pred & t.studentId.isIn(studentIds);
+            }
+            return pred;
+          })
           ..orderBy([(t) => OrderingTerm.asc(t.studentId)]))
         .watch();
   }
@@ -63,6 +79,7 @@ class PaymentRepository {
   }
 
   /// Upserts a payment row for [studentId] and [year]. Replaces existing row if present.
+  /// [userId], [deviceId], [userDisplayName], [screen] used for change-set if provided.
   Future<void> upsertPaymentRow({
     required int studentId,
     required String year,
@@ -80,6 +97,9 @@ class PaymentRepository {
     double dec = 0,
     double lumpSum = 0,
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     final existing = await getPaymentRow(studentId, year);
     final now = DateTime.now();
@@ -129,40 +149,8 @@ class PaymentRepository {
         ),
       );
       if (userId != null) {
-        await _insertChangeSet(
-          table: 'payments',
-          recordId: inserted.toString(),
-          operation: operation,
-          payload: {
-            'studentId': studentId,
-            'year': year,
-            'jan': jan,
-            'feb': feb,
-            'mar': mar,
-            'apr': apr,
-            'may': may,
-            'jun': jun,
-            'jul': jul,
-            'aug': aug,
-            'sep': sep,
-            'oct': oct,
-            'nov': nov,
-            'dec': dec,
-            'lumpSum': lumpSum,
-          },
-          userId: userId,
-          version: 1,
-        );
-      }
-      return;
-    }
-    
-    if (userId != null && paymentId != null) {
-      await _insertChangeSet(
-        table: 'payments',
-        recordId: paymentId.toString(),
-        operation: operation,
-        payload: {
+        final studentRow = await (_db.select(_db.students)..where((t) => t.id.equals(studentId))).getSingleOrNull();
+        final payload = <String, dynamic>{
           'studentId': studentId,
           'year': year,
           'jan': jan,
@@ -178,9 +166,61 @@ class PaymentRepository {
           'nov': nov,
           'dec': dec,
           'lumpSum': lumpSum,
-        },
+          if (studentRow != null) 'studentName': '${studentRow.surname}, ${studentRow.firstName}',
+          if (studentRow != null) ..._studentYearEntry(await _classNameForId(studentRow.classId)),
+          if (studentRow != null && studentRow.mode != null && studentRow.mode!.isNotEmpty) 'studentMode': studentRow.mode,
+          if (userDisplayName != null) 'userDisplayName': userDisplayName,
+          if (screen != null) 'screen': screen,
+        };
+        await _insertChangeSet(
+          table: 'payments',
+          recordId: inserted.toString(),
+          operation: operation,
+          payload: payload,
+          userId: userId,
+          version: 1,
+          deviceId: deviceId ?? 'legacy',
+          userDisplayName: userDisplayName,
+          screen: screen,
+        );
+      }
+      return;
+    }
+    
+    if (userId != null && paymentId != null) {
+      final studentRow = await (_db.select(_db.students)..where((t) => t.id.equals(studentId))).getSingleOrNull();
+      final payload = <String, dynamic>{
+        'studentId': studentId,
+        'year': year,
+        'jan': jan,
+        'feb': feb,
+        'mar': mar,
+        'apr': apr,
+        'may': may,
+        'jun': jun,
+        'jul': jul,
+        'aug': aug,
+        'sep': sep,
+        'oct': oct,
+        'nov': nov,
+        'dec': dec,
+        'lumpSum': lumpSum,
+        if (studentRow != null) 'studentName': '${studentRow.surname}, ${studentRow.firstName}',
+        if (studentRow != null) ..._studentYearEntry(await _classNameForId(studentRow.classId)),
+        if (studentRow != null && studentRow.mode != null && studentRow.mode!.isNotEmpty) 'studentMode': studentRow.mode,
+        if (userDisplayName != null) 'userDisplayName': userDisplayName,
+        if (screen != null) 'screen': screen,
+      };
+      await _insertChangeSet(
+        table: 'payments',
+        recordId: paymentId.toString(),
+        operation: operation,
+        payload: payload,
         userId: userId,
         version: 1,
+        deviceId: deviceId ?? 'legacy',
+        userDisplayName: userDisplayName,
+        screen: screen,
       );
     }
   }
@@ -188,10 +228,14 @@ class PaymentRepository {
   /// Batch upserts multiple payment rows efficiently in a single transaction.
   /// This is much faster than calling upsertPaymentRow multiple times.
   /// [payments] is a map of studentId -> PaymentData.
+  /// [userId], [deviceId], [userDisplayName], [screen] used for change-set if provided.
   Future<int> batchUpsertPayments({
     required String year,
     required Map<int, PaymentData> payments,
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     if (payments.isEmpty) return 0;
 
@@ -265,29 +309,39 @@ class PaymentRepository {
         }
         
         if (userId != null) {
+          final studentRow = await (_db.select(_db.students)..where((t) => t.id.equals(studentId))).getSingleOrNull();
+          final payload = <String, dynamic>{
+            'studentId': studentId,
+            'year': year,
+            'jan': payment.jan,
+            'feb': payment.feb,
+            'mar': payment.mar,
+            'apr': payment.apr,
+            'may': payment.may,
+            'jun': payment.jun,
+            'jul': payment.jul,
+            'aug': payment.aug,
+            'sep': payment.sep,
+            'oct': payment.oct,
+            'nov': payment.nov,
+            'dec': payment.dec,
+            'lumpSum': payment.lumpSum,
+            if (studentRow != null) 'studentName': '${studentRow.surname}, ${studentRow.firstName}',
+            if (studentRow != null) ..._studentYearEntry(await _classNameForId(studentRow.classId)),
+            if (studentRow != null && studentRow.mode != null && studentRow.mode!.isNotEmpty) 'studentMode': studentRow.mode,
+            if (userDisplayName != null) 'userDisplayName': userDisplayName,
+            if (screen != null) 'screen': screen,
+          };
           await _insertChangeSet(
             table: 'payments',
             recordId: paymentId.toString(),
             operation: operation,
-            payload: {
-              'studentId': studentId,
-              'year': year,
-              'jan': payment.jan,
-              'feb': payment.feb,
-              'mar': payment.mar,
-              'apr': payment.apr,
-              'may': payment.may,
-              'jun': payment.jun,
-              'jul': payment.jul,
-              'aug': payment.aug,
-              'sep': payment.sep,
-              'oct': payment.oct,
-              'nov': payment.nov,
-              'dec': payment.dec,
-              'lumpSum': payment.lumpSum,
-            },
+            payload: payload,
             userId: userId,
             version: 1,
+            deviceId: deviceId ?? 'legacy',
+            userDisplayName: userDisplayName,
+            screen: screen,
           );
         }
         count++;
@@ -330,16 +384,23 @@ class PaymentRepository {
     required Map<String, dynamic> payload,
     required String userId,
     required int version,
+    required String deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
+    final fullPayload = Map<String, dynamic>.from(payload);
+    if (userDisplayName != null) fullPayload['userDisplayName'] = userDisplayName;
+    if (screen != null) fullPayload['screen'] = screen;
     await _db.into(_db.changeSets).insert(
           ChangeSetsCompanion.insert(
             id: _uuid.v4(),
             table: table,
             recordId: recordId,
             operation: operation,
-            payload: jsonEncode(payload),
+            payload: jsonEncode(fullPayload),
             userId: userId,
             version: version,
+            deviceId: deviceId,
           ),
         );
   }

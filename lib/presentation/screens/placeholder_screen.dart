@@ -11,7 +11,8 @@ class PlaceholderScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final sectionName = title ?? _titleFromPath(GoRouterState.of(context).matchedLocation);
+    final sectionName =
+        title ?? _titleFromPath(GoRouterState.of(context).matchedLocation);
 
     return Container(
       color: colorScheme.surface,
@@ -60,8 +61,6 @@ class PlaceholderScreen extends StatelessWidget {
         return 'Tests';
       case '/payments':
         return 'Payments';
-      case '/missions':
-        return 'Missions';
       case '/reports':
         return 'Reports / Export';
       default:

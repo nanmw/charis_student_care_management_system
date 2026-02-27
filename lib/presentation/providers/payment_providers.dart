@@ -9,9 +9,15 @@ final paymentRepositoryProvider = Provider<PaymentRepository>((ref) {
   return PaymentRepository(db);
 });
 
-/// Stream of payment rows for [year]. Use for reactive UI on payments screen.
+/// Stream of payment rows for [year]. Scoped to facilitator's class when applicable (for dashboard/student summary view).
+/// Payments management screen is admin-only and uses unscoped data when allowedStudentIds is empty.
 final paymentsForYearStreamProvider =
     StreamProvider.autoDispose.family<List<Payment>, String>((ref, year) {
   final repo = ref.watch(paymentRepositoryProvider);
-  return repo.watchPaymentsForYear(year);
+  final allowedIdsAsync = ref.watch(allowedStudentIdsStreamProvider);
+  return allowedIdsAsync.when(
+    data: (ids) => repo.watchPaymentsForYear(year, studentIds: ids.isEmpty ? null : ids),
+    loading: () => Stream.value([]),
+    error: (_, __) => Stream.value([]),
+  );
 });

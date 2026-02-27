@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:charis_student_care/core/constants/app_constants.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
+import 'package:go_router/go_router.dart';
 import 'package:charis_student_care/core/utils/currency_utils.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/payment_repository.dart';
@@ -15,6 +16,7 @@ import 'package:charis_student_care/data/repositories/payment_repository.dart'
 import 'package:charis_student_care/domain/use_cases/sort_students_alphabetically.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
+import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/payment_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
@@ -35,11 +37,10 @@ const List<String> _monthLabels = [
 ];
 
 const List<String> _modeOptions = ['Full-time', 'Hybrid'];
-const List<String?> _academicYearOptions = [null, 'Year 1', 'Year 2', 'Year 3'];
 
 /// Individual editable payment cell widget to isolate rebuilds
 class _PaymentCell extends StatefulWidget {
-  static const double _defaultWidth = 70;
+  static const double _defaultWidth = 90;
 
   const _PaymentCell({
     required this.controller,
@@ -246,7 +247,8 @@ class PaymentsScreen extends ConsumerStatefulWidget {
 
 class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   String _selectedMode = 'Full-time';
-  String? _academicYear;
+  int? _classFilter;
+  bool _defaultClassScheduled = false;
   String _paymentYear = DateTime.now().year.toString();
   String _searchQuery = '';
   // Store edits per payment year to preserve them when switching years
@@ -334,6 +336,21 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
     final paymentsAsync =
         ref.watch(paymentsForYearStreamProvider(_paymentYear));
+    final classes = ref.watch(allClassesFutureProvider).valueOrNull ?? [];
+    if (classes.isNotEmpty && !_defaultClassScheduled && _classFilter == null) {
+      _defaultClassScheduled = true;
+      final year1 = classes.where((c) => c.name == 'Year 1');
+      final defaultClassId =
+          year1.isEmpty ? classes.first.id : year1.first.id;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          _classFilter = defaultClassId;
+          _cachedFilteredStudents = null;
+          _displayedCount = 25;
+        });
+      });
+    }
 
     return RoleGuard(
       canShow: (role) => RolePermissions.canManageFinancials(role),
@@ -381,10 +398,28 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                 ),
                 Row(
                   children: [
+                    RoleGuard(
+                      canShow: RolePermissions.canExportReports,
+                      child: OutlinedButton.icon(
+                        onPressed: () => context.go('/reports?type=payments'),
+                        icon: const Icon(Icons.summarize_outlined, size: 20),
+                        label: const Text('Report'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: colorScheme.onSurfaceVariant,
+                          side: BorderSide(color: colorScheme.outline),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 20, vertical: 12,),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
                     OutlinedButton.icon(
                       onPressed: () => _exportCsv(context),
                       icon: const Icon(Icons.download, size: 20),
-                      label: const Text('Export'),
+                      label: const Text('Export CSV'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: colorScheme.onSurfaceVariant,
                         side: BorderSide(color: colorScheme.outline),
@@ -424,7 +459,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                 data: (allStudents) {
                   // Memoize filtered/sorted list
                   final filterKey =
-                      '$_selectedMode|$_academicYear|$_searchQuery';
+                      '$_selectedMode|$_classFilter|$_searchQuery';
                   if (_cachedFilteredStudents == null ||
                       _lastFilterKey != filterKey) {
                     // Optimized: combine filters into single pass to reduce allocations
@@ -432,8 +467,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                     final filtered = allStudents.where((s) {
                       // Mode filter
                       if (s.mode != _selectedMode) return false;
-                      // Academic year filter
-                      if (_academicYear != null && s.year != _academicYear) {
+                      // Class filter
+                      if (_classFilter != null && s.classId != _classFilter) {
                         return false;
                       }
                       // Search filter
@@ -734,13 +769,13 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         const SizedBox(width: 8),
         _buildModeToggle(colorScheme, redColor),
         const SizedBox(width: 24),
-        Text('Academic Year:',
+        Text('Class:',
             style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
                 fontSize: 14,
                 fontFamily: 'Questrial',),),
         const SizedBox(width: 8),
-        _buildAcademicYearDropdown(colorScheme),
+        _buildClassDropdown(colorScheme),
         const SizedBox(width: 24),
         Text('Payment Year:',
             style: TextStyle(
@@ -806,7 +841,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     );
   }
 
-  Widget _buildAcademicYearDropdown(ColorScheme colorScheme) {
+  Widget _buildClassDropdown(ColorScheme colorScheme) {
+    final classes = ref.watch(allClassesFutureProvider).valueOrNull ?? [];
     return SizedBox(
       width: 100,
       child: Container(
@@ -817,25 +853,21 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: colorScheme.outline),
         ),
-        child: DropdownButton<String?>(
-          value: _academicYear,
+        child: DropdownButton<int?>(
+          value: _classFilter,
           hint: Text('All',
               style:
                   TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),),
           isExpanded: true,
           underline: const SizedBox.shrink(),
           borderRadius: BorderRadius.circular(8),
-          items: _academicYearOptions
-              .map((y) => DropdownMenuItem<String?>(
-                    value: y,
-                    child: Text(y ?? 'All',
-                        style: TextStyle(
-                            color: colorScheme.onSurface, fontSize: 14,),),
-                  ),)
-              .toList(),
+          items: [
+            const DropdownMenuItem<int?>(value: null, child: Text('All', style: TextStyle(fontSize: 14))),
+            ...classes.map((c) => DropdownMenuItem<int?>(value: c.id, child: Text(c.name, style: TextStyle(color: colorScheme.onSurface, fontSize: 14)))),
+          ],
           onChanged: (v) {
             setState(() {
-              _academicYear = v;
+              _classFilter = v;
               _cachedFilteredStudents = null; // Invalidate cache
               _displayedCount = 25; // Reset to initial batch
             });
@@ -911,12 +943,13 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
               scrollDirection: Axis.horizontal,
               child: Table(
                 columnWidths: {
-                  0: const FixedColumnWidth(160),
+                  0: const FixedColumnWidth(44),
+                  1: const FixedColumnWidth(160),
                   ...Map.fromEntries(List.generate(_monthLabels.length,
-                      (i) => MapEntry(i + 1, const FixedColumnWidth(72)),),),
-                  _monthLabels.length + 1: const FixedColumnWidth(80),
-                  _monthLabels.length + 2: const FixedColumnWidth(100),
-                  _monthLabels.length + 3: const FixedColumnWidth(110),
+                      (i) => MapEntry(i + 2, const FixedColumnWidth(90)),),),
+                  _monthLabels.length + 2: const FixedColumnWidth(80),
+                  _monthLabels.length + 3: const FixedColumnWidth(100),
+                  _monthLabels.length + 4: const FixedColumnWidth(110),
                 },
                 border: TableBorder.all(color: colorScheme.outlineVariant),
                 children: [
@@ -925,6 +958,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                     decoration: BoxDecoration(
                         color: colorScheme.surfaceContainerHighest,),
                     children: [
+                      _tableHeader(context, '#'),
                       _tableHeader(context, 'Student Name'),
                       ..._monthLabels.map((l) => _tableHeader(context, l)),
                       _tableHeader(context, 'Lump Sum'),
@@ -943,6 +977,17 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                     return TableRow(
                       decoration: BoxDecoration(color: rowColor),
                       children: [
+                        _cell(
+                            context,
+                            colorScheme,
+                            RepaintBoundary(
+                              child: Text(
+                                  '${index + 1}',
+                                  style: TextStyle(
+                                      color: colorScheme.onSurface,
+                                      fontSize: 14,
+                                      fontFamily: 'Questrial',),),
+                            ),),
                         _cell(
                             context,
                             colorScheme,
@@ -1178,12 +1223,15 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       // Get userId for change set logging
       final auth = ref.read(authStateProvider).valueOrNull;
       final userId = auth is Authenticated ? auth.user.id : null;
+      final userDisplayName = auth is Authenticated ? auth.user.displayName : null;
 
       // Use batch upsert for much better performance
       final savedCount = await repo.batchUpsertPayments(
         year: _paymentYear,
         payments: paymentDataMap,
         userId: userId,
+        userDisplayName: userDisplayName,
+        screen: 'Payments',
       );
 
       if (mounted) {
@@ -1202,6 +1250,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   void _exportCsv(BuildContext context) {
     final rows = <String>[];
     final header = [
+      '#',
       'Student Name',
       ..._monthLabels,
       'Lump Sum',
@@ -1215,6 +1264,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     final students = _cachedFilteredStudents ?? [];
     final studentMap = {for (final s in students) s.id: s};
 
+    var serial = 1;
     for (final entry in edits.entries) {
       final studentId = entry.key;
       final edit = entry.value;
@@ -1222,7 +1272,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       final name = student == null
           ? 'Student $studentId'
           : '${student.surname} ${student.firstName}';
-      rows.add([
+      final rowList = <String>[
+        (serial++).toString(),
         '"$name"',
         edit.jan.toStringAsFixed(0),
         edit.feb.toStringAsFixed(0),
@@ -1237,7 +1288,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         edit.lumpSum.toStringAsFixed(0),
         edit.totalPaid.toStringAsFixed(2),
         edit.balance.toStringAsFixed(2),
-      ].join(','),);
+      ];
+      rows.add(rowList.join(','));
     }
     final csv = rows.join('\n');
     if (mounted) {

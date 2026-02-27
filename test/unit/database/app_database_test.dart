@@ -21,7 +21,7 @@ void main() {
     });
 
     test('schema version is correct', () {
-      expect(database.schemaVersion, equals(5));
+      expect(database.schemaVersion, equals(30));
     });
 
     test('tables are created correctly', () async {
@@ -243,6 +243,7 @@ void main() {
         payload: '{"surname": "Test", "firstName": "Student"}',
         userId: 'user-123',
         version: 1,
+        deviceId: 'test-device',
       );
 
       await database.into(database.changeSets).insert(changeSet);
@@ -263,6 +264,7 @@ void main() {
         payload: '{"status": "Active"}',
         userId: 'user-456',
         version: 2,
+        deviceId: 'test-device',
       );
 
       await database.into(database.changeSets).insert(changeSet);
@@ -284,6 +286,7 @@ void main() {
         payload: '{}',
         userId: 'user-789',
         version: 1,
+        deviceId: 'test-device',
       );
 
       expect(
@@ -308,6 +311,7 @@ void main() {
           payload: '{}',
           userId: 'user-$i',
           version: 1,
+          deviceId: 'test-device',
         );
 
         await database.into(database.changeSets).insert(changeSet);
@@ -327,6 +331,7 @@ void main() {
               payload: '{}',
               userId: 'user-1',
               version: 1,
+              deviceId: 'test-device',
             ),
           );
       await database.into(database.changeSets).insert(
@@ -338,6 +343,7 @@ void main() {
               payload: '{}',
               userId: 'user-2',
               version: 1,
+              deviceId: 'test-device',
             ),
           );
       await database.into(database.changeSets).insert(
@@ -349,6 +355,7 @@ void main() {
               payload: '{}',
               userId: 'user-3',
               version: 1,
+              deviceId: 'test-device',
             ),
           );
 
@@ -371,6 +378,7 @@ void main() {
               payload: '{}',
               userId: 'user-1',
               version: 1,
+              deviceId: 'test-device',
               timestamp: Value(now.subtract(const Duration(hours: 2))),
             ),
           );
@@ -383,6 +391,7 @@ void main() {
               payload: '{}',
               userId: 'user-2',
               version: 1,
+              deviceId: 'test-device',
               timestamp: Value(now.subtract(const Duration(hours: 1))),
             ),
           );
@@ -416,6 +425,7 @@ void main() {
         payload: '{"surname": "Integration", "firstName": "Test"}',
         userId: 'test-user',
         version: 1,
+        deviceId: 'test-device',
       );
 
       await database.into(database.changeSets).insert(changeSet);

@@ -5,6 +5,7 @@ import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
+import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/subject_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 
@@ -14,21 +15,19 @@ class SubjectFormDialog extends ConsumerStatefulWidget {
     super.key,
     required this.isEdit,
     this.subject,
-    this.initialYear,
+    this.initialClassId,
     required this.onSaved,
   });
 
   final bool isEdit;
   final Subject? subject;
-  final String? initialYear;
+  final int? initialClassId;
   final VoidCallback onSaved;
-
-  static const List<String> yearOptions = ['Year 1', 'Year 2', 'Year 3'];
 
   static Future<void> showAdd({
     required BuildContext context,
     required WidgetRef ref,
-    required String year,
+    required int classId,
     required VoidCallback onSaved,
   }) {
     return showDialog<void>(
@@ -37,7 +36,7 @@ class SubjectFormDialog extends ConsumerStatefulWidget {
       builder: (ctx) => Consumer(
         builder: (context, ref, _) => SubjectFormDialog(
           isEdit: false,
-          initialYear: year,
+          initialClassId: classId,
           onSaved: onSaved,
         ),
       ),
@@ -69,14 +68,14 @@ class SubjectFormDialog extends ConsumerStatefulWidget {
 
 class _SubjectFormDialogState extends ConsumerState<SubjectFormDialog> {
   late final TextEditingController _nameController;
-  String? _year;
+  int? _classId;
 
   @override
   void initState() {
     super.initState();
     final s = widget.subject;
     _nameController = TextEditingController(text: s?.name ?? '');
-    _year = s?.year ?? widget.initialYear;
+    _classId = s?.classId ?? widget.initialClassId;
   }
 
   @override
@@ -121,7 +120,7 @@ class _SubjectFormDialogState extends ConsumerState<SubjectFormDialog> {
                   children: [
                     _buildField('Subject Name', _nameController, redColor, colorScheme, isDark, hint: 'Enter subject name'),
                     const SizedBox(height: 16),
-                    _buildYearDropdown(redColor, colorScheme, isDark),
+                    _buildClassDropdown(redColor, colorScheme, isDark),
                     const SizedBox(height: 24),
                     _buildActions(context, redColor, isDark),
                   ],
@@ -217,44 +216,52 @@ class _SubjectFormDialogState extends ConsumerState<SubjectFormDialog> {
     );
   }
 
-  Widget _buildYearDropdown(Color redColor, ColorScheme colorScheme, bool isDark) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Year',
-          style: TextStyle(
-            color: isDark ? AppColors.textOnDark : AppColors.charisBlack,
-            fontWeight: FontWeight.w600,
-            fontSize: 14,
-            fontFamily: 'Questrial',
-          ),
-        ),
-        const SizedBox(height: 6),
-        DropdownButtonFormField<String>(
-          initialValue: _year,
-          decoration: InputDecoration(
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.charisMidGray),
+  Widget _buildClassDropdown(Color redColor, ColorScheme colorScheme, bool isDark) {
+    final classesAsync = ref.watch(allClassesFutureProvider);
+    return classesAsync.when(
+      data: (classes) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Class',
+              style: TextStyle(
+                color: isDark ? AppColors.textOnDark : AppColors.charisBlack,
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                fontFamily: 'Questrial',
+              ),
             ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: redColor, width: 2),
+            const SizedBox(height: 6),
+            DropdownButtonFormField<int>(
+              initialValue: _classId,
+              decoration: InputDecoration(
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppColors.charisMidGray),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: redColor, width: 2),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                filled: true,
+                fillColor: isDark ? AppColors.surfaceDark : AppColors.charisWhite,
+              ),
+              hint: const Text('Select Class', style: TextStyle(fontSize: 14)),
+              items: classes.map((c) => DropdownMenuItem<int>(value: c.id, child: Text(c.name))).toList(),
+              onChanged: widget.isEdit ? null : (v) => setState(() => _classId = v),
+              style: TextStyle(
+                color: isDark ? AppColors.textOnDark : AppColors.charisBlack,
+                fontSize: 14,
+              ),
             ),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            filled: true,
-            fillColor: isDark ? AppColors.surfaceDark : AppColors.charisWhite,
-          ),
-          hint: Text('Select Year', style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14)),
-          items: SubjectFormDialog.yearOptions.map((s) => DropdownMenuItem(value: s, child: Text(s))).toList(),
-          onChanged: widget.isEdit
-              ? null // Year is locked in edit mode
-              : (v) => setState(() => _year = v),
-          style: TextStyle(color: isDark ? AppColors.textOnDark : AppColors.charisBlack, fontSize: 14),
-        ),
-      ],
+          ],
+        );
+      },
+      loading: () => const SizedBox(height: 56),
+      error: (e, _) => Text('Error loading classes: $e'),
     );
   }
 
@@ -294,9 +301,9 @@ class _SubjectFormDialogState extends ConsumerState<SubjectFormDialog> {
       );
       return;
     }
-    if (_year == null) {
+    if (_classId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Year is required')),
+        const SnackBar(content: Text('Class is required')),
       );
       return;
     }
@@ -310,13 +317,17 @@ class _SubjectFormDialogState extends ConsumerState<SubjectFormDialog> {
               name: name,
               userRole: auth.role,
               userId: auth.user.id,
+              userDisplayName: auth.user.displayName,
+              screen: 'Subjects',
             );
       } else {
         await ref.read(subjectRepositoryProvider).addSubject(
               name,
-              _year!,
+              _classId!,
               userRole: auth.role,
               userId: auth.user.id,
+              userDisplayName: auth.user.displayName,
+              screen: 'Subjects',
             );
       }
       if (mounted) {

@@ -6,6 +6,21 @@ enum UserRole {
 
   const UserRole(this.displayName);
   final String displayName;
+
+  /// Serialized value stored in DB: facilitator, adminLevel02, adminLevel01
+  String get value => switch (this) {
+        UserRole.facilitator => 'facilitator',
+        UserRole.adminLevel02 => 'adminLevel02',
+        UserRole.adminLevel01 => 'adminLevel01',
+      };
+
+  static UserRole fromString(String s) {
+    return switch (s) {
+      'adminLevel01' => UserRole.adminLevel01,
+      'adminLevel02' => UserRole.adminLevel02,
+      _ => UserRole.facilitator,
+    };
+  }
 }
 
 /// Role permissions helper
@@ -40,5 +55,20 @@ class RolePermissions {
   /// Check if role can manage subjects (add/edit/delete)
   static bool canManageSubjects(UserRole role) {
     return role == UserRole.adminLevel01;
+  }
+
+  /// Check if role can manage users (create, edit, deactivate)
+  static bool canManageUsers(UserRole role) {
+    return role == UserRole.adminLevel01;
+  }
+
+  /// Check if role can manage missions (create, edit, deactivate) and participations
+  static bool canManageMissions(UserRole role) {
+    return role == UserRole.adminLevel01;
+  }
+
+  /// Check if role can export reports (access Export & Reports, export from screens or Student Summary modal)
+  static bool canExportReports(UserRole role) {
+    return role == UserRole.adminLevel01 || role == UserRole.adminLevel02;
   }
 }

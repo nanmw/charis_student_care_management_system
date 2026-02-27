@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
 import 'package:charis_student_care/core/constants/role_constants.dart';
@@ -7,6 +8,7 @@ import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
+import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/subject_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
@@ -21,7 +23,7 @@ class SubjectsScreen extends ConsumerStatefulWidget {
 }
 
 class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
-  String _selectedYear = 'Year 1';
+  int? _selectedClassId;
   SubjectDataSource? _dataSource;
   int _displayedCount = 20; // Initial batch size
   bool _isLoadingMore = false;
@@ -41,7 +43,11 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
     final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
-    final subjectsAsync = ref.watch(subjectsForYearStreamProvider(_selectedYear));
+    final classesAsync = ref.watch(allClassesFutureProvider);
+    final classes = classesAsync.valueOrNull;
+    final effectiveClassId = _selectedClassId ??
+        (classes != null && classes.isNotEmpty ? classes.first.id : null);
+    final subjectsAsync = ref.watch(subjectsForClassStreamProvider(effectiveClassId ?? 0));
 
     return Container(
       color: colorScheme.surface,
@@ -61,9 +67,20 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
                   fontFamily: 'Questrial',
                 ),
               ),
-              RoleGuard(
-                canShow: RolePermissions.canManageSubjects,
-                child: ElevatedButton.icon(
+              Row(
+                children: [
+                  RoleGuard(
+                    canShow: RolePermissions.canExportReports,
+                    child: OutlinedButton.icon(
+                      onPressed: () => context.go('/reports?type=subjects'),
+                      icon: const Icon(Icons.download_outlined, size: 18),
+                      label: const Text('Export'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  RoleGuard(
+                    canShow: RolePermissions.canManageSubjects,
+                    child: ElevatedButton.icon(
                   onPressed: () => _openAddSubject(context),
                   icon: const Icon(Icons.add, size: 20),
                   label: const Text('Add Subject'),
@@ -74,13 +91,15 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
                 ),
-              ),
+                ),
+              ],
+            ),
             ],
           ),
           const SizedBox(height: 20),
           Row(
             children: [
-              _buildYearDropdown(),
+              _buildClassDropdown(classes),
             ],
           ),
           const SizedBox(height: 20),
@@ -88,9 +107,18 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
             child: subjectsAsync.when(
               data: (subjects) {
                 if (subjects.isEmpty) {
+                  String selectedName = 'selected class';
+                  if (effectiveClassId != null && classes != null) {
+                    for (final c in classes) {
+                      if (c.id == effectiveClassId) {
+                        selectedName = c.name;
+                        break;
+                      }
+                    }
+                  }
                   return Center(
                     child: Text(
-                      'No subjects found for $_selectedYear.',
+                      'No subjects found for $selectedName.',
                       style: TextStyle(
                         color: colorScheme.onSurfaceVariant,
                         fontSize: 14,
@@ -221,8 +249,10 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
     );
   }
 
-  Widget _buildYearDropdown() {
+  Widget _buildClassDropdown(List<SchoolClass>? classes) {
     final colorScheme = Theme.of(context).colorScheme;
+    final list = classes ?? [];
+    final value = _selectedClassId ?? (list.isNotEmpty ? list.first.id : null);
     return Container(
       width: 200,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -231,27 +261,16 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: AppColors.charisMidGray),
       ),
-      child: DropdownButton<String>(
-        value: _selectedYear,
+      child: DropdownButton<int>(
+        value: value,
         isExpanded: true,
         underline: const SizedBox(),
-        items: SubjectFormDialog.yearOptions.map((year) {
-          return DropdownMenuItem(
-            value: year,
-            child: Text(
-              year,
-              style: const TextStyle(
-                fontSize: 14,
-                fontFamily: 'Questrial',
-              ),
-            ),
-          );
-        }).toList(),
-        onChanged: (value) {
-          if (value != null) {
+        items: list.map((c) => DropdownMenuItem<int>(value: c.id, child: Text(c.name, style: const TextStyle(fontSize: 14, fontFamily: 'Questrial')))).toList(),
+        onChanged: (v) {
+          if (v != null) {
             setState(() {
-              _selectedYear = value;
-              _displayedCount = 20; // Reset to initial batch
+              _selectedClassId = v;
+              _displayedCount = 20;
             });
           }
         },
@@ -260,10 +279,13 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
   }
 
   void _openAddSubject(BuildContext context) {
+    final list = ref.read(allClassesFutureProvider).valueOrNull;
+    final classId = _selectedClassId ?? (list != null && list.isNotEmpty ? list.first.id : null);
+    if (classId == null) return;
     SubjectFormDialog.showAdd(
       context: context,
       ref: ref,
-      year: _selectedYear,
+      classId: classId,
       onSaved: () {},
     );
   }
@@ -325,6 +347,8 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
               subject.id,
               userRole: auth.role,
               userId: auth.user.id,
+              userDisplayName: auth.user.displayName,
+              screen: 'Subjects',
             );
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

@@ -27,6 +27,9 @@ class ChangeSets extends Table {
   /// Version number for conflict detection
   IntColumn get version => integer()();
 
+  /// ID of the device that created this change-set (for sync).
+  TextColumn get deviceId => text()();
+
   @override
   Set<Column> get primaryKey => {id};
 

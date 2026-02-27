@@ -5,6 +5,7 @@ import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
+import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 
@@ -21,12 +22,6 @@ class StudentFormDialog extends ConsumerStatefulWidget {
   final Student? student;
   final VoidCallback onSaved;
 
-  static const List<String> yearOptions = [
-    'Year 1',
-    'Year 2',
-    'Year 3',
-    'Year 4',
-  ];
   static const List<String> modeOptions = ['Full-time', 'Hybrid'];
   static const List<String> statusOptions = [
     'Active',
@@ -87,7 +82,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
   late final TextEditingController _firstNameController;
   late final TextEditingController _contactInfoController;
   late final TextEditingController _emailController;
-  String? _year;
+  int? _classId;
   String? _mode;
   String? _admissionYear;
   String? _status;
@@ -103,7 +98,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
     _firstNameController = TextEditingController(text: s?.firstName ?? '');
     _contactInfoController = TextEditingController(text: s?.contactInfo ?? '');
     _emailController = TextEditingController(text: s?.email ?? '');
-    _year = s?.year;
+    _classId = s?.classId;
     _mode = s?.mode;
     _admissionYear = s?.admissionYear;
     _status = s?.status;
@@ -160,15 +155,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
                     _buildField('First Names', _firstNameController, redColor, colorScheme, isDark,
                         hint: 'First Names',),
                     const SizedBox(height: 16),
-                    _buildOptionalDropdown(
-                        'Year',
-                        StudentFormDialog.yearOptions,
-                        _year,
-                        'Select Year',
-                        redColor,
-                        colorScheme,
-                        isDark,
-                        (v) => setState(() => _year = v),),
+                    _buildClassDropdown(redColor, colorScheme, isDark),
                     const SizedBox(height: 16),
                     _buildOptionalDropdown(
                         'Mode',
@@ -411,6 +398,68 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
     );
   }
 
+  Widget _buildClassDropdown(Color redColor, ColorScheme colorScheme, bool isDark) {
+    final classesAsync = ref.watch(allClassesFutureProvider);
+    return classesAsync.when(
+      data: (classes) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Class',
+              style: TextStyle(
+                color: isDark ? AppColors.textOnDark : AppColors.charisBlack,
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                fontFamily: 'Questrial',
+              ),
+            ),
+            const SizedBox(height: 6),
+            DropdownButtonFormField<int?>(
+              initialValue: _classId,
+              decoration: InputDecoration(
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: const BorderSide(color: AppColors.charisMidGray),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: redColor, width: 2),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                filled: true,
+                fillColor: isDark ? AppColors.surfaceDark : AppColors.charisWhite,
+              ),
+              hint: Text(
+                'Select Class',
+                style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
+              ),
+              items: [
+                if (_classId != null)
+                  const DropdownMenuItem<int?>(
+                    value: null,
+                    child: Text('Clear', style: TextStyle(fontStyle: FontStyle.italic)),
+                  ),
+                ...classes.map((c) => DropdownMenuItem<int?>(
+                  value: c.id,
+                  child: Text(c.name),
+                ),),
+              ],
+              onChanged: (v) => setState(() => _classId = v),
+              style: TextStyle(
+                color: isDark ? AppColors.textOnDark : AppColors.charisBlack,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        );
+      },
+      loading: () => const SizedBox(height: 56),
+      error: (e, _) => Text('Error loading classes: $e'),
+    );
+  }
+
   Widget _buildPhoneField(Color redColor, ColorScheme colorScheme, bool isDark) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -593,7 +642,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
               widget.student!.id,
               surname: surname,
               firstName: firstName,
-              year: _year,
+              classId: _classId,
               mode: _mode,
               admissionYear: _admissionYear,
               status: status,
@@ -604,6 +653,8 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
               accidentWaiver: _accidentWaiver,
               userRole: auth.role,
               userId: auth.user.id,
+              userDisplayName: auth.user.displayName,
+              screen: 'Students',
             );
       } else {
         await ref.read(studentRepositoryProvider).addStudent(
@@ -611,7 +662,9 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
               firstName,
               userRole: auth.role,
               userId: auth.user.id,
-              year: _year,
+              userDisplayName: auth.user.displayName,
+              screen: 'Students',
+              classId: _classId,
               mode: _mode,
               admissionYear: _admissionYear,
               contactInfo: contactInfo.isEmpty ? null : contactInfo,

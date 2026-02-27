@@ -4,8 +4,8 @@ Flutter desktop application replacing Excel-based Student Care Data Capture Syst
 
 ## Features
 
-- Offline-first architecture with multi-user sync via OneDrive
-- Git-inspired change-set synchronization
+- Offline-first architecture with multi-user sync via a shared OneDrive folder (change-set sync; no API; OneDrive desktop required)
+- Git-inspired change-set synchronization (export/import JSON; merge by timestamp)
 - Role-based access control (Facilitator, Admin Level 02, Admin Level 01)
 - Student management with alphabetical sorting
 - Attendance tracking with percentage calculation
@@ -19,7 +19,7 @@ Flutter desktop application replacing Excel-based Student Care Data Capture Syst
 - Riverpod 2.x (State Management)
 - Drift (Type-safe SQLite with encryption)
 - Microsoft Entra ID (OAuth2 Authentication)
-- OneDrive API (Sync)
+- Sync: change-set export/import to a shared OneDrive folder (no API; OneDrive desktop syncs files)
 
 ## Getting Started
 
@@ -59,6 +59,10 @@ flutter run -d windows --dart-define=CHARIS_AUTH_SKIP=true
 ```
 
 You will go straight to the app. Do **not** use this in production.
+
+### Sync (change-set via OneDrive folder)
+
+Sync uses a shared folder (no API). In the app, go to **Settings** → **Sync**, choose a folder inside your OneDrive (e.g. `OneDrive\\CharisStudentCare\\Sync`). All devices that use the same folder will exchange change-sets. OneDrive desktop must be installed so the folder syncs. Sync runs on startup and you can use **Sync now** in Settings.
 
 ### Alternative: Using Environment Variables
 

@@ -16,6 +16,15 @@ class TestRepository {
 
   static const int _passThreshold = 70;
 
+  Future<String?> _classNameForId(int? classId) async {
+    if (classId == null) return null;
+    final c = await (_db.select(_db.classes)..where((c) => c.id.equals(classId))).getSingleOrNull();
+    return c?.name;
+  }
+
+  static Map<String, dynamic> _studentYearEntry(String? name) =>
+      (name != null && name.isNotEmpty) ? {'studentYear': name} : {};
+
   /// Stream of all tests, ordered by studentId and createdAt desc.
   Stream<List<Test>> watchAllTests() {
     return (_db.select(_db.tests)
@@ -128,7 +137,7 @@ class TestRepository {
   // getAcademicSessionOptions() has been moved to AcademicSessionRepository
   // Use academicSessionOptionsProvider from academic_session_providers.dart instead
 
-  /// Adds a test. Requires canEnterTests; [userId] for change-set.
+  /// Adds a test. Requires canEnterTests; [userId], [userDisplayName], [screen] for change-set.
   /// [academicSession] optional; when set, enforces one passing test per session and rewrite cap.
   /// Prevents duplicate passing tests per (student, subject, session). Rewrite (second test after fail) capped at 70.
   Future<int> addTest(
@@ -139,6 +148,9 @@ class TestRepository {
     String? academicSession,
     required UserRole userRole,
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     if (!RolePermissions.canEnterTests(userRole)) {
       throw StateError('Role cannot enter tests');
@@ -186,25 +198,35 @@ class TestRepository {
     );
     final id = await _db.into(_db.tests).insert(companion);
     if (userId != null) {
+      final studentRow = await (_db.select(_db.students)..where((t) => t.id.equals(studentId))).getSingleOrNull();
+      final payload = <String, dynamic>{
+        'studentId': studentId,
+        'score': effectiveScore,
+        if (label != null && label.trim().isNotEmpty) 'label': label.trim(),
+        if (subjectId != null) 'subjectId': subjectId,
+        if (academicSession != null) 'academicSession': academicSession,
+        if (studentRow != null) 'studentName': '${studentRow.surname}, ${studentRow.firstName}',
+        if (studentRow != null) ..._studentYearEntry(await _classNameForId(studentRow.classId)),
+        if (studentRow != null && studentRow.mode != null && studentRow.mode!.isNotEmpty) 'studentMode': studentRow.mode,
+        if (userDisplayName != null) 'userDisplayName': userDisplayName,
+        if (screen != null) 'screen': screen,
+      };
       await _insertChangeSet(
         table: 'tests',
         recordId: id.toString(),
         operation: 'INSERT',
-        payload: {
-          'studentId': studentId,
-          'score': effectiveScore,
-          if (label != null && label.trim().isNotEmpty) 'label': label.trim(),
-          if (subjectId != null) 'subjectId': subjectId,
-          if (academicSession != null) 'academicSession': academicSession,
-        },
+        payload: payload,
         userId: userId,
         version: 1,
+        deviceId: deviceId ?? 'legacy',
+        userDisplayName: userDisplayName,
+        screen: screen,
       );
     }
     return id;
   }
 
-  /// Updates a test. Requires canEnterTests; [userId] for change-set.
+  /// Updates a test. Requires canEnterTests; [userId], [userDisplayName], [screen] for change-set.
   /// Does not clear [academicSession]; existing session is preserved.
   Future<void> updateTest(
     int id, {
@@ -214,6 +236,9 @@ class TestRepository {
     String? academicSession,
     required UserRole userRole,
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     if (!RolePermissions.canEnterTests(userRole)) {
       throw StateError('Role cannot enter tests');
@@ -234,27 +259,41 @@ class TestRepository {
     );
     await (_db.update(_db.tests)..where((t) => t.id.equals(id))).write(companion);
     if (userId != null) {
+      final studentRow = await (_db.select(_db.students)..where((t) => t.id.equals(row.studentId))).getSingleOrNull();
+      final payload = <String, dynamic>{
+        'studentId': row.studentId,
+        'score': clampedScore,
+        if (label != null) 'label': label.trim().isEmpty ? null : label.trim(),
+        if (subjectId != null) 'subjectId': subjectId,
+        if (academicSession != null) 'academicSession': academicSession,
+        if (studentRow != null) 'studentName': '${studentRow.surname}, ${studentRow.firstName}',
+        if (studentRow != null) ..._studentYearEntry(await _classNameForId(studentRow.classId)),
+        if (studentRow != null && studentRow.mode != null && studentRow.mode!.isNotEmpty) 'studentMode': studentRow.mode,
+        if (userDisplayName != null) 'userDisplayName': userDisplayName,
+        if (screen != null) 'screen': screen,
+      };
       await _insertChangeSet(
         table: 'tests',
         recordId: id.toString(),
         operation: 'UPDATE',
-        payload: {
-          'score': clampedScore,
-          if (label != null) 'label': label.trim().isEmpty ? null : label.trim(),
-          if (subjectId != null) 'subjectId': subjectId,
-          if (academicSession != null) 'academicSession': academicSession,
-        },
+        payload: payload,
         userId: userId,
         version: 1,
+        deviceId: deviceId ?? 'legacy',
+        userDisplayName: userDisplayName,
+        screen: screen,
       );
     }
   }
 
-  /// Deletes a test. Requires canEnterTests; [userId] for change-set.
+  /// Deletes a test. Requires canEnterTests; [userId], [userDisplayName], [screen] for change-set.
   Future<void> deleteTest(
     int id, {
     required UserRole userRole,
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     if (!RolePermissions.canEnterTests(userRole)) {
       throw StateError('Role cannot enter tests');
@@ -265,27 +304,40 @@ class TestRepository {
     await (_db.delete(_db.tests)..where((t) => t.id.equals(id))).go();
     
     if (userId != null) {
+      final studentRow = await (_db.select(_db.students)..where((t) => t.id.equals(row.studentId))).getSingleOrNull();
+      final payload = <String, dynamic>{
+        'studentId': row.studentId,
+        'score': row.score,
+        if (row.label != null) 'label': row.label,
+        if (row.subjectId != null) 'subjectId': row.subjectId,
+        if (studentRow != null) 'studentName': '${studentRow.surname}, ${studentRow.firstName}',
+        if (studentRow != null) ..._studentYearEntry(await _classNameForId(studentRow.classId)),
+        if (studentRow != null && studentRow.mode != null && studentRow.mode!.isNotEmpty) 'studentMode': studentRow.mode,
+        if (userDisplayName != null) 'userDisplayName': userDisplayName,
+        if (screen != null) 'screen': screen,
+      };
       await _insertChangeSet(
         table: 'tests',
         recordId: id.toString(),
         operation: 'DELETE',
-        payload: {
-          'studentId': row.studentId,
-          'score': row.score,
-          if (row.label != null) 'label': row.label,
-          if (row.subjectId != null) 'subjectId': row.subjectId,
-        },
+        payload: payload,
         userId: userId,
         version: 1,
+        deviceId: deviceId ?? 'legacy',
+        userDisplayName: userDisplayName,
+        screen: screen,
       );
     }
   }
 
-  /// Clears all test records from the database. Requires canEnterTests; [userId] for change-set.
+  /// Clears all test records from the database. Requires canEnterTests; [userId], [userDisplayName], [screen] for change-set.
   /// This is a destructive operation that removes all test data.
   Future<void> clearAllTests({
     required UserRole userRole,
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     if (!RolePermissions.canEnterTests(userRole)) {
       throw StateError('Role cannot enter tests');
@@ -300,27 +352,36 @@ class TestRepository {
     
     // Log a single change-set for the bulk delete operation
     if (userId != null && totalCount > 0) {
+      final payload = <String, dynamic>{
+        'count': totalCount,
+        if (userDisplayName != null) 'userDisplayName': userDisplayName,
+        if (screen != null) 'screen': screen,
+      };
       await _insertChangeSet(
         table: 'tests',
         recordId: 'all',
-        operation: 'DELETE_ALL',
-        payload: {
-          'count': totalCount,
-        },
+        operation: 'DELETE',
+        payload: payload,
         userId: userId,
         version: 1,
+        deviceId: deviceId ?? 'legacy',
+        userDisplayName: userDisplayName,
+        screen: screen,
       );
     }
   }
 
   /// Bulk update subject for multiple students.
   /// Creates or updates test records for each student with the specified subject.
-  /// Requires canEnterTests; [userId] for change-set.
+  /// Requires canEnterTests; [userId], [userDisplayName], [screen] for change-set.
   Future<void> bulkUpdateSubjectForStudents(
     List<int> studentIds,
     int? subjectId, {
     required UserRole userRole,
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     if (!RolePermissions.canEnterTests(userRole)) {
       throw StateError('Role cannot enter tests');
@@ -353,17 +414,28 @@ class TestRepository {
           ),
         );
         if (userId != null) {
+          final studentRow = await (_db.select(_db.students)..where((t) => t.id.equals(studentId))).getSingleOrNull();
+          final payload = <String, dynamic>{
+            'studentId': studentId,
+            'score': existingTest.score,
+            if (existingTest.label != null) 'label': existingTest.label,
+            if (subjectId != null) 'subjectId': subjectId,
+            if (studentRow != null) 'studentName': '${studentRow.surname}, ${studentRow.firstName}',
+            if (studentRow != null) ..._studentYearEntry(await _classNameForId(studentRow.classId)),
+            if (studentRow != null && studentRow.mode != null && studentRow.mode!.isNotEmpty) 'studentMode': studentRow.mode,
+            if (userDisplayName != null) 'userDisplayName': userDisplayName,
+            if (screen != null) 'screen': screen,
+          };
           await _insertChangeSet(
             table: 'tests',
             recordId: existingTest.id.toString(),
             operation: 'UPDATE',
-            payload: {
-              'score': existingTest.score,
-              if (existingTest.label != null) 'label': existingTest.label,
-              if (subjectId != null) 'subjectId': subjectId,
-            },
+            payload: payload,
             userId: userId,
             version: 1,
+            deviceId: deviceId ?? 'legacy',
+            userDisplayName: userDisplayName,
+            screen: screen,
           );
         }
       } else {
@@ -376,17 +448,27 @@ class TestRepository {
         );
         final id = await _db.into(_db.tests).insert(companion);
         if (userId != null) {
+          final studentRow = await (_db.select(_db.students)..where((t) => t.id.equals(studentId))).getSingleOrNull();
+          final payload = <String, dynamic>{
+            'studentId': studentId,
+            'score': 0,
+            if (subjectId != null) 'subjectId': subjectId,
+            if (studentRow != null) 'studentName': '${studentRow.surname}, ${studentRow.firstName}',
+            if (studentRow != null) ..._studentYearEntry(await _classNameForId(studentRow.classId)),
+            if (studentRow != null && studentRow.mode != null && studentRow.mode!.isNotEmpty) 'studentMode': studentRow.mode,
+            if (userDisplayName != null) 'userDisplayName': userDisplayName,
+            if (screen != null) 'screen': screen,
+          };
           await _insertChangeSet(
             table: 'tests',
             recordId: id.toString(),
             operation: 'INSERT',
-            payload: {
-              'studentId': studentId,
-              'score': 0,
-              if (subjectId != null) 'subjectId': subjectId,
-            },
+            payload: payload,
             userId: userId,
             version: 1,
+            deviceId: deviceId ?? 'legacy',
+            userDisplayName: userDisplayName,
+            screen: screen,
           );
         }
       }
@@ -400,16 +482,23 @@ class TestRepository {
     required Map<String, dynamic> payload,
     required String userId,
     required int version,
+    required String deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
+    final fullPayload = Map<String, dynamic>.from(payload);
+    if (userDisplayName != null) fullPayload['userDisplayName'] = userDisplayName;
+    if (screen != null) fullPayload['screen'] = screen;
     await _db.into(_db.changeSets).insert(
       ChangeSetsCompanion.insert(
         id: _uuid.v4(),
         table: table,
         recordId: recordId,
         operation: operation,
-        payload: jsonEncode(payload),
+        payload: jsonEncode(fullPayload),
         userId: userId,
         version: version,
+        deviceId: deviceId,
       ),
     );
   }

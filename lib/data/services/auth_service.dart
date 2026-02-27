@@ -5,29 +5,34 @@ import 'package:charis_student_care/core/config/auth_config.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/exceptions/auth_exception.dart';
 import 'package:charis_student_care/data/models/auth_user.dart';
+import 'package:charis_student_care/data/repositories/user_repository.dart';
 import 'package:http/http.dart' as http;
 import 'package:oauth2/oauth2.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-/// Microsoft Entra ID (OAuth2) authentication service for desktop.
-/// Uses authorization code flow with local redirect; role from config map for MVP.
+/// Authentication: local username/password (users table) and optional Microsoft OAuth for OneDrive.
+/// Role for local users comes from DB; for Microsoft users from config map.
 class AuthService {
   AuthService({
+    UserRepository? userRepository,
     http.Client? httpClient,
     Map<String, UserRole>? roleByUserId,
-  })  : _httpClient = httpClient ?? http.Client(),
+  })  : _userRepository = userRepository,
+        _httpClient = httpClient ?? http.Client(),
         _roleByUserId = roleByUserId ?? _defaultRoleMap;
 
   static final Map<String, UserRole> _defaultRoleMap = {
-    // Add user IDs from Entra ID (oid claim) to assign roles for MVP.
-    // Example: '00000000-0000-0000-0000-000000000000': UserRole.adminLevel01,
+    // Add user IDs from Entra ID (oid claim) to assign roles when using Microsoft login.
   };
 
+  final UserRepository? _userRepository;
   final http.Client _httpClient;
   final Map<String, UserRole> _roleByUserId;
 
   Credentials? _credentials;
   AuthUser? _currentUser;
+  /// Role for local (DB) user; null when user is from Microsoft OAuth.
+  UserRole? _currentUserRole;
 
   static const AuthUser _devUser = AuthUser(
     id: 'dev-user',
@@ -35,10 +40,10 @@ class AuthService {
     email: 'dev@local',
   );
 
-  /// Whether a session is restored (credentials + user).
+  /// Whether a session is restored (credentials + user) or local login (user + role).
   bool get isAuthenticated =>
       (AuthConfig.skipAuth && _currentUser != null) ||
-      (_credentials != null && _currentUser != null);
+      (_currentUser != null && (_currentUserRole != null || _credentials != null));
 
   /// Current user; null if not authenticated.
   AuthUser? get user => _currentUser;
@@ -46,7 +51,31 @@ class AuthService {
   /// Access token for API calls; null if not authenticated.
   String? get accessToken => _credentials?.accessToken;
 
-  /// Initiates login: opens browser, listens for redirect, exchanges code for tokens, fetches user.
+  /// Local login with username and password. Validates against users table.
+  Future<void> loginWithCredentials(String username, String password) async {
+    if (AuthConfig.skipAuth) {
+      _currentUser = _devUser;
+      _currentUserRole = UserRole.adminLevel01;
+      return;
+    }
+    final repo = _userRepository;
+    if (repo == null) {
+      throw AuthException('User repository not available');
+    }
+    final user = await repo.validateCredentials(username, password);
+    if (user == null) {
+      throw AuthException('Invalid username or password');
+    }
+    _currentUser = AuthUser(
+      id: user.id.toString(),
+      displayName: user.displayName ?? user.username,
+      email: null,
+    );
+    _currentUserRole = UserRole.fromString(user.role);
+  }
+
+  /// Microsoft OAuth: opens browser, listens for redirect, exchanges code for tokens.
+  /// Used for OneDrive connection after local login, or standalone if desired.
   Future<void> login() async {
     if (AuthConfig.skipAuth) {
       _currentUser = _devUser;
@@ -96,15 +125,51 @@ class AuthService {
     }
   }
 
+  /// OneDrive connection: runs Microsoft OAuth with OneDrive scopes and stores credentials.
+  /// Does not change _currentUser (used after local login). Throws if not configured or user cancels.
+  Future<void> connectOneDrive() async {
+    if (AuthConfig.skipAuth) return;
+    if (AuthConfig.clientId.isEmpty) return;
+
+    final grant = AuthorizationCodeGrant(
+      AuthConfig.clientId,
+      AuthConfig.authorizationEndpoint,
+      AuthConfig.tokenEndpoint,
+      secret: null,
+      httpClient: _httpClient,
+    );
+
+    final redirectUri = Uri.parse(AuthConfig.redirectUri);
+    final state = _randomState();
+    final authUrl = grant.getAuthorizationUrl(
+      redirectUri,
+      scopes: [...AuthConfig.scopes, 'User.Read', 'Files.ReadWrite'],
+      state: state,
+    );
+
+    final code = await _listenForRedirectCode(redirectUri, authUrl);
+    if (code == null || code.isEmpty) {
+      throw AuthException('OneDrive connection cancelled or failed');
+    }
+
+    final client = await grant.handleAuthorizationResponse({
+      'code': code,
+      'state': state,
+    });
+    _credentials = client.credentials;
+  }
+
   /// Signs out: clears stored credentials and user.
   void logout() {
     _credentials = null;
     _currentUser = null;
+    _currentUserRole = null;
   }
 
-  /// Returns the role for the current user (from config map for MVP).
+  /// Returns the role for the current user (from DB for local user, config map for Microsoft).
   UserRole getRole() {
     if (AuthConfig.skipAuth) return UserRole.adminLevel01;
+    if (_currentUserRole != null) return _currentUserRole!;
     final u = _currentUser;
     if (u == null) return UserRole.facilitator;
     return _roleByUserId[u.id] ?? UserRole.facilitator;
@@ -125,6 +190,9 @@ class AuthService {
     return base64Url.encode(values);
   }
 
+  /// Timeout for waiting on OAuth redirect (e.g. OneDrive or Microsoft sign-in).
+  static const Duration _oauthRedirectTimeout = Duration(seconds: 30);
+
   Future<String?> _listenForRedirectCode(Uri redirectUri, Uri authUrl) async {
     final port = redirectUri.port;
     final path = redirectUri.path;
@@ -132,7 +200,12 @@ class AuthService {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
     try {
       launchUrl(authUrl, mode: LaunchMode.externalApplication);
-      final request = await server.first;
+      final request = await server.first.timeout(
+        _oauthRedirectTimeout,
+        onTimeout: () => throw AuthException(
+          'Connection timed out. You can try again later from settings.',
+        ),
+      );
       final uri = request.uri;
       if (uri.path != path) {
         await _respondHtml(request, 400, 'Bad path');

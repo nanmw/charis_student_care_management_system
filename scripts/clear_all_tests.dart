@@ -1,81 +1,104 @@
 #!/usr/bin/env dart
+// ignore_for_file: avoid_print
 /// Script to clear all test records from the database.
-/// 
+///
 /// Usage:
 ///   dart run scripts/clear_all_tests.dart
-/// 
-/// This script will:
-/// 1. Connect to the application database
-/// 2. Delete all test records
-/// 3. Log the operation to change_sets table
-/// 
+///   dart run scripts/clear_all_tests.dart --db-path="C:\path\to\charis_student_care.db"
+///
+/// With no --db-path, uses the app's default database (Documents/charis_student_care.db).
 /// WARNING: This is a destructive operation that cannot be undone.
 
 import 'dart:io';
-import 'package:drift/drift.dart';
+
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/test_repository.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   print('=' * 60);
   print('Clear All Tests Script');
   print('=' * 60);
   print('');
-  
+
+  // Parse optional --db-path=...
+  String? dbPath;
+  for (final arg in args) {
+    if (arg.startsWith('--db-path=')) {
+      dbPath = arg.substring('--db-path='.length).trim();
+      if (dbPath.startsWith('"') && dbPath.endsWith('"')) {
+        dbPath = dbPath.substring(1, dbPath.length - 1);
+      } else if (dbPath.startsWith("'") && dbPath.endsWith("'")) {
+        dbPath = dbPath.substring(1, dbPath.length - 1);
+      }
+      break;
+    }
+  }
+
+  AppDatabase database;
+  String pathUsed;
+  if (dbPath != null && dbPath.isNotEmpty) {
+    final file = File(dbPath);
+    if (!file.existsSync()) {
+      print('Error: Database file not found: $dbPath');
+      exit(1);
+    }
+    database = AppDatabase.fromFile(file);
+    pathUsed = file.absolute.path;
+  } else {
+    final dbFolder = await getApplicationDocumentsDirectory();
+    pathUsed = p.join(dbFolder.path, 'charis_student_care.db');
+    database = AppDatabase.fromFile(File(pathUsed));
+  }
+  print('Using database: $pathUsed');
+  print('');
+
   // Confirm before proceeding
   print('WARNING: This will permanently delete ALL test records from the database.');
   print('This action cannot be undone.\n');
   stdout.write('Are you sure you want to continue? (yes/no): ');
-  
+
   final confirmation = stdin.readLineSync()?.toLowerCase().trim();
   if (confirmation != 'yes') {
     print('\nOperation cancelled.');
     exit(0);
   }
-  
-  print('\nConnecting to database...');
-  
-  AppDatabase? database;
+
+  print('\nChecking test count...');
+
   try {
-    // Initialize database
-    database = AppDatabase();
-    
     // Get count before deletion
-    final countResult = await (database.selectOnly(database.tests)
-          ..addColumns([database.tests.id.count()]))
-        .getSingle();
-    final totalCount = countResult.read(database.tests.id.count()) ?? 0;
-    
+    final allTests = await database.select(database.tests).get();
+    final totalCount = allTests.length;
+
     if (totalCount == 0) {
-      print('\nNo test records found. Database is already empty.');
+      print('\nNo test records found. Tests table is already empty.');
       await database.close();
       exit(0);
     }
-    
+
     print('Found $totalCount test record(s) to delete.');
-    print('\nDeleting all test records...');
-    
-    // Create repository and clear all tests
+    print('Deleting all test records...');
+
     final repository = TestRepository(database);
     await repository.clearAllTests(
-      userRole: UserRole.adminLevel01, // Use admin role for script
-      userId: 'script-clear-all-tests', // Script identifier
+      userRole: UserRole.adminLevel01,
+      userId: 'script-clear-all-tests',
     );
-    
-    print('✓ Successfully deleted all test records.');
-    print('✓ Operation logged to change_sets table.');
-    print('\nDatabase cleared successfully!');
-    
+
+    print('Successfully deleted all test records.');
+    print('Operation logged to change_sets table.');
+    print('\nTests table is now clean.');
   } catch (e, stackTrace) {
-    print('\n✗ Error occurred: $e');
+    print('\nError: $e');
     print('\nStack trace:');
     print(stackTrace);
     exit(1);
   } finally {
-    if (database != null) {
-      await database.close();
-      print('\nDatabase connection closed.');
-    }
+    await database.close();
+    print('\nDatabase connection closed.');
   }
 }
