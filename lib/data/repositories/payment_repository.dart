@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
 
 /// Payment data for batch operations
 class PaymentData {
@@ -69,6 +70,55 @@ class PaymentRepository {
         .watch();
   }
 
+  /// Stream of payment rows for the given academic [sessionCode].
+  /// Resolves session ID and returns rows where academic_session_id matches, or where year matches the session start year (legacy).
+  /// When [studentIds] is non-null and non-empty, restricts to those students.
+  Stream<List<Payment>> watchPaymentsForSession(String sessionCode, {List<int>? studentIds}) {
+    return _watchPaymentsBySessionOrYear(sessionCode, studentIds);
+  }
+
+  /// Backward compatibility: prefer academic_session_id; include legacy rows where
+  /// academic_session_id is null but year matches the session's start year.
+  Stream<List<Payment>> _watchPaymentsBySessionOrYear(String sessionCode, List<int>? studentIds) async* {
+    final sessionId = await _getSessionIdByCode(sessionCode);
+    final legacyYear = AcademicSessionRepository.yearFromSessionCode(sessionCode);
+    final allPayments = _db.select(_db.payments).watch();
+    await for (final list in allPayments) {
+      var filtered = list;
+      if (sessionId != null && legacyYear != null) {
+        filtered = filtered.where((p) =>
+            p.academicSessionId == sessionId ||
+            (p.academicSessionId == null && p.year == legacyYear),).toList();
+      } else if (sessionId != null) {
+        filtered = filtered.where((p) => p.academicSessionId == sessionId).toList();
+      } else if (legacyYear != null) {
+        filtered = filtered.where((p) => p.year == legacyYear).toList();
+      } else {
+        filtered = [];
+      }
+      if (studentIds != null && studentIds.isNotEmpty) {
+        final idSet = studentIds.toSet();
+        filtered = filtered.where((p) => idSet.contains(p.studentId)).toList();
+      }
+      filtered.sort((a, b) => a.studentId.compareTo(b.studentId));
+      yield filtered;
+    }
+  }
+
+  Future<int?> _getSessionIdByCode(String code) async {
+    if (code.trim().isEmpty) return null;
+    try {
+      final result = await _db.customSelect(
+        'SELECT id FROM academic_sessions WHERE code = ? LIMIT 1',
+        variables: [Variable.withString(code.trim())],
+        readsFrom: const {},
+      ).getSingleOrNull();
+      return result?.data['id'] as int?;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// One-time fetch of payment row for [studentId] and [year], or null if none.
   Future<Payment?> getPaymentRow(int studentId, String year) async {
     return (_db.select(_db.payments)
@@ -78,11 +128,30 @@ class PaymentRepository {
         .getSingleOrNull();
   }
 
+  /// One-time fetch of payment row for [studentId] and [sessionCode], or null if none.
+  /// Resolves session and matches by academic_session_id or by year derived from session.
+  Future<Payment?> getPaymentRowForSession(int studentId, String sessionCode) async {
+    final sessionId = await _getSessionIdByCode(sessionCode);
+    final legacyYear = AcademicSessionRepository.yearFromSessionCode(sessionCode);
+    final list = await (_db.select(_db.payments)..where((t) => t.studentId.equals(studentId))).get();
+    if (sessionId != null) {
+      final matches = list.where((p) => p.academicSessionId == sessionId);
+      if (matches.isNotEmpty) return matches.first;
+    }
+    if (legacyYear != null) {
+      final matches = list.where((p) => p.year == legacyYear);
+      if (matches.isNotEmpty) return matches.first;
+    }
+    return null;
+  }
+
   /// Upserts a payment row for [studentId] and [year]. Replaces existing row if present.
+  /// When [academicSessionId] is provided, also sets the academic_session_id column.
   /// [userId], [deviceId], [userDisplayName], [screen] used for change-set if provided.
   Future<void> upsertPaymentRow({
     required int studentId,
     required String year,
+    int? academicSessionId,
     double jan = 0,
     double feb = 0,
     double mar = 0,
@@ -124,6 +193,7 @@ class PaymentRepository {
           dec: Value(dec),
           lumpSum: Value(lumpSum),
           updatedAt: Value(now),
+          academicSessionId: academicSessionId != null ? Value(academicSessionId) : const Value.absent(),
         ),
       );
     } else {
@@ -131,6 +201,7 @@ class PaymentRepository {
         PaymentsCompanion.insert(
           studentId: studentId,
           year: year,
+          academicSessionId: academicSessionId != null ? Value(academicSessionId) : const Value.absent(),
           jan: Value(jan),
           feb: Value(feb),
           mar: Value(mar),
@@ -228,10 +299,12 @@ class PaymentRepository {
   /// Batch upserts multiple payment rows efficiently in a single transaction.
   /// This is much faster than calling upsertPaymentRow multiple times.
   /// [payments] is a map of studentId -> PaymentData.
+  /// When [academicSessionId] is provided, sets academic_session_id on new/updated rows.
   /// [userId], [deviceId], [userDisplayName], [screen] used for change-set if provided.
   Future<int> batchUpsertPayments({
     required String year,
     required Map<int, PaymentData> payments,
+    int? academicSessionId,
     String? userId,
     String? deviceId,
     String? userDisplayName,
@@ -281,6 +354,7 @@ class PaymentRepository {
               dec: Value(payment.dec),
               lumpSum: Value(payment.lumpSum),
               updatedAt: Value(now),
+              academicSessionId: academicSessionId != null ? Value(academicSessionId) : const Value.absent(),
             ),
           );
         } else {
@@ -289,6 +363,7 @@ class PaymentRepository {
             PaymentsCompanion.insert(
               studentId: studentId,
               year: year,
+              academicSessionId: academicSessionId != null ? Value(academicSessionId) : const Value.absent(),
               jan: Value(payment.jan),
               feb: Value(payment.feb),
               mar: Value(payment.mar),
@@ -375,6 +450,44 @@ class PaymentRepository {
         .map((rows) => rows.isNotEmpty
             ? (rows.single.read<double>(totalPaidExpr.sum()) ?? 0.0)
             : 0.0,);
+  }
+
+  /// Calculates total paid amount for the given academic [sessionCode].
+  /// Uses academic_session_id when available, otherwise year derived from session.
+  Stream<double> watchTotalPaidForSession(String sessionCode) async* {
+    final sessionId = await _getSessionIdByCode(sessionCode);
+    final legacyYear = AcademicSessionRepository.yearFromSessionCode(sessionCode);
+    final totalPaidExpr = _db.payments.jan +
+        _db.payments.feb +
+        _db.payments.mar +
+        _db.payments.apr +
+        _db.payments.may +
+        _db.payments.jun +
+        _db.payments.jul +
+        _db.payments.aug +
+        _db.payments.sep +
+        _db.payments.oct +
+        _db.payments.nov +
+        _db.payments.dec +
+        _db.payments.lumpSum;
+    if (sessionId == null && legacyYear == null) {
+      yield 0.0;
+      return;
+    }
+    final stream = sessionId != null
+        ? (_db.selectOnly(_db.payments)
+              ..addColumns([totalPaidExpr.sum()])
+              ..where(_db.payments.academicSessionId.equals(sessionId))
+              ..groupBy([]))
+            .watch()
+        : (_db.selectOnly(_db.payments)
+              ..addColumns([totalPaidExpr.sum()])
+              ..where(_db.payments.year.equals(legacyYear!))
+              ..groupBy([]))
+            .watch();
+    yield* stream.map((rows) => rows.isNotEmpty
+        ? (rows.single.read<double>(totalPaidExpr.sum()) ?? 0.0)
+        : 0.0,);
   }
 
   Future<void> _insertChangeSet({

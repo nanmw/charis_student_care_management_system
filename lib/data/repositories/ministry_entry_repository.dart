@@ -64,6 +64,7 @@ class MinistryEntryFilters {
     this.dateFrom,
     this.dateTo,
     this.classIds,
+    this.academicSession,
   });
 
   final String? search;
@@ -73,6 +74,8 @@ class MinistryEntryFilters {
   final DateTime? dateTo;
   /// When non-null and non-empty, only entries whose ministry_entries.class_id is in this list.
   final List<int>? classIds;
+  /// When non-null and non-empty, filter by academic session (resolves to academic_session_id).
+  final String? academicSession;
 
   MinistryEntryFilters copyWith({
     String? search,
@@ -81,6 +84,7 @@ class MinistryEntryFilters {
     DateTime? dateFrom,
     DateTime? dateTo,
     List<int>? classIds,
+    String? academicSession,
   }) {
     return MinistryEntryFilters(
       search: search ?? this.search,
@@ -89,6 +93,7 @@ class MinistryEntryFilters {
       dateFrom: dateFrom ?? this.dateFrom,
       dateTo: dateTo ?? this.dateTo,
       classIds: classIds ?? this.classIds,
+      academicSession: academicSession ?? this.academicSession,
     );
   }
 }
@@ -139,13 +144,42 @@ class MinistryEntryRepository {
     return (whereSql, variables);
   }
 
+  Future<int?> _getSessionIdByCode(String code) async {
+    if (code.trim().isEmpty) return null;
+    try {
+      final result = await _db.customSelect(
+        'SELECT id FROM academic_sessions WHERE code = ? LIMIT 1',
+        variables: [Variable.withString(code.trim())],
+        readsFrom: const {},
+      ).getSingleOrNull();
+      return result?.data['id'] as int?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Async version that resolves [MinistryEntryFilters.academicSession] to session ID.
+  Future<(String, List<Variable>)> _buildWhereAndVarsAsync(MinistryEntryFilters filters) async {
+    var (whereSql, variables) = _buildWhereAndVars(filters);
+    if (filters.academicSession != null && filters.academicSession!.trim().isNotEmpty) {
+      final sessionId = await _getSessionIdByCode(filters.academicSession!.trim());
+      if (sessionId != null) {
+        final conditions = whereSql == '1=1' ? <String>[] : [whereSql];
+        conditions.add('m.academic_session_id = ?');
+        variables = [...variables, Variable.withInt(sessionId)];
+        whereSql = conditions.join(' AND ');
+      }
+    }
+    return (whereSql, variables);
+  }
+
   /// Paginated list of ministry entries with student names.
   Future<List<MinistryEntryWithStudent>> getMinistryEntriesPage(
     int limit,
     int offset, {
     MinistryEntryFilters filters = const MinistryEntryFilters(),
   }) async {
-    final (whereSql, whereVars) = _buildWhereAndVars(filters);
+    final (whereSql, whereVars) = await _buildWhereAndVarsAsync(filters);
     final allVars = [...whereVars, Variable.withInt(limit), Variable.withInt(offset)];
 
     final query = _db.customSelect(
@@ -153,6 +187,7 @@ class MinistryEntryRepository {
       SELECT m.id, m.student_id, m.year, m.term, m.class_id, m.study_mode,
              m.ministry_type, m.date, m.hours,
              m.supervisor, m.approved, m.notes, m.created_at, m.updated_at,
+             m.academic_session_id,
              s.surname AS student_surname, s.first_name AS student_first_name
       FROM ministry_entries m
       INNER JOIN students s ON m.student_id = s.id
@@ -181,6 +216,7 @@ class MinistryEntryRepository {
         notes: row.read<String?>('notes'),
         createdAt: row.read<DateTime>('created_at'),
         updatedAt: row.read<DateTime?>('updated_at'),
+        academicSessionId: row.read<int?>('academic_session_id'),
       );
       return MinistryEntryWithStudent(
         entry: entry,
@@ -253,7 +289,7 @@ class MinistryEntryRepository {
   Future<int> getMinistryEntriesTotalCount({
     MinistryEntryFilters filters = const MinistryEntryFilters(),
   }) async {
-    final (whereSql, whereVars) = _buildWhereAndVars(filters);
+    final (whereSql, whereVars) = await _buildWhereAndVarsAsync(filters);
 
     final countQuery = _db.customSelect(
       '''

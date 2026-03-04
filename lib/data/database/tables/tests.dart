@@ -1,5 +1,7 @@
 import 'package:drift/drift.dart';
 
+import 'academic_sessions.dart';
+
 /// Test scores table: one row per test per student.
 /// Score 0-100; pass = score >= 70; outstanding = count where score < 70.
 class Tests extends Table {
@@ -26,6 +28,10 @@ class Tests extends Table {
 
   /// Academic session (e.g. "2024-2025"). Nullable for legacy records.
   TextColumn get academicSession => text().nullable()();
+
+  /// Academic session foreign key (preferred over raw string for new data).
+  IntColumn get academicSessionId =>
+      integer().nullable().references(AcademicSessions, #id)();
 
   @override
   Set<Column> get primaryKey => {id};

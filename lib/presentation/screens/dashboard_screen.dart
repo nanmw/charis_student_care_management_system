@@ -12,14 +12,12 @@ import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/dashboard_providers.dart';
+import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/test_providers.dart';
 import 'package:charis_student_care/presentation/providers/settings_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/student_summary_dialog.dart';
-
-/// Mode options for Individual tab filter (Full-time, Hybrid).
-const List<String> _individualModeOptions = ['Full-time', 'Hybrid'];
 
 /// Status options for Individual tab filter (All, Active, Withdrawn, Transferred, Correspondence).
 const List<String?> _individualStatusOptions = [
@@ -58,8 +56,9 @@ Widget _buildSummaryTable(
   ColorScheme colorScheme,
   Color redColor,
   AsyncValue<List<DashboardCohortSummary>> cohortSummaryAsync,
-  void Function(String year, String mode)? onViewCohort,
-) {
+  void Function(String year, String mode)? onViewCohort, {
+  bool canShowBalance = true,
+}) {
   return cohortSummaryAsync.when(
     data: (summaries) {
       if (summaries.isEmpty) {
@@ -90,17 +89,28 @@ Widget _buildSummaryTable(
         ),
         clipBehavior: Clip.antiAlias,
         child: Table(
-          columnWidths: const {
-            0: FlexColumnWidth(0.6),
-            1: FlexColumnWidth(2),
-            2: FlexColumnWidth(1),
-            3: FlexColumnWidth(1.5),
-            4: FlexColumnWidth(1.5),
-            5: FlexColumnWidth(1),
-            6: FlexColumnWidth(1),
-            7: FlexColumnWidth(2),
-            8: FlexColumnWidth(0.8),
-          },
+          columnWidths: canShowBalance
+              ? const {
+                  0: FlexColumnWidth(0.6),
+                  1: FlexColumnWidth(2),
+                  2: FlexColumnWidth(1),
+                  3: FlexColumnWidth(1.5),
+                  4: FlexColumnWidth(1.5),
+                  5: FlexColumnWidth(1),
+                  6: FlexColumnWidth(1),
+                  7: FlexColumnWidth(2),
+                  8: FlexColumnWidth(0.8),
+                }
+              : const {
+                  0: FlexColumnWidth(0.6),
+                  1: FlexColumnWidth(2),
+                  2: FlexColumnWidth(1),
+                  3: FlexColumnWidth(1.5),
+                  4: FlexColumnWidth(1.5),
+                  5: FlexColumnWidth(1),
+                  6: FlexColumnWidth(1),
+                  7: FlexColumnWidth(0.8),
+                },
           border: TableBorder(
             horizontalInside: BorderSide(color: colorScheme.outlineVariant),
             left: BorderSide(color: colorScheme.outlineVariant),
@@ -120,7 +130,7 @@ Widget _buildSummaryTable(
                 _cohortSummaryTableCell(colorScheme, 'Outstanding Tests', isHeader: true),
                 _cohortSummaryTableCell(colorScheme, 'Failed Tests', isHeader: true),
                 _cohortSummaryTableCell(colorScheme, 'Passed Tests', isHeader: true),
-                _cohortSummaryTableCell(colorScheme, 'Total Balance', isHeader: true),
+                if (canShowBalance) _cohortSummaryTableCell(colorScheme, 'Total Balance', isHeader: true),
                 _cohortSummaryTableCell(colorScheme, 'View', isHeader: true),
               ],
             ),
@@ -164,11 +174,12 @@ Widget _buildSummaryTable(
                         '${entry.value.passedTests}',
                         isHeader: false,
                       ),
-                      _cohortSummaryTableCell(
-                        colorScheme,
-                        CurrencyUtils.formatRand(entry.value.totalBalance),
-                        isHeader: false,
-                      ),
+                      if (canShowBalance)
+                        _cohortSummaryTableCell(
+                          colorScheme,
+                          CurrencyUtils.formatRand(entry.value.totalBalance),
+                          isHeader: false,
+                        ),
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                         child: TextButton(
@@ -291,6 +302,7 @@ class DashboardScreen extends ConsumerWidget {
               outstandingAsync,
               attendanceAsync,
               balanceAsync,
+              canShowBalance: auth is Authenticated && RolePermissions.canManageFinancials(auth.role),
             ),
             const SizedBox(height: 24),
             Text(
@@ -307,6 +319,7 @@ class DashboardScreen extends ConsumerWidget {
               colorScheme: colorScheme,
               redColor: redColor,
               cohortSummaryAsync: cohortSummaryAsync,
+              canShowBalance: auth is Authenticated && RolePermissions.canManageFinancials(auth.role),
             ),
             const SizedBox(height: 24),
             _buildRecentActivitiesSection(
@@ -340,8 +353,9 @@ class DashboardScreen extends ConsumerWidget {
     AsyncValue<List<dynamic>> studentsAsync,
     AsyncValue<int> outstandingAsync,
     AsyncValue<double?> attendanceAsync,
-    AsyncValue<double> balanceAsync,
-  ) {
+    AsyncValue<double> balanceAsync, {
+    bool canShowBalance = true,
+  }) {
     final totalStudents = studentsAsync.when(
       data: (list) => list.length,
       loading: () => null,
@@ -390,16 +404,17 @@ class DashboardScreen extends ConsumerWidget {
           subtitle: 'Requires attention',
           valueColor: colorScheme.onSurface,
         ),
-        _statCard(
-          colorScheme: colorScheme,
-          title: 'Total Balance Due',
-          value: totalBalance != null
-              ? CurrencyUtils.formatRand(totalBalance)
-              : '—',
-          subtitle: 'Across all students',
-          valueColor: redColor,
-          width: 280,
-        ),
+        if (canShowBalance)
+          _statCard(
+            colorScheme: colorScheme,
+            title: 'Total Balance Due',
+            value: totalBalance != null
+                ? CurrencyUtils.formatRand(totalBalance)
+                : '—',
+            subtitle: 'Across all students',
+            valueColor: redColor,
+            width: 280,
+          ),
       ],
     );
   }
@@ -781,11 +796,13 @@ class _DashboardSummarySection extends StatefulWidget {
     required this.colorScheme,
     required this.redColor,
     required this.cohortSummaryAsync,
+    required this.canShowBalance,
   });
 
   final ColorScheme colorScheme;
   final Color redColor;
   final AsyncValue<List<DashboardCohortSummary>> cohortSummaryAsync;
+  final bool canShowBalance;
 
   @override
   State<_DashboardSummarySection> createState() =>
@@ -854,11 +871,13 @@ class _DashboardSummarySectionState extends State<_DashboardSummarySection>
                   redColor,
                   widget.cohortSummaryAsync,
                   _onViewCohort,
+                  canShowBalance: widget.canShowBalance,
                 ),
               ),
               _DashboardIndividualSummaryTab(
                 colorScheme: colorScheme,
                 redColor: redColor,
+                canShowBalance: widget.canShowBalance,
                 initialCohortYear: _pendingCohortYear,
                 initialCohortMode: _pendingCohortMode,
                 onAppliedInitialCohort: () {
@@ -881,6 +900,7 @@ class _DashboardIndividualSummaryTab extends ConsumerStatefulWidget {
   const _DashboardIndividualSummaryTab({
     required this.colorScheme,
     required this.redColor,
+    required this.canShowBalance,
     this.initialCohortYear,
     this.initialCohortMode,
     this.onAppliedInitialCohort,
@@ -888,6 +908,7 @@ class _DashboardIndividualSummaryTab extends ConsumerStatefulWidget {
 
   final ColorScheme colorScheme;
   final Color redColor;
+  final bool canShowBalance;
   final String? initialCohortYear;
   final String? initialCohortMode;
   final VoidCallback? onAppliedInitialCohort;
@@ -951,6 +972,7 @@ class _DashboardIndividualSummaryTabState
         widget.initialCohortYear == null) {
       _defaultYearScheduled = true;
       final role = auth.role;
+      final scope = ref.read(currentUserFacilitatorScopeProvider).valueOrNull;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
@@ -958,7 +980,20 @@ class _DashboardIndividualSummaryTabState
           _yearFilter = role == UserRole.facilitator
               ? (visibleClasses.isNotEmpty ? visibleClasses.first.name : null)
               : 'Year 1';
+          if (widget.initialCohortMode == null &&
+              role == UserRole.facilitator &&
+              scope?.mode != null &&
+              scope!.mode!.trim().isNotEmpty) {
+            _modeFilter = scope.mode!.trim();
+          }
         });
+      });
+    }
+
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1 && _modeFilter != modeOptions[0]) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _modeFilter = modeOptions[0]);
       });
     }
 
@@ -1015,6 +1050,7 @@ class _DashboardIndividualSummaryTabState
                           filtered,
                           studentMap,
                           showMinistryHours,
+                          widget.canShowBalance,
                         ),
                       ),
                     ),
@@ -1069,14 +1105,79 @@ class _DashboardIndividualSummaryTabState
       underline: const SizedBox.shrink(),
       borderRadius: BorderRadius.circular(8),
       items: classes
-          .map((c) => DropdownMenuItem<String?>(
+          .map<DropdownMenuItem<String?>>((SchoolClass c) => DropdownMenuItem<String?>(
                 value: c.name,
                 child: Text(c.name,
                     style: TextStyle(color: colorScheme.onSurface, fontSize: 14),),
-              ),
-            )
+              ),)
           .toList(),
       onChanged: (v) => setState(() => _yearFilter = v),
+    );
+  }
+
+  Widget _buildModeFilterWidget(ColorScheme colorScheme) {
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1) {
+      return SizedBox(
+        width: 120,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          alignment: Alignment.centerLeft,
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: colorScheme.outline),
+          ),
+          child: Text(
+            modeOptions[0],
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      );
+    }
+    return SizedBox(
+      width: 120,
+      child: Container(
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: colorScheme.outline),
+        ),
+        child: DropdownButton<String?>(
+          value: _modeFilter,
+          hint: Text(
+            'Mode',
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 14,
+            ),
+          ),
+          isExpanded: true,
+          underline: const SizedBox.shrink(),
+          borderRadius: BorderRadius.circular(8),
+          items: modeOptions
+              .map(
+                (v) => DropdownMenuItem<String?>(
+                  value: v,
+                  child: Text(
+                    v,
+                    style: TextStyle(
+                      color: colorScheme.onSurface,
+                      fontSize: 14,
+                    ),
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: (v) => setState(() => _modeFilter = v),
+        ),
+      ),
     );
   }
 
@@ -1134,46 +1235,7 @@ class _DashboardIndividualSummaryTabState
           ),
         ),
         const SizedBox(width: 12),
-        SizedBox(
-          width: 120,
-          child: Container(
-            height: 44,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: colorScheme.outline),
-            ),
-            child: DropdownButton<String?>(
-              value: _modeFilter,
-              hint: Text(
-                'Mode',
-                style: TextStyle(
-                  color: colorScheme.onSurfaceVariant,
-                  fontSize: 14,
-                ),
-              ),
-              isExpanded: true,
-              underline: const SizedBox.shrink(),
-              borderRadius: BorderRadius.circular(8),
-              items: _individualModeOptions
-                  .map(
-                    (v) => DropdownMenuItem<String?>(
-                      value: v,
-                      child: Text(
-                        v,
-                        style: TextStyle(
-                          color: colorScheme.onSurface,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) => setState(() => _modeFilter = v),
-            ),
-          ),
-        ),
+        _buildModeFilterWidget(colorScheme),
         const SizedBox(width: 12),
         SizedBox(
           width: 140,
@@ -1224,6 +1286,7 @@ class _DashboardIndividualSummaryTabState
     List<DashboardStudentSummary> filtered,
     Map<int, Student> studentMap,
     bool showMinistryHours,
+    bool showFinancialColumns,
   ) {
     final colorScheme = widget.colorScheme;
     if (filtered.isEmpty) {
@@ -1247,32 +1310,26 @@ class _DashboardIndividualSummaryTabState
       );
     }
 
-    final columnWidths = showMinistryHours
-        ? const {
-            0: FlexColumnWidth(0.6),
-            1: FlexColumnWidth(2.5),
-            2: FlexColumnWidth(1.5),
-            3: FlexColumnWidth(1.2),
-            4: FlexColumnWidth(1.2),
-            5: FlexColumnWidth(1),
-            6: FlexColumnWidth(1),
-            7: FlexColumnWidth(1.5),
-            8: FlexColumnWidth(2),
-            9: FlexColumnWidth(1.2),
-            10: FlexColumnWidth(1.4),
-          }
-        : const {
-            0: FlexColumnWidth(0.6),
-            1: FlexColumnWidth(2.5),
-            2: FlexColumnWidth(1.5),
-            3: FlexColumnWidth(1.2),
-            4: FlexColumnWidth(1.2),
-            5: FlexColumnWidth(1),
-            6: FlexColumnWidth(1),
-            7: FlexColumnWidth(1.5),
-            8: FlexColumnWidth(1.2),
-            9: FlexColumnWidth(1.4),
-          };
+    int col = 0;
+    final columnWidths = <int, FlexColumnWidth>{
+      col++: const FlexColumnWidth(0.6),
+      col++: const FlexColumnWidth(2.5),
+      col++: const FlexColumnWidth(1.5),
+      col++: const FlexColumnWidth(1.2),
+      col++: const FlexColumnWidth(1.2),
+      col++: const FlexColumnWidth(1),
+      col++: const FlexColumnWidth(1),
+    };
+    if (showFinancialColumns) {
+      columnWidths[col++] = const FlexColumnWidth(1.5); // Total Balance
+    }
+    if (showMinistryHours) {
+      columnWidths[col++] = const FlexColumnWidth(2);
+    }
+    if (showFinancialColumns) {
+      columnWidths[col++] = const FlexColumnWidth(1.2); // Mission Fund
+    }
+    columnWidths[col] = const FlexColumnWidth(1.4); // Summary
 
     return Container(
       decoration: BoxDecoration(
@@ -1302,10 +1359,12 @@ class _DashboardIndividualSummaryTabState
               _tableCell(colorScheme, 'Outstanding Tests', isHeader: true),
               _tableCell(colorScheme, 'Failed Tests', isHeader: true),
               _tableCell(colorScheme, 'Passed Tests', isHeader: true),
-              _tableCell(colorScheme, 'Total Balance', isHeader: true),
+              if (showFinancialColumns)
+                _tableCell(colorScheme, 'Total Balance', isHeader: true),
               if (showMinistryHours)
                 _tableCell(colorScheme, 'Ministry Hours', isHeader: true),
-              _tableCell(colorScheme, 'Mission Fund', isHeader: true),
+              if (showFinancialColumns)
+                _tableCell(colorScheme, 'Mission Fund', isHeader: true),
               _tableCell(colorScheme, 'Summary', isHeader: true),
             ],
           ),
@@ -1332,11 +1391,12 @@ class _DashboardIndividualSummaryTabState
                 ),
                 _tableCell(colorScheme, '${s.failedTests}', isHeader: false),
                 _tableCell(colorScheme, '${s.passedTests}', isHeader: false),
-                _tableCell(
-                  colorScheme,
-                  CurrencyUtils.formatRand(s.totalBalance),
-                  isHeader: false,
-                ),
+                if (showFinancialColumns)
+                  _tableCell(
+                    colorScheme,
+                    CurrencyUtils.formatRand(s.totalBalance),
+                    isHeader: false,
+                  ),
                 if (showMinistryHours)
                   _tableCell(
                     colorScheme,
@@ -1345,13 +1405,14 @@ class _DashboardIndividualSummaryTabState
                         : '—',
                     isHeader: false,
                   ),
-                _tableCell(
-                  colorScheme,
-                  s.missionFund > 0
-                      ? CurrencyUtils.formatRand(s.missionFund)
-                      : '—',
-                  isHeader: false,
-                ),
+                if (showFinancialColumns)
+                  _tableCell(
+                    colorScheme,
+                    s.missionFund > 0
+                        ? CurrencyUtils.formatRand(s.missionFund)
+                        : '—',
+                    isHeader: false,
+                  ),
                 Padding(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 6),

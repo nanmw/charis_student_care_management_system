@@ -16,3 +16,10 @@ final missionPaymentsForYearStreamProvider = StreamProvider.autoDispose
   final repo = ref.watch(missionPaymentRepositoryProvider);
   return repo.watchForYear(year);
 });
+
+/// Stream of mission payment schedule rows for academic [sessionCode].
+final missionPaymentsForSessionStreamProvider = StreamProvider.autoDispose
+    .family<List<MissionPaymentScheduleData>, String>((ref, sessionCode) {
+  final repo = ref.watch(missionPaymentRepositoryProvider);
+  return repo.watchForSession(sessionCode);
+});

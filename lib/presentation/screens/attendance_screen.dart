@@ -13,6 +13,7 @@ import 'package:charis_student_care/presentation/providers/attendance_providers.
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
+import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/attendance_date_picker_dialog.dart';
@@ -23,9 +24,6 @@ void _debugLog(String location, String message, Map<String, dynamic> data, Strin
   // No-op: was causing UI jank due to synchronous file writes on every attendance action.
 }
 // #endregion
-
-/// Mode filter options (must match students.mode values).
-const List<String> _modeOptions = ['Full-time', 'Hybrid'];
 
 /// One row's editable state for attendance form.
 class _RowEdit {
@@ -100,21 +98,41 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
     final attendanceAsync = ref.watch(attendanceForDateProvider(_attendanceDate));
-    final visibleClasses = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull;
+    final visibleClassesRaw = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull;
+    final visibleClasses = visibleClassesRaw ?? <SchoolClass>[];
+    final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
     final auth = ref.watch(authStateProvider).valueOrNull;
     if (auth is Authenticated &&
-        visibleClasses != null &&
         visibleClasses.isNotEmpty &&
         !_defaultClassScheduled &&
         _classFilter == null) {
       _defaultClassScheduled = true;
-      final year1 = visibleClasses.where((c) => c.name == 'Year 1');
-      final defaultClassId = auth.role == UserRole.facilitator
-          ? visibleClasses.first.id
-          : (year1.isEmpty ? visibleClasses.first.id : year1.first.id);
+      final scope = scopeAsync.valueOrNull;
+      int defaultClassId;
+      String? defaultMode;
+      if (auth.role == UserRole.facilitator &&
+          scope != null &&
+          scope.classIds != null &&
+          scope.classIds!.isNotEmpty) {
+        defaultClassId = scope.classIds!.first;
+        defaultMode = scope.mode ?? 'Full-time';
+      } else {
+        final year1 = visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
+        defaultClassId = year1.isEmpty ? visibleClasses.first.id : year1.first.id;
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        setState(() => _classFilter = defaultClassId);
+        setState(() {
+          _classFilter = defaultClassId;
+          if (defaultMode != null) _selectedMode = defaultMode;
+        });
+      });
+    }
+
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1 && _selectedMode != modeOptions[0]) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _selectedMode = modeOptions[0]);
       });
     }
 
@@ -332,20 +350,41 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   }
 
   Widget _buildModeToggle(ColorScheme colorScheme, Color redColor) {
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: redColor.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: redColor),
+        ),
+        child: Text(
+          modeOptions[0],
+          style: TextStyle(
+            fontFamily: 'Questrial',
+            fontSize: 14,
+            color: colorScheme.onSurface,
+          ),
+        ),
+      );
+    }
     return ToggleButtons(
       constraints: const BoxConstraints(minWidth: 90, minHeight: 44),
       borderRadius: BorderRadius.circular(8),
       fillColor: redColor,
       selectedColor: AppColors.charisWhite,
       color: colorScheme.onSurface,
-      isSelected: _modeOptions.map((m) => m == _selectedMode).toList(),
+      isSelected: modeOptions.map((m) => m == _selectedMode).toList(),
       onPressed: (index) {
         setState(() {
-          _selectedMode = _modeOptions[index];
+          _selectedMode = modeOptions[index];
           _displayedCount = 30; // Reset to initial batch
         });
       },
-      children: _modeOptions.map((l) => Text(l, style: const TextStyle(fontFamily: 'Questrial', fontSize: 14))).toList(),
+      children: modeOptions
+          .map((l) => Text(l, style: const TextStyle(fontFamily: 'Questrial', fontSize: 14)))
+          .toList(),
     );
   }
 
@@ -368,11 +407,10 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
           underline: const SizedBox.shrink(),
           borderRadius: BorderRadius.circular(8),
           items: classes
-              .map((c) => DropdownMenuItem<int?>(
+              .map<DropdownMenuItem<int?>>((SchoolClass c) => DropdownMenuItem<int?>(
                     value: c.id,
                     child: Text(c.name, style: TextStyle(color: colorScheme.onSurface, fontSize: 14),),
-                  ),
-                )
+                  ),)
               .toList(),
           onChanged: (v) {
             setState(() {
@@ -395,10 +433,11 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
           );
           final auth = await ref.read(authStateProvider.future);
           if (auth is Authenticated && visibleClasses.isNotEmpty) {
-            final year1 = visibleClasses.where((c) => c.name == 'Year 1');
+            final year1 = visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
+            final firstClass = visibleClasses.first;
             effectiveClassFilter = auth.role == UserRole.facilitator
-                ? visibleClasses.first.id
-                : (year1.isEmpty ? visibleClasses.first.id : year1.first.id);
+                ? firstClass.id
+                : (year1.isEmpty ? firstClass.id : year1.first.id);
           }
         }
         // Always compute dates with attendance fresh for the current class filter.

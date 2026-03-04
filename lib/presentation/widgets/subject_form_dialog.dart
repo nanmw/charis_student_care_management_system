@@ -250,7 +250,7 @@ class _SubjectFormDialogState extends ConsumerState<SubjectFormDialog> {
                 fillColor: isDark ? AppColors.surfaceDark : AppColors.charisWhite,
               ),
               hint: const Text('Select Class', style: TextStyle(fontSize: 14)),
-              items: classes.map((c) => DropdownMenuItem<int>(value: c.id, child: Text(c.name))).toList(),
+              items: classes.map<DropdownMenuItem<int>>((SchoolClass c) => DropdownMenuItem<int>(value: c.id, child: Text(c.name))).toList(),
               onChanged: widget.isEdit ? null : (v) => setState(() => _classId = v),
               style: TextStyle(
                 color: isDark ? AppColors.textOnDark : AppColors.charisBlack,

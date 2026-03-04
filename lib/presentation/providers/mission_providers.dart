@@ -39,16 +39,21 @@ final participationsForMissionProvider = StreamProvider.autoDispose
   return repo.watchParticipationsForMission(missionId);
 });
 
-/// Students eligible for mission sign-up: Year 2 class, Active, and mode matches. Scoped for facilitators.
+/// Students eligible for mission sign-up: Year 2 class, Active, and mode matches. Scoped for facilitators (class + mode).
 final studentsEligibleForMissionsProvider = StreamProvider.autoDispose
     .family<List<Student>, String>((ref, missionMode) async* {
   final classRepo = ref.watch(classRepositoryProvider);
   final studentRepo = ref.watch(studentRepositoryProvider);
-  final classIds = await ref.watch(currentUserAssignedClassIdsProvider.future);
+  final scope = await ref.watch(currentUserFacilitatorScopeProvider.future);
+  final classIds = scope?.classIds;
+  final mode = scope?.mode;
   final year2Class = await classRepo.getClassByName('Year 2');
   final year2ClassId = year2Class?.id;
-  await for (final list
-      in studentRepo.watchStudents(statusFilter: 'Active', classIds: classIds)) {
+  await for (final list in studentRepo.watchStudents(
+    statusFilter: 'Active',
+    classIds: classIds,
+    mode: mode,
+  )) {
     yield list
         .where(
           (s) =>

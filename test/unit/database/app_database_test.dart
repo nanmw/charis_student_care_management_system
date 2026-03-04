@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:drift/drift.dart' hide isNotNull;
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
 import 'package:charis_student_care/core/constants/sync_constants.dart';
 
 void main() {
@@ -21,7 +22,7 @@ void main() {
     });
 
     test('schema version is correct', () {
-      expect(database.schemaVersion, equals(30));
+      expect(database.schemaVersion, equals(31));
     });
 
     test('tables are created correctly', () async {
@@ -64,6 +65,26 @@ void main() {
       await database.close();
       // Database is closed, verify it's in closed state
       expect(database, isNotNull);
+    });
+  });
+
+  group('Academic Sessions Tests', () {
+    test('academic_sessions table exists and seeds sessions', () async {
+      // On a fresh in-memory test database, migrations are applied and
+      // _ensureInitialAcademicSessions() should have inserted at least one row.
+      final result = await database.customSelect(
+        'SELECT COUNT(*) AS c FROM academic_sessions',
+      ).getSingle();
+      final count = result.data['c'] as int? ?? 0;
+      expect(count, greaterThan(0));
+    });
+
+    test('setting current session updates app_settings', () async {
+      // Set current session via repository and verify it is stored.
+      final repo = AcademicSessionRepository(database);
+      await repo.setCurrentSession('2099-2100');
+      final current = await repo.getCurrentSession();
+      expect(current, equals('2099-2100'));
     });
   });
 

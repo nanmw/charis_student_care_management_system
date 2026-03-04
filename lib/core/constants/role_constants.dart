@@ -1,8 +1,8 @@
 /// Role definitions and permissions
 enum UserRole {
   facilitator('Facilitator'),
-  adminLevel02('Admin Level 02'),
-  adminLevel01('Admin Level 01');
+  adminLevel02('Portfolio Lead'),
+  adminLevel01('Admin');
 
   const UserRole(this.displayName);
   final String displayName;
@@ -67,8 +67,9 @@ class RolePermissions {
     return role == UserRole.adminLevel01;
   }
 
-  /// Check if role can export reports (access Export & Reports, export from screens or Student Summary modal)
+  /// Check if role can export reports (access Export & Reports, export from screens or Student Summary modal).
+  /// All roles can export; data is scoped by facilitator scope (class + mode) when applicable.
   static bool canExportReports(UserRole role) {
-    return role == UserRole.adminLevel01 || role == UserRole.adminLevel02;
+    return true;
   }
 }

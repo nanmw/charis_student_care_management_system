@@ -1,5 +1,7 @@
 import 'package:drift/drift.dart';
 
+import 'academic_sessions.dart';
+
 /// Payments toward a mission participation (lump sum or installments).
 /// Each row = one payment with date and amount. Paid-to-date = sum; balance = participation.amount - sum.
 class MissionPayments extends Table {
@@ -17,4 +19,8 @@ class MissionPayments extends Table {
 
   /// When the record was created
   DateTimeColumn get createdAt => dateTime().withDefault(currentDateAndTime)();
+
+  /// Academic session foreign key (for reporting by session).
+  IntColumn get academicSessionId =>
+      integer().nullable().references(AcademicSessions, #id)();
 }

@@ -21,11 +21,10 @@ import 'package:charis_student_care/presentation/providers/subject_providers.dar
 import 'package:charis_student_care/presentation/providers/test_providers.dart';
 import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
+import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/searchable_dropdown.dart';
 import 'package:charis_student_care/presentation/widgets/student_summary_dialog.dart';
-
-const List<String> _modeOptions = ['Full-time', 'Hybrid'];
 
 /// Returns current academic session string (e.g. "2025-2026") for default selection.
 String _defaultCurrentAcademicSession() {
@@ -170,19 +169,40 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
 
     final visibleClasses = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull;
     final auth = ref.watch(authStateProvider).valueOrNull;
+    final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
     if (auth is Authenticated &&
         visibleClasses != null &&
         visibleClasses.isNotEmpty &&
         !_defaultClassScheduled &&
         _studentClassId == null) {
       _defaultClassScheduled = true;
-      final year1 = visibleClasses.where((c) => c.name == 'Year 1');
-      final defaultClassId = auth.role == UserRole.facilitator
-          ? visibleClasses.first.id
-          : (year1.isEmpty ? visibleClasses.first.id : year1.first.id);
+      final scope = scopeAsync.valueOrNull;
+      int defaultClassId;
+      String? defaultMode;
+      if (auth.role == UserRole.facilitator &&
+          scope != null &&
+          scope.classIds != null &&
+          scope.classIds!.isNotEmpty) {
+        defaultClassId = scope.classIds!.first;
+        defaultMode = scope.mode ?? 'Full-time';
+      } else {
+        final year1 = visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
+        final firstClass = visibleClasses.first;
+        defaultClassId = year1.isEmpty ? firstClass.id : year1.first.id;
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        setState(() => _studentClassId = defaultClassId);
+        setState(() {
+          _studentClassId = defaultClassId;
+          if (defaultMode != null) _selectedMode = defaultMode;
+        });
+      });
+    }
+
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1 && _selectedMode != modeOptions[0]) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _selectedMode = modeOptions[0]);
       });
     }
 
@@ -1009,7 +1029,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
 
     // Watch subjects for each visible class only.
     final subjectAsyncs = classes
-        .map((c) => ref.watch(subjectsForClassStreamProvider(c.id)))
+        .map((SchoolClass c) => ref.watch(subjectsForClassStreamProvider(c.id)))
         .toList();
     final allHaveValue = subjectAsyncs.every((a) => a.hasValue);
     if (!allHaveValue) {
@@ -1097,23 +1117,42 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
   }
 
   Widget _buildModeToggle(ColorScheme colorScheme, Color redColor) {
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: redColor.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: redColor),
+        ),
+        child: Text(
+          modeOptions[0],
+          style: TextStyle(
+            fontFamily: 'Questrial',
+            fontSize: 14,
+            color: colorScheme.onSurface,
+          ),
+        ),
+      );
+    }
     return ToggleButtons(
       constraints: const BoxConstraints(minWidth: 90, minHeight: 44),
       borderRadius: BorderRadius.circular(8),
       fillColor: redColor,
       selectedColor: AppColors.charisWhite,
       color: colorScheme.onSurface,
-      isSelected: _modeOptions.map((m) => m == _selectedMode).toList(),
+      isSelected: modeOptions.map((m) => m == _selectedMode).toList(),
       onPressed: (index) {
         setState(() {
-          _selectedMode = _modeOptions[index];
+          _selectedMode = modeOptions[index];
           _cachedFilteredStudents = null;
           _cachedTests = null;
           _dataSource = null;
           _displayedCount = 25;
         });
       },
-      children: _modeOptions
+      children: modeOptions
           .map((l) => Text(
                 l,
                 style: const TextStyle(
@@ -1145,7 +1184,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     final classes = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull ?? [];
     final effectiveClassId = classes.isEmpty
         ? null
-        : (classes.any((c) => c.id == _studentClassId)
+        : (classes.any((SchoolClass c) => c.id == _studentClassId)
             ? _studentClassId
             : classes.first.id);
     if (classes.isNotEmpty && effectiveClassId != _studentClassId) {
@@ -1174,11 +1213,10 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       underline: const SizedBox.shrink(),
       borderRadius: BorderRadius.circular(8),
       items: classes
-          .map((c) => DropdownMenuItem<int?>(
+          .map<DropdownMenuItem<int?>>((SchoolClass c) => DropdownMenuItem<int?>(
                 value: c.id,
                 child: Text(c.name, style: TextStyle(color: colorScheme.onSurface, fontSize: 14),),
-              ),
-            )
+              ),)
           .toList(),
       onChanged: (v) {
         setState(() {
@@ -1668,6 +1706,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       final repo = ref.read(testRepositoryProvider);
       int savedCount = 0;
       final invalid = <String>[];
+      final savedStudentIds = <int>{};
 
       for (final entry in _edits.entries) {
         final studentId = entry.key;
@@ -1696,6 +1735,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
           screen: 'Tests',
         );
         savedCount++;
+        savedStudentIds.add(studentId);
       }
 
       if (invalid.isNotEmpty && mounted) {
@@ -1717,8 +1757,14 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         return;
       }
 
+      ref.invalidate(allTestsProvider);
+      ref.invalidate(datesWithTestChangesProvider(_selectedAcademicSession));
+
       setState(() {
         _cachedTests = null;
+        for (final id in savedStudentIds) {
+          _edits.remove(id);
+        }
       });
 
       if (mounted) {

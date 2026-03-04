@@ -6,6 +6,7 @@ import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
+import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 
@@ -122,6 +123,12 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
     final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1 && _mode != modeOptions[0]) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _mode = modeOptions[0]);
+      });
+    }
     return Dialog(
       backgroundColor: Colors.transparent,
       child: Container(
@@ -159,7 +166,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
                     const SizedBox(height: 16),
                     _buildOptionalDropdown(
                         'Mode',
-                        StudentFormDialog.modeOptions,
+                        ref.watch(modeOptionsForCurrentUserProvider),
                         _mode,
                         'Select Mode',
                         redColor,
@@ -441,7 +448,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
                     value: null,
                     child: Text('Clear', style: TextStyle(fontStyle: FontStyle.italic)),
                   ),
-                ...classes.map((c) => DropdownMenuItem<int?>(
+                ...classes.map<DropdownMenuItem<int?>>((SchoolClass c) => DropdownMenuItem<int?>(
                   value: c.id,
                   child: Text(c.name),
                 ),),

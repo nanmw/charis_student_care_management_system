@@ -1,16 +1,14 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:charis_student_care/core/constants/app_constants.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
-import 'package:charis_student_care/data/repositories/class_repository.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
-import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
+import 'package:charis_student_care/presentation/providers/repository_providers.dart';
 
-final classRepositoryProvider = Provider<ClassRepository>((ref) {
-  final db = ref.watch(appDatabaseProvider);
-  return ClassRepository(db);
-});
+export 'repository_providers.dart' show appDatabaseProvider, classRepositoryProvider;
 
 /// Stream of all classes ordered by sortOrder then name.
 final allClassesStreamProvider =
@@ -26,7 +24,18 @@ final allClassesFutureProvider =
   return repo.getAllClasses();
 });
 
-/// Classes visible to the current user: all classes for admins, only assigned classes for facilitators.
+/// Class name options for the Export & Reports screen. Admins/portfolio lead get all report class options; facilitators get only their assigned class(es).
+final reportClassOptionsForCurrentUserProvider =
+    FutureProvider.autoDispose<List<String>>((ref) async {
+  final auth = ref.watch(authStateProvider).valueOrNull;
+  if (auth is! Authenticated || auth.role != UserRole.facilitator) {
+    return List<String>.from(AppConstants.reportClassOptions);
+  }
+  final classes = await ref.watch(classesVisibleToCurrentUserProvider.future);
+  return classes.map((c) => c.name).toList();
+});
+
+/// Classes visible to the current user: all classes for admins/portfolio lead, only assigned class for facilitators.
 /// Use in student list class dropdown and any other "select class" UI.
 final classesVisibleToCurrentUserProvider =
     FutureProvider.autoDispose<List<SchoolClass>>((ref) async {
@@ -35,9 +44,17 @@ final classesVisibleToCurrentUserProvider =
   if (auth is! Authenticated || auth.role != UserRole.facilitator) {
     return repo.getAllClasses();
   }
-  final userId = int.tryParse(auth.user.id);
-  if (userId == null) return [];
-  return repo.getClassesByFacilitatorUserId(userId);
+  final scope = await ref.watch(currentUserFacilitatorScopeProvider.future);
+  if (scope == null || scope.classIds == null || scope.classIds!.isEmpty) {
+    return [];
+  }
+  // When scope has class ids (one or legacy multiple), resolve to SchoolClass list.
+  final classes = <SchoolClass>[];
+  for (final id in scope.classIds!) {
+    final c = await repo.getClassById(id);
+    if (c != null) classes.add(c);
+  }
+  return classes;
 });
 
 /// Classes assigned to a given user (for user edit dialog).

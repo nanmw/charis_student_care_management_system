@@ -351,8 +351,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         final conflictCount = await ref.read(syncConflictsCountProvider.future);
         if (!context.mounted) return;
         final message = applied > 0
-            ? 'Synced. Applied $applied change-set(s).'
-            : 'Sync complete. No new changes to apply.';
+            ? 'OneDrive synced. Applied $applied change-set(s).'
+            : 'OneDrive sync complete. No new changes to apply.';
         final conflictNote = conflictCount > 0
             ? ' $conflictCount conflict(s) need resolution in Settings.'
             : '';
@@ -368,7 +368,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Sync failed: $e'),
+            content: Text('OneDrive sync failed: $e'),
             backgroundColor: colorScheme.error,
           ),
         );

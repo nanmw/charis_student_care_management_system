@@ -4,6 +4,7 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
+import 'tables/academic_sessions.dart';
 import 'tables/classes.dart';
 import 'tables/students.dart';
 import 'tables/change_sets.dart';
@@ -27,6 +28,7 @@ part 'app_database.g.dart';
 /// Main database class (plain SQLite; encryption can be re-added later with platform-specific setup)
 @DriftDatabase(
   tables: [
+    AcademicSessions,
     Classes,
     Students,
     ChangeSets,
@@ -57,7 +59,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.test() : super(_openTestConnection());
 
   @override
-  int get schemaVersion => 30;
+  int get schemaVersion => 32;
 
   @override
   MigrationStrategy get migration {
@@ -248,6 +250,9 @@ class AppDatabase extends _$AppDatabase {
             INSERT OR IGNORE INTO subjects (name, class_id) VALUES ('$escapedName', 3)
           ''');
         }
+
+        // Seed academic sessions (current and previous) if none exist yet.
+        await _ensureInitialAcademicSessions();
       },
       onUpgrade: (Migrator m, int from, int to) async {
         // #region agent log
@@ -1125,7 +1130,220 @@ class AppDatabase extends _$AppDatabase {
             'CREATE INDEX IF NOT EXISTS idx_ministry_entries_class_id ON ministry_entries(class_id)',
           );
         }
+
+        if (from < 31) {
+          // Create academic_sessions table for existing databases and seed initial sessions.
+          await customStatement('''
+            CREATE TABLE IF NOT EXISTS academic_sessions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+              code TEXT NOT NULL UNIQUE,
+              start_date INTEGER,
+              end_date INTEGER,
+              is_active INTEGER NOT NULL DEFAULT 0,
+              display_name TEXT
+            )
+          ''');
+
+          // Add academic_session_id columns to core tables (nullable for legacy data).
+          await customStatement(
+            'ALTER TABLE tests ADD COLUMN academic_session_id INTEGER REFERENCES academic_sessions(id)',
+          );
+          await customStatement(
+            'ALTER TABLE payments ADD COLUMN academic_session_id INTEGER REFERENCES academic_sessions(id)',
+          );
+          await customStatement(
+            'ALTER TABLE mission_payments ADD COLUMN academic_session_id INTEGER REFERENCES academic_sessions(id)',
+          );
+          await customStatement(
+            'ALTER TABLE mission_payment_schedule ADD COLUMN academic_session_id INTEGER REFERENCES academic_sessions(id)',
+          );
+          await customStatement(
+            'ALTER TABLE attendance ADD COLUMN academic_session_id INTEGER REFERENCES academic_sessions(id)',
+          );
+          await customStatement(
+            'ALTER TABLE students ADD COLUMN academic_session_id INTEGER REFERENCES academic_sessions(id)',
+          );
+          await customStatement(
+            'ALTER TABLE ministry_entries ADD COLUMN academic_session_id INTEGER REFERENCES academic_sessions(id)',
+          );
+          await customStatement(
+            'ALTER TABLE missions ADD COLUMN academic_session_id INTEGER REFERENCES academic_sessions(id)',
+          );
+
+          // Backfill academic_sessions from existing string/session data where possible.
+
+          // 1) From tests.academic_session (already stores codes like "2024-2025").
+          await customStatement('''
+            INSERT OR IGNORE INTO academic_sessions (code)
+            SELECT DISTINCT TRIM(academic_session)
+            FROM tests
+            WHERE academic_session IS NOT NULL AND TRIM(academic_session) <> ''
+          ''');
+          await customStatement('''
+            UPDATE tests
+            SET academic_session_id = (
+              SELECT id FROM academic_sessions
+              WHERE code = TRIM(academic_session)
+            )
+            WHERE academic_session IS NOT NULL AND TRIM(academic_session) <> ''
+              AND academic_session_id IS NULL
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_tests_academic_session_id ON tests(academic_session_id)',
+          );
+
+          // 2) From year-based tables: payments, mission_payment_schedule, missions.
+          // Map a numeric year Y to session code "Y-(Y+1)".
+          await customStatement('''
+            INSERT OR IGNORE INTO academic_sessions (code)
+            SELECT DISTINCT year || '-' || (CAST(year AS INTEGER) + 1)
+            FROM payments
+            WHERE year GLOB '[0-9]*'
+          ''');
+          await customStatement('''
+            INSERT OR IGNORE INTO academic_sessions (code)
+            SELECT DISTINCT year || '-' || (CAST(year AS INTEGER) + 1)
+            FROM mission_payment_schedule
+            WHERE year GLOB '[0-9]*'
+          ''');
+          await customStatement('''
+            INSERT OR IGNORE INTO academic_sessions (code)
+            SELECT DISTINCT year || '-' || (CAST(year AS INTEGER) + 1)
+            FROM missions
+            WHERE year GLOB '[0-9]*'
+          ''');
+
+          await customStatement('''
+            UPDATE payments
+            SET academic_session_id = (
+              SELECT id FROM academic_sessions
+              WHERE code = year || '-' || (CAST(year AS INTEGER) + 1)
+            )
+            WHERE year GLOB '[0-9]*'
+              AND academic_session_id IS NULL
+          ''');
+          await customStatement('''
+            UPDATE mission_payment_schedule
+            SET academic_session_id = (
+              SELECT id FROM academic_sessions
+              WHERE code = year || '-' || (CAST(year AS INTEGER) + 1)
+            )
+            WHERE year GLOB '[0-9]*'
+              AND academic_session_id IS NULL
+          ''');
+          await customStatement('''
+            UPDATE missions
+            SET academic_session_id = (
+              SELECT id FROM academic_sessions
+              WHERE code = year || '-' || (CAST(year AS INTEGER) + 1)
+            )
+            WHERE year GLOB '[0-9]*'
+              AND academic_session_id IS NULL
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_payments_academic_session_id ON payments(academic_session_id)',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_mission_payment_schedule_academic_session_id ON mission_payment_schedule(academic_session_id)',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_missions_academic_session_id ON missions(academic_session_id)',
+          );
+
+          // 3) Students and ministry_entries: map from admission_year/year to sessions where possible.
+          await customStatement('''
+            UPDATE students
+            SET academic_session_id = (
+              SELECT id FROM academic_sessions
+              WHERE code = admission_year || '-' || (CAST(admission_year AS INTEGER) + 1)
+            )
+            WHERE admission_year GLOB '[0-9]*'
+              AND academic_session_id IS NULL
+          ''');
+          await customStatement('''
+            UPDATE ministry_entries
+            SET academic_session_id = (
+              SELECT id FROM academic_sessions
+              WHERE code = year || '-' || (CAST(year AS INTEGER) + 1)
+            )
+            WHERE year GLOB '[0-9]*'
+              AND academic_session_id IS NULL
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_students_academic_session_id ON students(academic_session_id)',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_ministry_entries_academic_session_id ON ministry_entries(academic_session_id)',
+          );
+
+          // 4) Mission payments: derive session from associated mission via mission_participations.
+          await customStatement('''
+            UPDATE mission_payments
+            SET academic_session_id = (
+              SELECT mi.academic_session_id
+              FROM mission_participations mp
+              JOIN missions mi ON mi.id = mp.mission_id
+              WHERE mp.id = mission_payments.mission_participation_id
+            )
+            WHERE academic_session_id IS NULL
+          ''');
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_mission_payments_academic_session_id ON mission_payments(academic_session_id)',
+          );
+
+          // Finally ensure at least current and previous sessions exist and mark one as active.
+          await _ensureInitialAcademicSessions();
+        }
+
+        if (from < 32) {
+          await customStatement(
+            'ALTER TABLE users ADD COLUMN allowed_class_id INTEGER REFERENCES classes(id)',
+          );
+          await customStatement(
+            'ALTER TABLE users ADD COLUMN allowed_mode TEXT',
+          );
+          // Backfill: facilitators who have a class via classes.facilitator_user_id get that class + Full-time.
+          await customStatement('''
+            UPDATE users
+            SET allowed_class_id = (SELECT MIN(id) FROM classes WHERE facilitator_user_id = users.id),
+                allowed_mode = 'Full-time'
+            WHERE role = 'facilitator'
+              AND (SELECT MIN(id) FROM classes WHERE facilitator_user_id = users.id) IS NOT NULL
+          ''');
+        }
       },
+    );
+  }
+
+  /// Ensures there is at least a current and previous academic session row.
+  /// Does nothing if sessions already exist or if the table is unavailable.
+  Future<void> _ensureInitialAcademicSessions() async {
+    try {
+      final result = await customSelect(
+        'SELECT COUNT(*) AS c FROM academic_sessions',
+      ).getSingle();
+      final count = result.data['c'] as int? ?? 0;
+      if (count > 0) {
+        return;
+      }
+    } catch (_) {
+      // Table might not exist yet; in that case, bail out gracefully.
+      return;
+    }
+
+    final now = DateTime.now();
+    final year = now.year;
+    final currentCode = now.month >= 7 ? '$year-${year + 1}' : '${year - 1}-$year';
+    final previousCode = now.month >= 7 ? '${year - 1}-$year' : '${year - 2}-${year - 1}';
+
+    // Insert previous session (inactive) and current session (active).
+    await customStatement(
+      'INSERT OR IGNORE INTO academic_sessions (code, is_active) VALUES (?, 0)',
+      [previousCode],
+    );
+    await customStatement(
+      'INSERT OR IGNORE INTO academic_sessions (code, is_active) VALUES (?, 1)',
+      [currentCode],
     );
   }
 }

@@ -85,3 +85,22 @@ flutter run -d macos
 ## Development
 
 See `.cursor/rules.md` for development guidelines and business rules.
+
+## Academic sessions
+
+- **What is an academic session?**  
+  An academic session represents one academic year (for example `2024-2025`). It is stored in the `academic_sessions` table and referenced by core tables (students, tests, attendance, payments, ministry entries, missions, mission payments) via `academic_session_id`.
+
+- **Current academic session**  
+  The currently selected session is stored in the `app_settings` table under the key `current_academic_session`. The UI reads this value via `AcademicSessionRepository` and Riverpod providers. Reports and dashboards use the current session to scope queries (e.g. test results, balances, ministry hours).
+
+- **Creating a new academic session each year**  
+  When a new academic year starts, an admin should:
+  1. Create a new academic session with the desired code (e.g. `2025-2026`).
+  2. Mark the new session as active (the app ensures only one active session at a time).
+  3. The `current_academic_session` setting is updated to this new code so all new records (tests, payments, attendance, ministry, missions) are associated with the correct session.
+
+- **Legacy data and backward compatibility**  
+  Existing data that used plain `year` or string `academic_session` values is automatically migrated to `academic_session_id` where possible (e.g. `2024` → `2024-2025`). Older columns (`year`, `tests.academic_session`, etc.) are kept for now and are still written in parallel so older exports and tooling continue to work.
+
+  **Transitional query behaviour:** Session-scoped repository methods (e.g. `watchPaymentsForSession`, `watchForSession` for mission payments) prefer rows where `academic_session_id` matches the resolved session. They also **include legacy rows** where `academic_session_id` is null but the `year` (or session string) maps to the same session code. So dashboards and reports show both new session-tagged data and old year-only data for the chosen session. After everything uses `academic_session_id` in production, a follow-up migration could drop or ignore the legacy columns.

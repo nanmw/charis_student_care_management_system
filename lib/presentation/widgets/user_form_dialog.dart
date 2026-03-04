@@ -3,8 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
+import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
-import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/repository_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 
 /// Dialog to add a new user.
@@ -27,13 +28,16 @@ class UserFormDialog extends ConsumerStatefulWidget {
   ConsumerState<UserFormDialog> createState() => _UserFormDialogState();
 }
 
+const List<String> _modeOptions = ['Full-time', 'Hybrid'];
+
 class _UserFormDialogState extends ConsumerState<UserFormDialog> {
   final _formKey = GlobalKey<FormState>();
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
   final _displayNameController = TextEditingController();
   UserRole _role = UserRole.facilitator;
-  final Set<int> _selectedClassIds = {};
+  int? _selectedClassId;
+  String? _selectedMode = 'Full-time';
 
   @override
   void dispose() {
@@ -46,18 +50,16 @@ class _UserFormDialogState extends ConsumerState<UserFormDialog> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     try {
-      final newUserId = await ref.read(userRepositoryProvider).createUser(
+      await ref.read(userRepositoryProvider).createUser(
             username: _usernameController.text.trim(),
             plainPassword: _passwordController.text,
             displayName: _displayNameController.text.trim().isEmpty ? null : _displayNameController.text.trim(),
             role: _role,
+            allowedClassId: _role == UserRole.facilitator ? _selectedClassId : null,
+            allowedMode: _role == UserRole.facilitator && _selectedMode != null && _selectedMode!.trim().isNotEmpty
+                ? _selectedMode!.trim()
+                : null,
           );
-      if (_role == UserRole.facilitator && _selectedClassIds.isNotEmpty) {
-        final classRepo = ref.read(classRepositoryProvider);
-        for (final classId in _selectedClassIds) {
-          await classRepo.updateFacilitator(classId, newUserId);
-        }
-      }
       if (mounted) {
         widget.onSaved();
         Navigator.of(context).pop();
@@ -128,25 +130,37 @@ class _UserFormDialogState extends ConsumerState<UserFormDialog> {
                 ),
                 if (_role == UserRole.facilitator) ...[
                   const SizedBox(height: 12),
-                  const Text('Assigned class(es)', style: TextStyle(fontFamily: 'Questrial', fontWeight: FontWeight.w500)),
+                  const Text('Assigned class and mode', style: TextStyle(fontFamily: 'Questrial', fontWeight: FontWeight.w500)),
                   const SizedBox(height: 4),
                   ref.watch(allClassesFutureProvider).when(
                     data: (classes) => Column(
                       mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: classes.map((c) => CheckboxListTile(
-                        title: Text(c.name, style: const TextStyle(fontFamily: 'Questrial')),
-                        value: _selectedClassIds.contains(c.id),
-                        onChanged: (v) => setState(() {
-                          if (v == true) {
-                            _selectedClassIds.add(c.id);
-                          } else {
-                            _selectedClassIds.remove(c.id);
-                          }
-                        }),
-                        contentPadding: EdgeInsets.zero,
-                        controlAffinity: ListTileControlAffinity.leading,
-                      ), ).toList(),
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        DropdownButtonFormField<int>(
+                          initialValue: _selectedClassId,
+                          decoration: const InputDecoration(
+                            labelText: 'Class',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: classes
+                              .map<DropdownMenuItem<int>>((SchoolClass c) => DropdownMenuItem<int>(value: c.id, child: Text(c.name)))
+                              .toList(),
+                          onChanged: (v) => setState(() => _selectedClassId = v),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: _selectedMode ?? _modeOptions.first,
+                          decoration: const InputDecoration(
+                            labelText: 'Mode',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: _modeOptions
+                              .map((m) => DropdownMenuItem<String>(value: m, child: Text(m)))
+                              .toList(),
+                          onChanged: (v) => setState(() => _selectedMode = v),
+                        ),
+                      ],
                     ),
                     loading: () => const SizedBox(height: 24, child: Center(child: CircularProgressIndicator())),
                     error: (e, _) => Text('Error loading classes: $e', style: TextStyle(color: Theme.of(context).colorScheme.error)),

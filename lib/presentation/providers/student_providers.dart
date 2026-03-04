@@ -2,32 +2,24 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/student_repository.dart';
-import 'package:charis_student_care/data/repositories/user_repository.dart';
 import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
+import 'package:charis_student_care/presentation/providers/repository_providers.dart';
 
-final appDatabaseProvider = Provider<AppDatabase>((ref) {
-  return AppDatabase();
-});
-
-final studentRepositoryProvider = Provider<StudentRepository>((ref) {
-  final db = ref.watch(appDatabaseProvider);
-  return StudentRepository(db);
-});
-
-final userRepositoryProvider = Provider<UserRepository>((ref) {
-  final db = ref.watch(appDatabaseProvider);
-  return UserRepository(db);
-});
+// Re-export so existing imports of student_providers still get these.
+export 'repository_providers.dart' show appDatabaseProvider, studentRepositoryProvider, userRepositoryProvider;
 
 /// Stream of students ordered by surname. [statusFilter] default 'Active'; null = all.
-/// Scoped to current user's assigned classes when they are a facilitator.
+/// Scoped to current user's facilitator scope (class + mode when set).
 final studentsStreamProvider = StreamProvider.autoDispose
     .family<List<Student>, String?>((ref, statusFilter) {
   final repo = ref.watch(studentRepositoryProvider);
-  final classIdsAsync = ref.watch(currentUserAssignedClassIdsProvider);
-  return classIdsAsync.when(
-    data: (classIds) =>
-        repo.watchStudents(statusFilter: statusFilter, classIds: classIds),
+  final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
+  return scopeAsync.when(
+    data: (scope) => repo.watchStudents(
+      statusFilter: statusFilter,
+      classIds: scope?.classIds,
+      mode: scope?.mode,
+    ),
     loading: () => Stream.value([]),
     error: (_, __) => Stream.value([]),
   );
@@ -37,27 +29,34 @@ final studentsStreamProvider = StreamProvider.autoDispose
 final studentsWithClassStreamProvider = StreamProvider.autoDispose
     .family<List<StudentWithClass>, String?>((ref, statusFilter) {
   final repo = ref.watch(studentRepositoryProvider);
-  final classIdsAsync = ref.watch(currentUserAssignedClassIdsProvider);
-  return classIdsAsync.when(
-    data: (classIds) => repo.watchStudentsWithClass(
+  final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
+  return scopeAsync.when(
+    data: (scope) => repo.watchStudentsWithClass(
       statusFilter: statusFilter,
-      classIds: classIds,
+      classIds: scope?.classIds,
+      mode: scope?.mode,
     ),
     loading: () => Stream.value([]),
     error: (_, __) => Stream.value([]),
   );
 });
 
-/// Stream of student ids in the current user's assigned classes (for facilitator scope).
-/// When current user is admin, emits empty list (no filter applied elsewhere).
+/// Stream of student ids in the current user's facilitator scope (for dashboard, student summary, etc.).
+/// When current user is admin/portfolio lead, emits empty list (no filter applied elsewhere).
 final allowedStudentIdsStreamProvider = StreamProvider.autoDispose<List<int>>((ref) {
-  final classIdsAsync = ref.watch(currentUserAssignedClassIdsProvider);
+  final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
   final repo = ref.watch(studentRepositoryProvider);
-  return classIdsAsync.when(
-    data: (classIds) {
-      if (classIds == null || classIds.isEmpty) return Stream.value([]);
+  return scopeAsync.when(
+    data: (scope) {
+      if (scope == null || scope.classIds == null || scope.classIds!.isEmpty) {
+        return Stream.value([]);
+      }
       return repo
-          .watchStudents(statusFilter: 'Active', classIds: classIds)
+          .watchStudents(
+            statusFilter: 'Active',
+            classIds: scope.classIds,
+            mode: scope.mode,
+          )
           .map((students) => students.map((s) => s.id).toList());
     },
     loading: () => Stream.value([]),

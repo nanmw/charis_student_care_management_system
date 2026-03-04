@@ -14,17 +14,22 @@ import 'package:charis_student_care/data/repositories/ministry_entry_repository.
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
+import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/ministry_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/ministry_entry_form_dialog.dart';
 
 /// Builds summary tab options from classes (classId + studyMode + label).
-/// Uses each class's actual year (sortOrder) for the ordinal so facilitators
-/// see e.g. "3rd Year Full-time" when assigned to Year 3, not "1st Year".
+/// When [allowedMode] is non-null (e.g. facilitator's mode), only options for that mode are included.
+/// Uses each class's actual year (sortOrder) for the ordinal.
 List<({int classId, String studyMode, String label})> _buildSummaryTabOptions(
-  List<SchoolClass> classes,
-) {
-  const modes = ['Full-time', 'Hybrid'];
+  List<SchoolClass> classes, {
+  String? allowedMode,
+}) {
+  const allModes = ['Full-time', 'Hybrid'];
+  final modes = allowedMode != null && allowedMode.trim().isNotEmpty
+      ? [allowedMode.trim()]
+      : allModes;
   const ordinals = ['1st', '2nd', '3rd'];
   final options = <({int classId, String studyMode, String label})>[];
   for (final c in classes) {
@@ -130,20 +135,48 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
     final summaryKey = (selectedClassId, selectedStudyMode);
     final summaryListAsync = ref.watch(ministryHoursSummaryProvider(summaryKey));
     final classesAsync = ref.watch(classesVisibleToCurrentUserProvider);
+    final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
     final auth = ref.watch(authStateProvider).valueOrNull;
     final visibleClasses = classesAsync.valueOrNull ?? [];
-    if (visibleClasses.isNotEmpty &&
-        auth is Authenticated &&
-        !visibleClasses.any((c) => c.id == selectedClassId)) {
-      final year1 = visibleClasses.where((c) => c.name == 'Year 1');
-      final defaultClassId = auth.role == UserRole.facilitator
-          ? visibleClasses.first.id
-          : (year1.isEmpty ? visibleClasses.first.id : year1.first.id);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        ref.read(ministrySummaryClassIdProvider.notifier).state = defaultClassId;
-        ref.read(ministrySummaryStudyModeProvider.notifier).state = 'Full-time';
-      });
+    if (visibleClasses.isNotEmpty && auth is Authenticated) {
+      final scope = scopeAsync.valueOrNull;
+      if (auth.role == UserRole.facilitator &&
+          scope != null &&
+          scope.classIds != null &&
+          scope.classIds!.isNotEmpty &&
+          scope.mode != null &&
+          scope.mode!.trim().isNotEmpty) {
+        // Option B: always sync from scope so the correct tile (e.g. Hybrid) is selected
+        final wantClassId = scope.classIds!.first;
+        final wantMode = scope.mode!.trim();
+        if (selectedClassId != wantClassId || selectedStudyMode != wantMode) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            ref.read(ministrySummaryClassIdProvider.notifier).state = wantClassId;
+            ref.read(ministrySummaryStudyModeProvider.notifier).state = wantMode;
+          });
+        }
+      } else if (!visibleClasses.any((c) => c.id == selectedClassId)) {
+        int defaultClassId;
+        String defaultMode;
+        if (auth.role == UserRole.facilitator &&
+            scope != null &&
+            scope.classIds != null &&
+            scope.classIds!.isNotEmpty) {
+          defaultClassId = scope.classIds!.first;
+          defaultMode = scope.mode ?? 'Full-time';
+        } else {
+          final year1 = visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
+          final firstClass = visibleClasses.first;
+          defaultClassId = year1.isEmpty ? firstClass.id : year1.first.id;
+          defaultMode = 'Full-time';
+        }
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          ref.read(ministrySummaryClassIdProvider.notifier).state = defaultClassId;
+          ref.read(ministrySummaryStudyModeProvider.notifier).state = defaultMode;
+        });
+      }
     }
 
     return Container(
@@ -201,6 +234,7 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
                     selectedClassId,
                     selectedStudyMode,
                     summaryListAsync,
+                    allowedMode: scopeAsync.valueOrNull?.mode,
                   ),
                   loading: () => const Center(child: CircularProgressIndicator()),
                   error: (e, _) => Center(child: Text('Error: $e')),
@@ -226,9 +260,10 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
     List<SchoolClass> classes,
     int selectedClassId,
     String studyMode,
-    AsyncValue<List<MinistryHoursSummaryRow>> summaryListAsync,
-  ) {
-    final summaryTabOptions = _buildSummaryTabOptions(classes);
+    AsyncValue<List<MinistryHoursSummaryRow>> summaryListAsync, {
+    String? allowedMode,
+  }) {
+    final summaryTabOptions = _buildSummaryTabOptions(classes, allowedMode: allowedMode);
     final idx = classes.indexWhere((c) => c.id == selectedClassId);
     final selectedClass = idx >= 0 ? classes[idx] : null;
     final yearLevel = selectedClass != null ? selectedClass.sortOrder : 1;

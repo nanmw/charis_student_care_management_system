@@ -78,11 +78,12 @@ class AttendanceRepository {
 
   /// Upserts attendance for [date]. Each entry has studentId + present, notes.
   /// One row per (date, studentId); replaces existing for that date/student.
-  /// Optimized to use batch operations for better performance.
+  /// When [academicSessionId] is provided, set on new rows (session-scoped attendance).
   /// [userId], [deviceId], [userDisplayName], [screen] used for change-set if provided.
   Future<void> upsertAttendanceForDate(
     DateTime date,
     List<AttendanceEntry> rows, {
+    int? academicSessionId,
     String? userId,
     String? deviceId,
     String? userDisplayName,
@@ -129,6 +130,7 @@ class AttendanceRepository {
               notes: e.notes != null && e.notes!.trim().isNotEmpty
                   ? Value(e.notes!.trim())
                   : const Value.absent(),
+              academicSessionId: academicSessionId != null ? Value(academicSessionId) : const Value.absent(),
             ),
           );
         }
@@ -166,20 +168,49 @@ class AttendanceRepository {
 
   /// Stream of all attendance records in the last [days] days.
   /// When [studentIds] is non-null and non-empty, restrict to those students (for facilitator scope).
-  Stream<List<AttendanceData>> watchAttendanceLastDays(int days, {List<int>? studentIds}) {
+  /// When [academicSession] is non-null and non-empty, filter by academic_session_id (resolved from code).
+  Stream<List<AttendanceData>> watchAttendanceLastDays(
+    int days, {
+    List<int>? studentIds,
+    String? academicSession,
+  }) async* {
     final endDate = _dateOnly(DateTime.now());
     final startDate = _dateOnly(endDate.subtract(Duration(days: days - 1)));
-    return (_db.select(_db.attendance)
+    int? sessionId;
+    if (academicSession != null && academicSession.trim().isNotEmpty) {
+      sessionId = await _getSessionIdByCode(academicSession.trim());
+    }
+    final stream = (_db.select(_db.attendance)
           ..where((t) {
             var pred = t.date.isBiggerOrEqualValue(startDate) &
                 t.date.isSmallerOrEqualValue(endDate);
             if (studentIds != null && studentIds.isNotEmpty) {
               pred = pred & t.studentId.isIn(studentIds);
             }
+            if (sessionId != null) {
+              pred = pred & t.academicSessionId.equals(sessionId);
+            }
             return pred;
           })
           ..orderBy([(t) => OrderingTerm.asc(t.date), (t) => OrderingTerm.asc(t.studentId)]))
         .watch();
+    await for (final list in stream) {
+      yield list;
+    }
+  }
+
+  Future<int?> _getSessionIdByCode(String code) async {
+    if (code.trim().isEmpty) return null;
+    try {
+      final result = await _db.customSelect(
+        'SELECT id FROM academic_sessions WHERE code = ? LIMIT 1',
+        variables: [Variable.withString(code.trim())],
+        readsFrom: const {},
+      ).getSingleOrNull();
+      return result?.data['id'] as int?;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Calculates average attendance percentage for the last [days] days.

@@ -10,6 +10,7 @@ import 'package:charis_student_care/domain/use_cases/sort_students_alphabeticall
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
+import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
@@ -23,9 +24,6 @@ class StudentListScreen extends ConsumerStatefulWidget {
   @override
   ConsumerState<StudentListScreen> createState() => _StudentListScreenState();
 }
-
-/// Mode options for filter (Full-time, Hybrid).
-const List<String> _modeFilterOptions = ['Full-time', 'Hybrid'];
 
 class _StudentListScreenState extends ConsumerState<StudentListScreen> {
   String? _statusFilter = 'Active';
@@ -76,20 +74,41 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
     final studentsAsync = ref.watch(studentsStreamProvider(_statusFilter));
     final classesAsync = ref.watch(classesVisibleToCurrentUserProvider);
     final classes = classesAsync.valueOrNull ?? [];
-    final classIdToName = {for (final c in classes) c.id: c.name};
+    final classIdToName = {for (final SchoolClass c in classes) c.id: c.name};
     final auth = ref.watch(authStateProvider).valueOrNull;
+    final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
     if (auth is Authenticated &&
         classes.isNotEmpty &&
         !_defaultClassScheduled &&
         _classFilter == null) {
       _defaultClassScheduled = true;
-      final year1 = classes.where((c) => c.name == 'Year 1');
-      final defaultClassId = auth.role == UserRole.facilitator
-          ? classes.first.id
-          : (year1.isEmpty ? classes.first.id : year1.first.id);
+      final scope = scopeAsync.valueOrNull;
+      int defaultClassId;
+      String? defaultMode;
+      if (auth.role == UserRole.facilitator &&
+          scope != null &&
+          scope.classIds != null &&
+          scope.classIds!.isNotEmpty) {
+        defaultClassId = scope.classIds!.first;
+        defaultMode = scope.mode ?? 'Full-time';
+      } else {
+        final year1 = classes.where((SchoolClass c) => c.name == 'Year 1');
+        final firstClass = classes.first;
+        defaultClassId = year1.isEmpty ? firstClass.id : year1.first.id;
+      }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        setState(() => _classFilter = defaultClassId);
+        setState(() {
+          _classFilter = defaultClassId;
+          if (defaultMode != null) _modeFilter = defaultMode;
+        });
+      });
+    }
+
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1 && _modeFilter != modeOptions[0]) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _modeFilter = modeOptions[0]);
       });
     }
 
@@ -365,6 +384,29 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
 
   Widget _buildModeDropdown() {
     final colorScheme = Theme.of(context).colorScheme;
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1) {
+      return SizedBox(
+        width: 120,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          alignment: Alignment.centerLeft,
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: colorScheme.outline),
+          ),
+          child: Text(
+            modeOptions[0],
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      );
+    }
     return SizedBox(
       width: 120,
       child: Container(
@@ -376,24 +418,23 @@ class _StudentListScreenState extends ConsumerState<StudentListScreen> {
           border: Border.all(color: colorScheme.outline),
         ),
         child: DropdownButton<String?>(
-        value: _modeFilter,
-        hint: Text('Mode', style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14)),
-        isExpanded: true,
-        underline: const SizedBox.shrink(),
-        borderRadius: BorderRadius.circular(8),
-        items: _modeFilterOptions
-            .map((v) => DropdownMenuItem<String?>(
-                  value: v,
-                  child: Text(v, style: TextStyle(color: colorScheme.onSurface, fontSize: 14),),
-                ),
-              )
-            .toList(),
-        onChanged: (v) => setState(() {
-          _modeFilter = v;
-          _displayedCount = 20; // Reset to initial batch
-        }),
+          value: _modeFilter,
+          hint: Text('Mode', style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14)),
+          isExpanded: true,
+          underline: const SizedBox.shrink(),
+          borderRadius: BorderRadius.circular(8),
+          items: modeOptions
+              .map((v) => DropdownMenuItem<String?>(
+                    value: v,
+                    child: Text(v, style: TextStyle(color: colorScheme.onSurface, fontSize: 14),),
+                  ),)
+              .toList(),
+          onChanged: (v) => setState(() {
+            _modeFilter = v;
+            _displayedCount = 20; // Reset to initial batch
+          }),
+        ),
       ),
-    ),
     );
   }
 

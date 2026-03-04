@@ -6,6 +6,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:excel/excel.dart';
 
 import 'package:charis_student_care/core/utils/currency_utils.dart';
+import 'package:charis_student_care/presentation/providers/dashboard_providers.dart';
 import 'package:charis_student_care/presentation/providers/report_providers.dart';
 
 /// Generates PDF and Excel bytes for the Student Summary report.
@@ -15,14 +16,21 @@ class ReportService {
   static final _dateFormat = DateFormat('yyyy-MM-dd');
 
   /// Builds a PDF document for the given [rows] and [filters].
+  /// When [includePaymentColumns] is false, Total Paid and Balance columns are omitted (admin-only).
   /// Returns the PDF file as bytes.
   static Future<Uint8List> buildPdf(
     List<StudentReportRow> rows,
-    ReportFilters filters,
-  ) async {
+    ReportFilters filters, {
+    bool includePaymentColumns = true,
+  }) async {
     final pdf = pw.Document();
     final dateRangeStr =
         '${_dateFormat.format(filters.dateStart)} – ${_dateFormat.format(filters.dateEnd)}';
+    final colCount = includePaymentColumns ? 8 : 6;
+    final columnWidths = <int, pw.FlexColumnWidth>{
+      for (var i = 0; i < colCount; i++)
+        i: i == 0 ? const pw.FlexColumnWidth(2.5) : const pw.FlexColumnWidth(1.2),
+    };
 
     pdf.addPage(
       pw.MultiPage(
@@ -53,22 +61,14 @@ class ReportService {
           pw.SizedBox(height: 4),
           pw.Text(
             'Period: $dateRangeStr • Mode: ${filters.mode}'
-            '${filters.year != null ? ' • Year: ${filters.year}' : ''}',
+            '${filters.classFilter != null ? ' • Class: ${filters.classFilter}' : ''}'
+            '${filters.classFilter == null && filters.year != null ? ' • Year: ${filters.year}' : ''}',
             style: const pw.TextStyle(fontSize: 10),
           ),
           pw.SizedBox(height: 16),
           pw.Table(
             border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
-            columnWidths: {
-              0: const pw.FlexColumnWidth(2.5),
-              1: const pw.FlexColumnWidth(1),
-              2: const pw.FlexColumnWidth(1),
-              3: const pw.FlexColumnWidth(1.2),
-              4: const pw.FlexColumnWidth(1),
-              5: const pw.FlexColumnWidth(1),
-              6: const pw.FlexColumnWidth(1.2),
-              7: const pw.FlexColumnWidth(1.2),
-            },
+            columnWidths: columnWidths,
             children: [
               pw.TableRow(
                 decoration: const pw.BoxDecoration(color: PdfColors.grey300),
@@ -79,8 +79,8 @@ class ReportService {
                   _cell('Att. %'),
                   _cell('Test Avg'),
                   _cell('Pass/Fail'),
-                  _cell('Total Paid'),
-                  _cell('Balance'),
+                  if (includePaymentColumns) _cell('Total Paid'),
+                  if (includePaymentColumns) _cell('Balance'),
                 ],
               ),
               ...rows.map((r) => pw.TableRow(
@@ -91,8 +91,8 @@ class ReportService {
                       _cell(_pct(r.attendancePercentage)),
                       _cell(_pct(r.testAverage)),
                       _cell('${r.testsPassed}/${r.testsFailed}'),
-                      _cell(CurrencyUtils.formatRand(r.totalPaid)),
-                      _cell(CurrencyUtils.formatRand(r.balance)),
+                      if (includePaymentColumns) _cell(CurrencyUtils.formatRand(r.totalPaid)),
+                      if (includePaymentColumns) _cell(CurrencyUtils.formatRand(r.balance)),
                     ],
                   ),),
             ],
@@ -124,25 +124,19 @@ class ReportService {
   }
 
   /// Builds an Excel workbook for the given [rows] and [filters].
+  /// When [includePaymentColumns] is false, Total Paid and Balance columns are omitted (admin-only).
   /// Returns the .xlsx file as bytes.
   static Uint8List buildExcel(
     List<StudentReportRow> rows,
-    ReportFilters filters,
-  ) {
+    ReportFilters filters, {
+    bool includePaymentColumns = true,
+  }) {
     final excel = Excel.createExcel();
     final sheet = excel['Student Summary'];
 
     final dateRangeStr =
         '${_dateFormat.format(filters.dateStart)} – ${_dateFormat.format(filters.dateEnd)}';
 
-    // Title row
-    sheet.merge(CellIndex.indexByString('A1'), CellIndex.indexByString('H1'));
-    sheet.cell(CellIndex.indexByString('A1')).value =
-        TextCellValue('Student Summary Report');
-    sheet.cell(CellIndex.indexByString('A2')).value =
-        TextCellValue('Period: $dateRangeStr | Mode: ${filters.mode}');
-
-    // Header row
     final headers = [
       'Student',
       'Mode',
@@ -152,9 +146,26 @@ class ReportService {
       'Test Average',
       'Tests Passed',
       'Tests Failed',
-      'Total Paid',
-      'Balance',
+      if (includePaymentColumns) 'Total Paid',
+      if (includePaymentColumns) 'Balance',
     ];
+    final colCount = headers.length;
+    final lastCol = String.fromCharCode('A'.codeUnitAt(0) + colCount - 1);
+
+    // Title row
+    sheet.merge(CellIndex.indexByString('A1'), CellIndex.indexByString('${lastCol}1'));
+    sheet.cell(CellIndex.indexByString('A1')).value =
+        TextCellValue('Student Summary Report');
+    final subtitle = StringBuffer('Period: $dateRangeStr | Mode: ${filters.mode}');
+    if (filters.classFilter != null) {
+      subtitle.write(' | Class: ${filters.classFilter}');
+    } else if (filters.year != null) {
+      subtitle.write(' | Year: ${filters.year}');
+    }
+    sheet.cell(CellIndex.indexByString('A2')).value =
+        TextCellValue(subtitle.toString());
+
+    // Header row
     for (var i = 0; i < headers.length; i++) {
       sheet.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 4)).value =
           TextCellValue(headers[i]);
@@ -164,36 +175,39 @@ class ReportService {
     for (var i = 0; i < rows.length; i++) {
       final r = rows[i];
       final rowIndex = 5 + i;
+      var col = 0;
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.studentName);
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.student.mode ?? '');
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.attendanceTotalDays.toString());
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.attendancePresentDays.toString());
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.attendancePercentage.toStringAsFixed(1));
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.testAverage.toStringAsFixed(1));
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.testsPassed.toString());
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 7, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.testsFailed.toString());
-      sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 8, rowIndex: rowIndex))
-          .value = TextCellValue(CurrencyUtils.formatRand(r.totalPaid));
-      sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 9, rowIndex: rowIndex))
-          .value = TextCellValue(CurrencyUtils.formatRand(r.balance));
+      if (includePaymentColumns) {
+        sheet
+            .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
+            .value = TextCellValue(CurrencyUtils.formatRand(r.totalPaid));
+        sheet
+            .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
+            .value = TextCellValue(CurrencyUtils.formatRand(r.balance));
+      }
     }
 
     final encoded = excel.encode();
@@ -202,10 +216,17 @@ class ReportService {
   }
 
   // --- Cohort Summary report ---
+  /// When [includeBalanceColumn] is false, Total Balance column is omitted (admin-only).
   static Future<Uint8List> buildCohortSummaryPdf(
-    List<CohortReportRow> rows,
-  ) async {
+    List<CohortReportRow> rows, {
+    bool includeBalanceColumn = true,
+  }) async {
     final pdf = pw.Document();
+    final colCount = includeBalanceColumn ? 7 : 6;
+    final columnWidths = <int, pw.FlexColumnWidth>{
+      for (var i = 0; i < colCount; i++)
+        i: i == 0 ? const pw.FlexColumnWidth(1.5) : const pw.FlexColumnWidth(1.2),
+    };
     pdf.addPage(
       pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
@@ -218,15 +239,7 @@ class ReportService {
           pw.SizedBox(height: 16),
           pw.Table(
             border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
-            columnWidths: {
-              0: const pw.FlexColumnWidth(1.5),
-              1: const pw.FlexColumnWidth(1),
-              2: const pw.FlexColumnWidth(1),
-              3: const pw.FlexColumnWidth(1.2),
-              4: const pw.FlexColumnWidth(1),
-              5: const pw.FlexColumnWidth(1),
-              6: const pw.FlexColumnWidth(1.2),
-            },
+            columnWidths: columnWidths,
             children: [
               pw.TableRow(
                 decoration: const pw.BoxDecoration(color: PdfColors.grey300),
@@ -237,7 +250,7 @@ class ReportService {
                   _cell('Outstanding'),
                   _cell('Failed'),
                   _cell('Passed'),
-                  _cell('Total Balance'),
+                  if (includeBalanceColumn) _cell('Total Balance'),
                 ],
               ),
               ...rows.map((r) => pw.TableRow(
@@ -252,7 +265,7 @@ class ReportService {
                       _cell('${r.outstandingTests}'),
                       _cell('${r.failedTests}'),
                       _cell('${r.passedTests}'),
-                      _cell(CurrencyUtils.formatRand(r.totalBalance)),
+                      if (includeBalanceColumn) _cell(CurrencyUtils.formatRand(r.totalBalance)),
                     ],
                   ),),
             ],
@@ -271,7 +284,8 @@ class ReportService {
     return pdf.save();
   }
 
-  static Uint8List buildCohortSummaryExcel(List<CohortReportRow> rows) {
+  /// When [includeBalanceColumn] is false, Total Balance column is omitted (admin-only).
+  static Uint8List buildCohortSummaryExcel(List<CohortReportRow> rows, {bool includeBalanceColumn = true}) {
     final excel = Excel.createExcel();
     final sheet = excel['Cohort Summary'];
     final headers = [
@@ -281,7 +295,7 @@ class ReportService {
       'Outstanding',
       'Failed',
       'Passed',
-      'Total Balance',
+      if (includeBalanceColumn) 'Total Balance',
     ];
     for (var i = 0; i < headers.length; i++) {
       sheet
@@ -291,33 +305,95 @@ class ReportService {
     for (var i = 0; i < rows.length; i++) {
       final r = rows[i];
       final rowIndex = 1 + i;
+      var col = 0;
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.cohortLabel);
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.studentCount.toString());
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.avgAttendancePercent != null
               ? r.avgAttendancePercent!.toStringAsFixed(1)
               : '—',);
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.outstandingTests.toString());
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.failedTests.toString());
       sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: rowIndex))
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.passedTests.toString());
-      sheet
-          .cell(CellIndex.indexByColumnRow(columnIndex: 6, rowIndex: rowIndex))
-          .value = TextCellValue(CurrencyUtils.formatRand(r.totalBalance));
+      if (includeBalanceColumn) {
+        sheet
+            .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
+            .value = TextCellValue(CurrencyUtils.formatRand(r.totalBalance));
+      }
     }
     final encoded = excel.encode();
     if (encoded == null) return Uint8List(0);
     return Uint8List.fromList(encoded);
+  }
+
+  /// Recent Activities / Audit Log report (PDF).
+  static Future<Uint8List> buildRecentActivitiesPdf(
+    List<ActivityReportRow> rows,
+  ) async {
+    const headers = [
+      'Timestamp',
+      'User',
+      'Student',
+      'Screen',
+      'What Changed',
+      'Operation',
+      'Table',
+    ];
+    final tableRows = rows
+        .map((r) => [
+              _dateFormat.format(r.timestamp),
+              r.user,
+              r.student ?? '—',
+              r.screen ?? '—',
+              r.whatChanged ?? '—',
+              r.operation,
+              r.table,
+            ],)
+        .toList();
+    return buildTablePdf('Recent Activities', headers, tableRows);
+  }
+
+  /// Recent Activities / Audit Log report (Excel).
+  static Uint8List buildRecentActivitiesExcel(
+    List<ActivityReportRow> rows,
+  ) {
+    const headers = [
+      'Timestamp',
+      'User',
+      'Student',
+      'Screen',
+      'What Changed',
+      'Operation',
+      'Table',
+    ];
+    final tableRows = rows
+        .map((r) => [
+              _dateFormat.format(r.timestamp),
+              r.user,
+              r.student ?? '—',
+              r.screen ?? '—',
+              r.whatChanged ?? '—',
+              r.operation,
+              r.table,
+            ],)
+        .toList();
+    return buildTableExcel(
+      'Recent Activities',
+      'Recent Activities',
+      headers,
+      tableRows,
+    );
   }
 
   /// Generic table report (PDF). [headers] and [rows] must have same column count.

@@ -184,6 +184,9 @@ class TestRepository {
       }
     }
 
+    final sessionId = academicSession != null && academicSession.trim().isNotEmpty
+        ? await _getSessionIdByCode(academicSession.trim())
+        : null;
     final companion = TestsCompanion.insert(
       studentId: studentId,
       score: effectiveScore,
@@ -195,6 +198,7 @@ class TestRepository {
       academicSession: academicSession != null && academicSession.trim().isNotEmpty
           ? Value(academicSession.trim())
           : const Value.absent(),
+      academicSessionId: sessionId != null ? Value(sessionId) : const Value.absent(),
     );
     final id = await _db.into(_db.tests).insert(companion);
     if (userId != null) {
@@ -246,6 +250,9 @@ class TestRepository {
     final row = await (_db.select(_db.tests)..where((t) => t.id.equals(id))).getSingleOrNull();
     if (row == null) return;
     final clampedScore = score.clamp(0, 100);
+    final sessionId = academicSession != null && academicSession.trim().isNotEmpty
+        ? await _getSessionIdByCode(academicSession.trim())
+        : null;
     final companion = TestsCompanion(
       score: Value(clampedScore),
       label: label != null
@@ -256,6 +263,7 @@ class TestRepository {
       academicSession: academicSession != null
           ? Value(academicSession.trim().isEmpty ? null : academicSession.trim())
           : const Value.absent(),
+      academicSessionId: sessionId != null ? Value(sessionId) : const Value.absent(),
     );
     await (_db.update(_db.tests)..where((t) => t.id.equals(id))).write(companion);
     if (userId != null) {
@@ -472,6 +480,20 @@ class TestRepository {
           );
         }
       }
+    }
+  }
+
+  Future<int?> _getSessionIdByCode(String code) async {
+    if (code.trim().isEmpty) return null;
+    try {
+      final result = await _db.customSelect(
+        'SELECT id FROM academic_sessions WHERE code = ? LIMIT 1',
+        variables: [Variable.withString(code.trim())],
+        readsFrom: const {},
+      ).getSingleOrNull();
+      return result?.data['id'] as int?;
+    } catch (_) {
+      return null;
     }
   }
 

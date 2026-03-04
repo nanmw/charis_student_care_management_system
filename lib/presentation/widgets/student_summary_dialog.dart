@@ -83,9 +83,11 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
           .replaceAll(RegExp(r'\s+'), '_');
       final suggestedName =
           '${name}_${safeName}_${DateFormat('yyyy-MM-dd').format(DateTime.now())}.$extension';
+      final auth = ref.read(authStateProvider).valueOrNull;
+      final includePaymentColumns = auth is Authenticated && RolePermissions.canManageFinancials(auth.role);
       final Uint8List bytes = asPdf
-          ? await ReportService.buildPdf([row], _exportFilters)
-          : ReportService.buildExcel([row], _exportFilters);
+          ? await ReportService.buildPdf([row], _exportFilters, includePaymentColumns: includePaymentColumns)
+          : ReportService.buildExcel([row], _exportFilters, includePaymentColumns: includePaymentColumns);
       final downloadsDir = await getDownloadsDirectory();
       final path = await FilePicker.platform.saveFile(
         dialogTitle: 'Save student summary',
@@ -899,6 +901,23 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
   }
 
   Widget _buildPaymentsTab(ColorScheme colorScheme) {
+    final auth = ref.watch(authStateProvider).valueOrNull;
+    if (auth is! Authenticated || !RolePermissions.canManageFinancials(auth.role)) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Text(
+            'Payment information is only available to administrators.',
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 14,
+              fontFamily: 'Questrial',
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
     final paymentsAsync =
         ref.watch(paymentSummaryForStudentProvider(widget.student.id));
 

@@ -239,11 +239,11 @@ class _AppShellState extends ConsumerState<AppShell> {
 
     if (isSyncing) {
       backgroundColor = Theme.of(context).colorScheme.surfaceContainerHighest;
-      label = 'Syncing...';
+      label = 'OneDrive syncing...';
       labelColor = Theme.of(context).colorScheme.onSurfaceVariant;
     } else if (hasError) {
       backgroundColor = Theme.of(context).colorScheme.errorContainer;
-      label = 'Sync failed';
+      label = 'OneDrive sync failed';
       labelColor = Theme.of(context).colorScheme.onErrorContainer;
     } else if (conflictCount > 0) {
       backgroundColor = Theme.of(context).colorScheme.errorContainer;
@@ -255,7 +255,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       labelColor = Colors.amber.shade900;
     } else if (hasSyncFolder) {
       backgroundColor = AppColors.syncedGreen;
-      label = 'Synced';
+      label = 'OneDrive synced';
       labelColor = AppColors.charisWhite;
     } else {
       backgroundColor = Theme.of(context).colorScheme.surfaceContainerHighest;
@@ -314,26 +314,29 @@ class _AppShellState extends ConsumerState<AppShell> {
       decoration: BoxDecoration(
         color: sidebarBgColor,
       ),
-      child: Column(
-        children: [
-          _navItem(context, ref, Icons.dashboard_outlined, Icons.dashboard, 'Dashboard', '/dashboard'),
-          _navItem(context, ref, Icons.people_outline, Icons.people, 'Students', '/students'),
-          _navItem(context, ref, Icons.book_outlined, Icons.book, 'Subjects', '/subjects'),
-          _navItem(context, ref, Icons.checklist_outlined, Icons.checklist, 'Attendance', '/attendance'),
-          _navItem(context, ref, Icons.hourglass_empty_outlined, Icons.hourglass_empty, 'Ministry Hours', '/ministry-hours'),
-          _navItem(context, ref, Icons.assignment_outlined, Icons.assignment, 'Tests', '/tests'),
-          if (_canAccessPaymentScreens(ref)) ...[
-            _navItem(context, ref, Icons.credit_card_outlined, Icons.credit_card, 'Payments', '/payments'),
-            _navItem(context, ref, Icons.flight_takeoff_outlined, Icons.flight_takeoff, 'Missions Payment', '/missions-payment'),
+      child: SingleChildScrollView(
+        child: Column(
+          children: [
+            _navItem(context, ref, Icons.dashboard_outlined, Icons.dashboard, 'Dashboard', '/dashboard'),
+            _navItem(context, ref, Icons.people_outline, Icons.people, 'Students', '/students'),
+            _navItem(context, ref, Icons.book_outlined, Icons.book, 'Subjects', '/subjects'),
+            _navItem(context, ref, Icons.checklist_outlined, Icons.checklist, 'Attendance', '/attendance'),
+            _navItem(context, ref, Icons.hourglass_empty_outlined, Icons.hourglass_empty, 'Ministry Hours', '/ministry-hours'),
+            _navItem(context, ref, Icons.assignment_outlined, Icons.assignment, 'Tests', '/tests'),
+            if (_canAccessPaymentScreens(ref)) ...[
+              _navItem(context, ref, Icons.credit_card_outlined, Icons.credit_card, 'Payments', '/payments'),
+              _navItem(context, ref, Icons.flight_takeoff_outlined, Icons.flight_takeoff, 'Missions Payment', '/missions-payment'),
+            ],
+            if (_canManageMissions(ref))
+              _navItem(context, ref, Icons.place_outlined, Icons.place, 'Mission Locations', '/mission-locations'),
+            if (_canExportReports(ref))
+              _navItem(context, ref, Icons.download_outlined, Icons.download, 'Export & Reports', '/reports'),
+            _navItem(context, ref, Icons.history_outlined, Icons.history, 'Recent Activities', '/activities'),
+            _navItem(context, ref, Icons.settings_outlined, Icons.settings, 'Settings', '/settings'),
+            if (_canManageUsers(ref))
+              _navItem(context, ref, Icons.people_outline, Icons.people, 'Users', '/users'),
           ],
-          if (_canManageMissions(ref))
-            _navItem(context, ref, Icons.place_outlined, Icons.place, 'Mission Locations', '/mission-locations'),
-          if (_canExportReports(ref))
-            _navItem(context, ref, Icons.download_outlined, Icons.download, 'Export & Reports', '/reports'),
-          _navItem(context, ref, Icons.settings_outlined, Icons.settings, 'Settings', '/settings'),
-          if (_canManageUsers(ref))
-            _navItem(context, ref, Icons.people_outline, Icons.people, 'Users', '/users'),
-        ],
+        ),
       ),
     );
   }

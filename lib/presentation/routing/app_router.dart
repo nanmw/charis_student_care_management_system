@@ -18,6 +18,7 @@ import '../screens/student_list_screen.dart';
 import '../screens/subjects_screen.dart';
 import '../screens/tests_screen.dart';
 import '../screens/user_management_screen.dart';
+import '../screens/recent_activities_screen.dart';
 
 /// Application routing configuration with auth redirect.
 final goRouterProvider = Provider<GoRouter>((ref) {
@@ -35,16 +36,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           if (auth is Authenticated && state.matchedLocation == '/login') {
             return '/dashboard';
           }
-          // Facilitators must not access Payments or Missions Payment screens; redirect to dashboard.
+          // Roles without financial permission must not access Payments or Missions Payment screens.
           if (auth is Authenticated &&
-              auth.role == UserRole.facilitator &&
+              !RolePermissions.canManageFinancials(auth.role) &&
               (state.matchedLocation == '/payments' || state.matchedLocation == '/missions-payment')) {
-            return '/dashboard';
-          }
-          // Only roles with report permission can access Export & Reports.
-          if (auth is Authenticated &&
-              !RolePermissions.canExportReports(auth.role) &&
-              state.matchedLocation == '/reports') {
             return '/dashboard';
           }
           return null;
@@ -108,6 +103,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/settings',
             builder: (context, state) => const SettingsScreen(),
+          ),
+          GoRoute(
+            path: '/activities',
+            builder: (context, state) => const RecentActivitiesScreen(),
           ),
         ],
       ),

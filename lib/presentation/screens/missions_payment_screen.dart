@@ -15,6 +15,9 @@ import 'package:charis_student_care/domain/use_cases/sort_students_alphabeticall
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
+import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
+import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
+import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
 import 'package:charis_student_care/presentation/providers/mission_location_providers.dart';
 import 'package:charis_student_care/presentation/providers/mission_payment_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
@@ -32,8 +35,6 @@ const List<String> _monthLabels = [
   'SEPT',
   'OCT',
 ];
-
-const List<String> _modeOptions = ['Full-time', 'Hybrid'];
 
 /// Sentinel value for "Other (custom)..." in Trip Selected dropdown; never stored.
 const String _otherTripSentinel = '__other__';
@@ -185,18 +186,24 @@ class MissionsPaymentScreen extends ConsumerStatefulWidget {
       _MissionsPaymentScreenState();
 }
 
+String _defaultMissionSession() {
+  final now = DateTime.now();
+  final y = now.year;
+  return now.month >= 7 ? '$y-${y + 1}' : '${y - 1}-$y';
+}
+
 class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
   String _selectedMode = 'Full-time';
-  String _scheduleYear = DateTime.now().year.toString();
+  String _scheduleSession = _defaultMissionSession();
   String _searchQuery = '';
-  final Map<String, Map<int, _MissionRowEdit>> _editsByYear = {};
+  final Map<String, Map<int, _MissionRowEdit>> _editsBySession = {};
   final Map<String, TextEditingController> _controllers = {};
   String _refillKey = '';
   final ScrollController _scrollController = ScrollController();
   final Set<String> _customTripNames = {};
 
   Map<int, _MissionRowEdit> get _currentEdits {
-    return _editsByYear.putIfAbsent(_scheduleYear, () => {});
+    return _editsBySession.putIfAbsent(_scheduleSession, () => {});
   }
 
   @override
@@ -208,6 +215,50 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
     super.dispose();
   }
 
+  Widget _buildModeToggle(ColorScheme colorScheme, Color redColor) {
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: redColor.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: redColor),
+        ),
+        child: Text(
+          modeOptions[0],
+          style: TextStyle(
+            fontFamily: 'Questrial',
+            fontSize: 14,
+            color: colorScheme.onSurface,
+          ),
+        ),
+      );
+    }
+    return ToggleButtons(
+      constraints: const BoxConstraints(minWidth: 120, minHeight: 44),
+      borderRadius: BorderRadius.circular(8),
+      fillColor: redColor,
+      selectedColor: AppColors.charisWhite,
+      color: colorScheme.onSurface,
+      isSelected: modeOptions.map((m) => m == _selectedMode).toList(),
+      onPressed: (index) {
+        setState(() => _selectedMode = modeOptions[index]);
+      },
+      children: modeOptions
+          .map(
+            (l) => Text(
+              l,
+              style: const TextStyle(
+                fontFamily: 'Questrial',
+                fontSize: 14,
+              ),
+            ),
+          )
+          .toList(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -215,9 +266,15 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
     final isDark = themeMode == ThemeMode.dark;
     final redColor =
         isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1 && _selectedMode != modeOptions[0]) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _selectedMode = modeOptions[0]);
+      });
+    }
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
     final scheduleAsync =
-        ref.watch(missionPaymentsForYearStreamProvider(_scheduleYear));
+        ref.watch(missionPaymentsForSessionStreamProvider(_scheduleSession));
     final locationsAsync = ref.watch(missionLocationsStreamProvider);
 
     return RoleGuard(
@@ -253,7 +310,7 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'MISSIONS PAYMENT SCHEDULE $_scheduleYear',
+              'MISSIONS PAYMENT SCHEDULE $_scheduleSession',
               style: TextStyle(
                 color: colorScheme.onSurface,
                 fontWeight: FontWeight.w700,
@@ -440,31 +497,10 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
           ),
         ),
         const SizedBox(width: 8),
-        ToggleButtons(
-          constraints: const BoxConstraints(minWidth: 120, minHeight: 44),
-          borderRadius: BorderRadius.circular(8),
-          fillColor: redColor,
-          selectedColor: AppColors.charisWhite,
-          color: colorScheme.onSurface,
-          isSelected: _modeOptions.map((m) => m == _selectedMode).toList(),
-          onPressed: (index) {
-            setState(() => _selectedMode = _modeOptions[index]);
-          },
-          children: _modeOptions
-              .map(
-                (l) => Text(
-                  l,
-                  style: const TextStyle(
-                    fontFamily: 'Questrial',
-                    fontSize: 14,
-                  ),
-                ),
-              )
-              .toList(),
-        ),
+        _buildModeToggle(colorScheme, redColor),
         const SizedBox(width: 24),
         Text(
-          'Schedule year:',
+          'Session:',
           style: TextStyle(
             color: colorScheme.onSurfaceVariant,
             fontSize: 14,
@@ -472,41 +508,7 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
           ),
         ),
         const SizedBox(width: 8),
-        SizedBox(
-          width: 90,
-          child: Container(
-            height: 44,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: colorScheme.outline),
-            ),
-            child: DropdownButton<String>(
-              value: _scheduleYear,
-              isExpanded: true,
-              underline: const SizedBox.shrink(),
-              borderRadius: BorderRadius.circular(8),
-              items: ['2024', '2025', '2026', '2027']
-                  .map(
-                    (y) => DropdownMenuItem<String>(
-                      value: y,
-                      child: Text(
-                        y,
-                        style: TextStyle(
-                          color: colorScheme.onSurface,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) setState(() => _scheduleYear = v);
-              },
-            ),
-          ),
-        ),
+        _buildSessionDropdown(colorScheme),
         const SizedBox(width: 24),
         Expanded(
           child: TextField(
@@ -541,13 +543,91 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
     );
   }
 
+  Widget _buildSessionDropdown(ColorScheme colorScheme) {
+    final sessionOptionsAsync = ref.watch(academicSessionOptionsProvider);
+    return SizedBox(
+      width: 120,
+      child: sessionOptionsAsync.when(
+        data: (options) {
+          final list = options.isNotEmpty ? options : [_defaultMissionSession()];
+          final value = list.contains(_scheduleSession) ? _scheduleSession : list.first;
+          if (!list.contains(_scheduleSession)) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _scheduleSession = list.first);
+            });
+          }
+          return Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: colorScheme.outline),
+            ),
+            child: DropdownButton<String>(
+              value: value,
+              isExpanded: true,
+              underline: const SizedBox.shrink(),
+              borderRadius: BorderRadius.circular(8),
+              items: list
+                  .map(
+                    (s) => DropdownMenuItem<String>(
+                      value: s,
+                      child: Text(
+                        s,
+                        style: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) setState(() => _scheduleSession = v);
+              },
+            ),
+          );
+        },
+        loading: () => Container(
+          height: 44,
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: colorScheme.outline),
+          ),
+          child: Text(
+            _scheduleSession,
+            style: TextStyle(color: colorScheme.onSurface, fontSize: 14),
+          ),
+        ),
+        error: (_, __) => Container(
+          height: 44,
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: colorScheme.outline),
+          ),
+          child: Text(
+            _scheduleSession,
+            style: TextStyle(color: colorScheme.onSurface, fontSize: 14),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _refillEditsIfNeeded(
     List<Student> students,
     List<MissionPaymentScheduleData> rows,
   ) {
     final rowMap = {for (final r in rows) r.studentId: r};
     final key =
-        '$_scheduleYear|${students.length}|${rows.length}|${students.map((s) => s.id).join(',')}';
+        '$_scheduleSession|${students.length}|${rows.length}|${students.map((s) => s.id).join(',')}';
     if (key == _refillKey) return;
     _refillKey = key;
     final edits = _currentEdits;
@@ -1058,9 +1138,13 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
         );
       }
 
+      final sessionRepo = ref.read(academicSessionRepositoryProvider);
+      final year = AcademicSessionRepository.yearFromSessionCode(_scheduleSession) ?? _scheduleSession.split('-').first;
+      final academicSessionId = await sessionRepo.getSessionIdByCode(_scheduleSession);
       final count = await repo.batchUpsertMissionPayments(
-        year: _scheduleYear,
+        year: year,
         payments: paymentDataMap,
+        academicSessionId: academicSessionId,
         userId: ref.read(authStateProvider).valueOrNull is Authenticated
             ? (ref.read(authStateProvider).valueOrNull as Authenticated).user.id
             : null,

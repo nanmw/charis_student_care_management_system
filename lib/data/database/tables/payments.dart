@@ -1,5 +1,7 @@
 import 'package:drift/drift.dart';
 
+import 'academic_sessions.dart';
+
 /// Payments table: one row per student per payment year.
 /// Stores monthly amounts (Jan–Dec) and lump sum; total paid = sum(months) + lump_sum.
 class Payments extends Table {
@@ -34,6 +36,10 @@ class Payments extends Table {
 
   /// Timestamp when record was last updated
   DateTimeColumn get updatedAt => dateTime().withDefault(currentDateAndTime)();
+
+  /// Academic session foreign key (preferred over raw year for new data).
+  IntColumn get academicSessionId =>
+      integer().nullable().references(AcademicSessions, #id)();
 
   @override
   List<Set<Column>> get uniqueKeys => [

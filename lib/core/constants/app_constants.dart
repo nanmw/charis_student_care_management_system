@@ -40,11 +40,18 @@ class AppConstants {
     'Pastoral Care',
   ];
 
-  /// Year options for report filters.
+  /// Year options for report filters (legacy / single-student export).
   static const List<String> reportYearOptions = [
     '2024',
     '2025',
     '2026',
+  ];
+
+  /// Class options for report filters (Export & Reports screen).
+  static const List<String> reportClassOptions = [
+    'Year 1',
+    'Year 2',
+    'Year 3',
   ];
 
   /// Mission mode options for dropdown (Full-time, Hybrid, Both).

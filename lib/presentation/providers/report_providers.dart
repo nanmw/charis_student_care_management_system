@@ -3,8 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:charis_student_care/core/constants/app_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
+import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
+import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/dashboard_providers.dart';
-import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
+import 'package:charis_student_care/presentation/providers/repository_providers.dart';
 
 /// Report type for the Export & Reports screen.
 enum ReportType {
@@ -62,6 +66,8 @@ class ReportFilters {
     required this.dateStart,
     required this.dateEnd,
     this.year,
+    this.academicSession,
+    this.classFilter,
   });
 
   final String mode;
@@ -70,6 +76,12 @@ class ReportFilters {
   /// Optional year filter for students (e.g. admission year). When set, only students
   /// with this admission year are included. When null, all students matching mode are included.
   final String? year;
+  /// Optional academic session code (e.g. 2024-2025). When set, session-based reports
+  /// (payments, tests) filter by this session instead of raw year.
+  final String? academicSession;
+  /// Optional class filter (e.g. "Year 1", "Year 2", "Year 3"). When set, only students
+  /// in that class are included. When null, year filter is used if set.
+  final String? classFilter;
 }
 
 /// One row of aggregated data for the report (one per student).
@@ -103,17 +115,40 @@ DateTime _dateOnly(DateTime d) => DateTime.utc(d.year, d.month, d.day);
 DateTime _endOfDay(DateTime d) =>
     DateTime.utc(d.year, d.month, d.day, 23, 59, 59, 999);
 
+/// Returns allowed student ids when scope is set (facilitator); null means no filter (admin/portfolio lead).
+Future<Set<int>?> _allowedStudentIdsForReport(AppDatabase db, FacilitatorScope? scope) async {
+  if (scope == null || scope.classIds == null || scope.classIds!.isEmpty) return null;
+  final students = await (db.select(db.students)
+        ..where((t) {
+          var p = t.classId.isIn(scope.classIds!);
+          if (scope.mode != null && scope.mode!.trim().isNotEmpty) {
+            p = p & t.mode.equals(scope.mode!.trim());
+          }
+          return p;
+        }))
+      .get();
+  return students.map((s) => s.id).toSet();
+}
+
 /// Builds report rows for the given filters. Uses the database to query
 /// attendance (in date range), tests (createdAt in date range), and payments
-/// (for years overlapping the date range).
+/// (for years overlapping the date range). When [classIds] is non-null and non-empty,
+/// students are filtered by those classes; when [classId] is non-null, by that single class;
+/// otherwise [filters.year] is used for admission year filter.
 Future<List<StudentReportRow>> _buildReportRows(
   AppDatabase db,
-  ReportFilters filters,
-) async {
+  ReportFilters filters, {
+  int? classId,
+  List<int>? classIds,
+}) async {
   final studentsQuery = db.select(db.students)
     ..where((t) {
       var p = t.status.equals('Active') & t.mode.equals(filters.mode);
-      if (filters.year != null && filters.year!.trim().isNotEmpty) {
+      if (classIds != null && classIds.isNotEmpty) {
+        p = p & t.classId.isIn(classIds);
+      } else if (classId != null) {
+        p = p & t.classId.equals(classId);
+      } else if (filters.year != null && filters.year!.trim().isNotEmpty) {
         p = p & t.admissionYear.equals(filters.year!.trim());
       }
       return p;
@@ -220,13 +255,23 @@ Future<List<StudentReportRow>> _buildReportRows(
   return rows;
 }
 
-/// Report data for the current filters. Consumes [reportFiltersProvider] for
-/// (mode, dateStart, dateEnd, year) and returns a list of [StudentReportRow].
+/// Report data for the current filters. Scoped by facilitator scope when applicable.
 final reportDataProvider =
     FutureProvider.autoDispose.family<List<StudentReportRow>, ReportFilters>(
   (ref, filters) async {
     final db = ref.watch(appDatabaseProvider);
-    return _buildReportRows(db, filters);
+    final scope = await ref.watch(currentUserFacilitatorScopeProvider.future);
+    int? classId;
+    List<int>? classIds;
+    if (scope != null && scope.classIds != null && scope.classIds!.isNotEmpty) {
+      classIds = scope.classIds;
+    } else if (filters.classFilter != null && filters.classFilter!.trim().isNotEmpty) {
+      final repo = ref.read(classRepositoryProvider);
+      final schoolClass =
+          await repo.getClassByName(filters.classFilter!.trim());
+      classId = schoolClass?.id;
+    }
+    return _buildReportRows(db, filters, classId: classId, classIds: classIds);
   },
 );
 
@@ -324,10 +369,21 @@ final cohortReportDataProvider = FutureProvider.autoDispose<List<CohortReportRow
   ),).toList();
 });
 
-/// All students for report (no filter).
+/// All students for report. Scoped by facilitator scope when applicable.
 final studentsReportDataProvider = FutureProvider.autoDispose<List<Student>>((ref) async {
   final db = ref.watch(appDatabaseProvider);
-  return (db.select(db.students)
+  final scope = await ref.watch(currentUserFacilitatorScopeProvider.future);
+  var query = db.select(db.students);
+  if (scope != null && scope.classIds != null && scope.classIds!.isNotEmpty) {
+    query = query..where((t) {
+      var p = t.classId.isIn(scope.classIds!);
+      if (scope.mode != null && scope.mode!.trim().isNotEmpty) {
+        p = p & t.mode.equals(scope.mode!.trim());
+      }
+      return p;
+    });
+  }
+  return (query
         ..orderBy([
           (t) => OrderingTerm.asc(t.surname),
           (t) => OrderingTerm.asc(t.firstName),
@@ -342,10 +398,15 @@ class SubjectReportRow {
   final String className;
 }
 
-/// All subjects with class name for report.
+/// All subjects with class name for report. Scoped by facilitator scope when applicable.
 final subjectsReportDataProvider = FutureProvider.autoDispose<List<SubjectReportRow>>((ref) async {
   final db = ref.watch(appDatabaseProvider);
-  final subjects = await (db.select(db.subjects)
+  final scope = await ref.watch(currentUserFacilitatorScopeProvider.future);
+  var query = db.select(db.subjects);
+  if (scope != null && scope.classIds != null && scope.classIds!.isNotEmpty) {
+    query = query..where((t) => t.classId.isIn(scope.classIds!));
+  }
+  final subjects = await (query
         ..orderBy([
           (t) => OrderingTerm.asc(t.classId),
           (t) => OrderingTerm.asc(t.name),
@@ -381,12 +442,19 @@ class AttendanceReportRow {
 final attendanceReportDataProvider =
     FutureProvider.autoDispose.family<List<AttendanceReportRow>, ReportFilters>((ref, filters) async {
   final db = ref.watch(appDatabaseProvider);
+  final scope = await ref.watch(currentUserFacilitatorScopeProvider.future);
+  final allowedIds = await _allowedStudentIdsForReport(db, scope);
   final startDay = _dateOnly(filters.dateStart);
   final endDayOnly = _dateOnly(filters.dateEnd);
   final rows = await (db.select(db.attendance)
-        ..where((t) =>
-            t.date.isBiggerOrEqualValue(startDay) &
-            t.date.isSmallerOrEqualValue(endDayOnly),)
+        ..where((t) {
+          var p = t.date.isBiggerOrEqualValue(startDay) &
+              t.date.isSmallerOrEqualValue(endDayOnly);
+          if (allowedIds != null && allowedIds.isNotEmpty) {
+            p = p & t.studentId.isIn(allowedIds.toList());
+          }
+          return p;
+        })
         ..orderBy([
           (t) => OrderingTerm.desc(t.date),
           (t) => OrderingTerm.asc(t.studentId),
@@ -428,12 +496,19 @@ class MinistryReportRow {
 final ministryReportDataProvider =
     FutureProvider.autoDispose.family<List<MinistryReportRow>, ReportFilters>((ref, filters) async {
   final db = ref.watch(appDatabaseProvider);
+  final scope = await ref.watch(currentUserFacilitatorScopeProvider.future);
+  final allowedIds = await _allowedStudentIdsForReport(db, scope);
   final startDay = _dateOnly(filters.dateStart);
   final endDay = _endOfDay(filters.dateEnd);
   final rows = await (db.select(db.ministryEntries)
-        ..where((t) =>
-            t.date.isBiggerOrEqualValue(startDay) &
-            t.date.isSmallerOrEqualValue(endDay),)
+        ..where((t) {
+          var p = t.date.isBiggerOrEqualValue(startDay) &
+              t.date.isSmallerOrEqualValue(endDay);
+          if (allowedIds != null && allowedIds.isNotEmpty) {
+            p = p & t.studentId.isIn(allowedIds.toList());
+          }
+          return p;
+        })
         ..orderBy([
           (t) => OrderingTerm.desc(t.date),
         ],))
@@ -474,12 +549,32 @@ class TestReportRow {
 final testsReportDataProvider =
     FutureProvider.autoDispose.family<List<TestReportRow>, ReportFilters>((ref, filters) async {
   final db = ref.watch(appDatabaseProvider);
+  final scope = await ref.watch(currentUserFacilitatorScopeProvider.future);
+  final allowedIds = await _allowedStudentIdsForReport(db, scope);
   final startDay = _dateOnly(filters.dateStart);
   final endDay = _endOfDay(filters.dateEnd);
+  int? sessionId;
+  if (filters.academicSession != null && filters.academicSession!.trim().isNotEmpty) {
+    final sessionRepo = ref.read(academicSessionRepositoryProvider);
+    sessionId = await sessionRepo.getSessionIdByCode(filters.academicSession!.trim());
+  }
+  final sessionCodeTrim = filters.academicSession?.trim();
   final rows = await (db.select(db.tests)
-        ..where((t) =>
-            t.createdAt.isBiggerOrEqualValue(startDay) &
-            t.createdAt.isSmallerOrEqualValue(endDay),)
+        ..where((t) {
+          var w = t.createdAt.isBiggerOrEqualValue(startDay) &
+              t.createdAt.isSmallerOrEqualValue(endDay);
+          if (sessionCodeTrim != null && sessionCodeTrim.isNotEmpty) {
+            if (sessionId != null) {
+              w = w & (t.academicSessionId.equals(sessionId) | t.academicSession.equals(sessionCodeTrim));
+            } else {
+              w = w & t.academicSession.equals(sessionCodeTrim);
+            }
+          }
+          if (allowedIds != null && allowedIds.isNotEmpty) {
+            w = w & t.studentId.isIn(allowedIds.toList());
+          }
+          return w;
+        })
         ..orderBy([
           (t) => OrderingTerm.desc(t.createdAt),
         ],))
@@ -519,10 +614,27 @@ class PaymentReportRow {
 final paymentsReportDataProvider =
     FutureProvider.autoDispose.family<List<PaymentReportRow>, ReportFilters>((ref, filters) async {
   final db = ref.watch(appDatabaseProvider);
-  final yearStart = filters.dateStart.year;
-  final yearEnd = filters.dateEnd.year;
-  final years = <String>{for (var y = yearStart; y <= yearEnd; y++) y.toString()};
-  final rows = await (db.select(db.payments)..where((t) => t.year.isIn(years))).get();
+  List<Payment> rows;
+  if (filters.academicSession != null && filters.academicSession!.trim().isNotEmpty) {
+    final sessionRepo = ref.read(academicSessionRepositoryProvider);
+    final sessionId = await sessionRepo.getSessionIdByCode(filters.academicSession!.trim());
+    final yearFallback = AcademicSessionRepository.yearFromSessionCode(filters.academicSession!);
+    if (sessionId != null) {
+      rows = await (db.select(db.payments)
+            ..where((t) =>
+                t.academicSessionId.equals(sessionId) |
+                (t.academicSessionId.isNull() & t.year.equals(yearFallback ?? filters.academicSession!.split('-').first)),))
+          .get();
+    } else {
+      final y = yearFallback ?? filters.dateStart.year.toString();
+      rows = await (db.select(db.payments)..where((t) => t.year.equals(y))).get();
+    }
+  } else {
+    final yearStart = filters.dateStart.year;
+    final yearEnd = filters.dateEnd.year;
+    final years = <String>{for (var y = yearStart; y <= yearEnd; y++) y.toString()};
+    rows = await (db.select(db.payments)..where((t) => t.year.isIn(years))).get();
+  }
   final studentIds = rows.map((r) => r.studentId).toSet().toList();
   final students = studentIds.isEmpty
       ? <int, Student>{}

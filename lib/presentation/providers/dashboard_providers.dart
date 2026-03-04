@@ -4,15 +4,18 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:charis_student_care/core/constants/app_constants.dart';
+import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/change_sets_repository.dart';
+import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
 import 'package:charis_student_care/presentation/providers/attendance_providers.dart';
+import 'package:charis_student_care/presentation/providers/auth_provider.dart';
+import 'package:charis_student_care/presentation/providers/auth_state.dart';
+import 'package:charis_student_care/presentation/providers/class_providers.dart';
+import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/ministry_providers.dart';
 import 'package:charis_student_care/presentation/providers/mission_payment_providers.dart';
 import 'package:charis_student_care/presentation/providers/payment_providers.dart';
-import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
-import 'package:charis_student_care/presentation/providers/class_providers.dart';
-import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/test_providers.dart';
 
@@ -197,6 +200,102 @@ class DashboardStudentSummary {
   String get yearModeLabel => '$year / $mode';
 }
 
+/// One row in the Recent Activities report / audit log.
+class ActivityReportRow {
+  const ActivityReportRow({
+    required this.timestamp,
+    required this.user,
+    this.student,
+    required this.operation,
+    required this.table,
+    this.screen,
+    this.whatChanged,
+  });
+
+  final DateTime timestamp;
+  final String user;
+  final String? student;
+  final String operation;
+  final String table;
+  final String? screen;
+  final String? whatChanged;
+}
+
+/// Filters for the Recent Activities report.
+class ActivityReportFilters {
+  const ActivityReportFilters({
+    required this.dateStart,
+    required this.dateEnd,
+    this.userFilter,
+    this.screenFilter,
+    this.tableFilter,
+  });
+
+  final DateTime dateStart;
+  final DateTime dateEnd;
+  final String? userFilter;
+  final String? screenFilter;
+  final List<String>? tableFilter;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! ActivityReportFilters) return false;
+    return dateStart == other.dateStart &&
+        dateEnd == other.dateEnd &&
+        userFilter == other.userFilter &&
+        screenFilter == other.screenFilter &&
+        _listEquals(tableFilter, other.tableFilter);
+  }
+
+  @override
+  int get hashCode {
+    final tablesHash =
+        tableFilter == null ? null : Object.hashAll(tableFilter!);
+    return Object.hash(dateStart, dateEnd, userFilter, screenFilter, tablesHash);
+  }
+}
+
+bool _listEquals(List<String>? a, List<String>? b) {
+  if (a == null || b == null) return a == b;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// Resolve the student id affected by a [changeSet] when possible.
+Future<int?> _studentIdForChangeSet(AppDatabase db, ChangeSet changeSet) async {
+  final table = changeSet.table;
+  final recordId = int.tryParse(changeSet.recordId);
+  if (recordId == null) return null;
+
+  switch (table) {
+    case 'students':
+      return recordId;
+    case 'attendance':
+      final row = await (db.select(db.attendance)
+            ..where((t) => t.id.equals(recordId)))
+          .getSingleOrNull();
+      return row?.studentId;
+    case 'tests':
+      final row = await (db.select(db.tests)
+            ..where((t) => t.id.equals(recordId)))
+          .getSingleOrNull();
+      return row?.studentId;
+    case 'ministry_entries':
+      final row = await (db.select(db.ministryEntries)
+            ..where((t) => t.id.equals(recordId)))
+          .getSingleOrNull();
+      return row?.studentId;
+    default:
+      // Other tables are either global or resolved differently; they are not considered
+      // student-scoped for facilitators.
+      return null;
+  }
+}
+
 final changeSetsRepositoryProvider = Provider<ChangeSetsRepository>((ref) {
   final db = ref.watch(appDatabaseProvider);
   return ChangeSetsRepository(db);
@@ -209,47 +308,60 @@ final averageAttendancePercentageProvider =
   return repo.watchAverageAttendancePercentage(days: 30);
 });
 
-/// Total balance due across all active students for the current year. Scoped for facilitators.
+/// Total balance due across all active students for the current academic session. Scoped for facilitators (class + mode).
 final totalBalanceDueProvider = StreamProvider.autoDispose<double>((ref) {
   final paymentRepo = ref.watch(paymentRepositoryProvider);
   final studentRepo = ref.watch(studentRepositoryProvider);
-  final classIdsAsync = ref.watch(currentUserAssignedClassIdsProvider);
-  final currentYear = DateTime.now().year.toString();
-  return classIdsAsync.when(
-    data: (classIds) {
-      final studentsStream = studentRepo.watchStudents(statusFilter: 'Active', classIds: classIds);
-      return studentsStream.asyncExpand((students) {
-        final ids = students.map((s) => s.id).toList();
-        final payStream = paymentRepo.watchPaymentsForYear(
-          currentYear,
-          studentIds: ids.isEmpty ? null : ids,
-        );
-        return payStream.map((payments) {
-          final paymentMap = {for (final p in payments) p.studentId: p};
-          double totalBalance = 0.0;
-          for (final student in students) {
-            final payment = paymentMap[student.id];
-            final totalPaid = payment != null
-                ? (payment.jan +
-                    payment.feb +
-                    payment.mar +
-                    payment.apr +
-                    payment.may +
-                    payment.jun +
-                    payment.jul +
-                    payment.aug +
-                    payment.sep +
-                    payment.oct +
-                    payment.nov +
-                    payment.dec +
-                    payment.lumpSum)
-                : 0.0;
-            final balance = AppConstants.fullTuitionAmount - totalPaid;
-            if (balance > 0) totalBalance += balance;
-          }
-          return totalBalance;
-        });
-      });
+  final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
+  final sessionAsync = ref.watch(currentAcademicSessionProvider);
+  return sessionAsync.when(
+    data: (sessionCode) {
+      final code = (sessionCode?.trim().isEmpty ?? true)
+          ? _defaultCurrentAcademicSession()
+          : sessionCode!;
+      return scopeAsync.when(
+        data: (scope) {
+          final studentsStream = studentRepo.watchStudents(
+            statusFilter: 'Active',
+            classIds: scope?.classIds,
+            mode: scope?.mode,
+          );
+          return studentsStream.asyncExpand((students) {
+            final ids = students.map((s) => s.id).toList();
+            final payStream = paymentRepo.watchPaymentsForSession(
+              code,
+              studentIds: ids.isEmpty ? null : ids,
+            );
+            return payStream.map((payments) {
+              final paymentMap = {for (final p in payments) p.studentId: p};
+              double totalBalance = 0.0;
+              for (final student in students) {
+                final payment = paymentMap[student.id];
+                final totalPaid = payment != null
+                    ? (payment.jan +
+                        payment.feb +
+                        payment.mar +
+                        payment.apr +
+                        payment.may +
+                        payment.jun +
+                        payment.jul +
+                        payment.aug +
+                        payment.sep +
+                        payment.oct +
+                        payment.nov +
+                        payment.dec +
+                        payment.lumpSum)
+                    : 0.0;
+                final balance = AppConstants.fullTuitionAmount - totalPaid;
+                if (balance > 0) totalBalance += balance;
+              }
+              return totalBalance;
+            });
+          });
+        },
+        loading: () => Stream.value(0.0),
+        error: (_, __) => Stream.value(0.0),
+      );
     },
     loading: () => Stream.value(0.0),
     error: (_, __) => Stream.value(0.0),
@@ -274,7 +386,103 @@ final recentActivitiesEnrichedProvider =
       );
 });
 
-/// Summary table rows by cohort (class + mode). Scoped for facilitators.
+/// Report data for Recent Activities / Audit Log, with role- and scope-based filtering.
+final recentActivitiesReportProvider =
+    FutureProvider.autoDispose.family<List<ActivityReportRow>, ActivityReportFilters>(
+  (ref, filters) async {
+    final db = ref.watch(appDatabaseProvider);
+    final auth = ref.watch(authStateProvider).valueOrNull;
+    final role = auth is Authenticated ? auth.role : null;
+
+    // Facilitator scope (classIds + mode) when applicable.
+    final scope = role == UserRole.facilitator
+        ? await ref.watch(currentUserFacilitatorScopeProvider.future)
+        : null;
+
+    final canManageFinancials =
+        role != null && RolePermissions.canManageFinancials(role);
+
+    // Base query: fetch all change-sets, we'll filter by date/user/scope in Dart.
+    final allChangeSets = await (db.select(db.changeSets)).get();
+    final changeSets = allChangeSets.where((cs) {
+      final ts = cs.timestamp;
+      if (ts.isBefore(filters.dateStart) || ts.isAfter(filters.dateEnd)) {
+        return false;
+      }
+      if (filters.tableFilter != null && filters.tableFilter!.isNotEmpty) {
+        if (!filters.tableFilter!.contains(cs.table)) return false;
+      }
+      return true;
+    }).toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final rows = <ActivityReportRow>[];
+
+    for (final cs in changeSets) {
+      final isPaymentTable =
+          cs.table == 'payments' || cs.table == 'mission_payments';
+      if (isPaymentTable && !canManageFinancials) {
+        // All payment-related activities are admin/financial-role only.
+        continue;
+      }
+
+      final activity = dashboardActivityFromChangeSet(cs);
+
+      // Screen filter (substring match, case-insensitive) on the derived screen label.
+      if (filters.screenFilter != null &&
+          filters.screenFilter!.trim().isNotEmpty) {
+        final needle = filters.screenFilter!.trim().toLowerCase();
+        final screen = activity.screen?.toLowerCase() ?? '';
+        if (!screen.contains(needle)) continue;
+      }
+
+      // User filter on display name or userId.
+      final userDisplayName = activity.userDisplayName ?? cs.userId;
+      if (filters.userFilter != null &&
+          filters.userFilter!.trim().isNotEmpty) {
+        final needle = filters.userFilter!.trim().toLowerCase();
+        if (!userDisplayName.toLowerCase().contains(needle)) continue;
+      }
+
+      // Facilitator: only activities tied to students within their scope (class + mode),
+      // and never payments (handled above).
+      if (role == UserRole.facilitator) {
+        if (scope == null ||
+            scope.classIds == null ||
+            scope.classIds!.isEmpty) {
+          continue;
+        }
+        final studentId = await _studentIdForChangeSet(db, cs);
+        if (studentId == null) continue;
+
+        final student = await (db.select(db.students)
+              ..where((t) => t.id.equals(studentId)))
+            .getSingleOrNull();
+        if (student == null) continue;
+
+        if (!scope.classIds!.contains(student.classId)) continue;
+        if (scope.mode != null && scope.mode!.trim().isNotEmpty) {
+          if ((student.mode ?? '').trim() != scope.mode!.trim()) continue;
+        }
+      }
+
+      rows.add(
+        ActivityReportRow(
+          timestamp: activity.timestamp,
+          user: userDisplayName,
+          student: activity.studentDisplay,
+          operation: activity.operation,
+          table: activity.table,
+          screen: activity.screen,
+          whatChanged: activity.whatChanged,
+        ),
+      );
+    }
+
+    return rows;
+  },
+);
+
+/// Summary table rows by cohort (class + mode). Scoped for facilitators (class + mode). Uses current academic session for payments.
 final dashboardCohortSummaryProvider =
     StreamProvider.autoDispose<List<DashboardCohortSummary>>((ref) {
   final studentRepo = ref.watch(studentRepositoryProvider);
@@ -284,23 +492,32 @@ final dashboardCohortSummaryProvider =
   final sessionRepo = ref.watch(academicSessionRepositoryProvider);
   final classes = ref.watch(allClassesFutureProvider).valueOrNull ?? [];
   final classIdToName = {null: '—', for (final c in classes) c.id: c.name};
-  final currentYear = DateTime.now().year.toString();
   const days = 30;
-  final classIdsAsync = ref.watch(currentUserAssignedClassIdsProvider);
+  final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
   final allowedIdsAsync = ref.watch(allowedStudentIdsStreamProvider);
 
-  return classIdsAsync.when(
-    data: (classIds) => allowedIdsAsync.when(
+  return scopeAsync.when(
+    data: (scope) => allowedIdsAsync.when(
       data: (ids) {
-        final studentsStream = studentRepo.watchStudents(statusFilter: 'Active', classIds: classIds);
-        final paymentsStream = paymentRepo.watchPaymentsForYear(currentYear, studentIds: ids.isEmpty ? null : ids);
+        final studentsStream = studentRepo.watchStudents(
+          statusFilter: 'Active',
+          classIds: scope?.classIds,
+          mode: scope?.mode,
+        );
+        final sessionStream = sessionRepo.watchCurrentSession();
+        final paymentsStream = sessionStream.asyncExpand((sessionCode) {
+          final code = (sessionCode?.trim().isEmpty ?? true)
+              ? _defaultCurrentAcademicSession()
+              : sessionCode!;
+          return paymentRepo.watchPaymentsForSession(code, studentIds: ids.isEmpty ? null : ids);
+        });
         final attendanceStream = attendanceRepo.watchAttendanceLastDays(days, studentIds: ids.isEmpty ? null : ids);
         return _combineDashboardStreams(
           studentsStream: studentsStream,
           paymentsStream: paymentsStream,
           testsStream: testRepo.watchAllTests(),
           attendanceStream: attendanceStream,
-          sessionStream: sessionRepo.watchCurrentSession(),
+          sessionStream: sessionStream,
           classIdToName: classIdToName,
           compute: _computeCohortSummaries,
         );
@@ -313,7 +530,7 @@ final dashboardCohortSummaryProvider =
   );
 });
 
-/// Summary table rows: one per student (filtered by [statusFilter]). Scoped for facilitators.
+/// Summary table rows: one per student (filtered by [statusFilter]). Scoped for facilitators (class + mode). Uses current academic session for payments and missions.
 final dashboardStudentSummaryProvider = StreamProvider.autoDispose
     .family<List<DashboardStudentSummary>, String?>((ref, statusFilter) {
   final studentRepo = ref.watch(studentRepositoryProvider);
@@ -325,16 +542,31 @@ final dashboardStudentSummaryProvider = StreamProvider.autoDispose
   final sessionRepo = ref.watch(academicSessionRepositoryProvider);
   final classes = ref.watch(allClassesFutureProvider).valueOrNull ?? [];
   final classIdToName = {null: '—', for (final c in classes) c.id: c.name};
-  final currentYear = DateTime.now().year.toString();
   const days = 30;
-  final classIdsAsync = ref.watch(currentUserAssignedClassIdsProvider);
+  final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
   final allowedIdsAsync = ref.watch(allowedStudentIdsStreamProvider);
 
-  return classIdsAsync.when(
-    data: (classIds) => allowedIdsAsync.when(
+  return scopeAsync.when(
+    data: (scope) => allowedIdsAsync.when(
       data: (ids) {
-        final studentsStream = studentRepo.watchStudents(statusFilter: statusFilter, classIds: classIds);
-        final paymentsStream = paymentRepo.watchPaymentsForYear(currentYear, studentIds: ids.isEmpty ? null : ids);
+        final studentsStream = studentRepo.watchStudents(
+          statusFilter: statusFilter,
+          classIds: scope?.classIds,
+          mode: scope?.mode,
+        );
+        final sessionStream = sessionRepo.watchCurrentSession();
+        final paymentsStream = sessionStream.asyncExpand((sessionCode) {
+          final code = (sessionCode?.trim().isEmpty ?? true)
+              ? _defaultCurrentAcademicSession()
+              : sessionCode!;
+          return paymentRepo.watchPaymentsForSession(code, studentIds: ids.isEmpty ? null : ids);
+        });
+        final missionScheduleStream = sessionStream.asyncExpand((sessionCode) {
+          final code = (sessionCode?.trim().isEmpty ?? true)
+              ? _defaultCurrentAcademicSession()
+              : sessionCode!;
+          return missionRepo.watchForSession(code);
+        });
         final attendanceStream = attendanceRepo.watchAttendanceLastDays(days, studentIds: ids.isEmpty ? null : ids);
         return _combineStudentSummaryStreams(
           studentsStream: studentsStream,
@@ -342,8 +574,8 @@ final dashboardStudentSummaryProvider = StreamProvider.autoDispose
           testsStream: testRepo.watchAllTests(),
           attendanceStream: attendanceStream,
           ministryHoursStream: ministryRepo.watchTotalHoursByStudent(),
-          missionScheduleStream: missionRepo.watchForYear(currentYear),
-          sessionStream: sessionRepo.watchCurrentSession(),
+          missionScheduleStream: missionScheduleStream,
+          sessionStream: sessionStream,
           classIdToName: classIdToName,
         );
       },

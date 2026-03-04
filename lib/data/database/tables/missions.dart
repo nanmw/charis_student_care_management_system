@@ -1,5 +1,7 @@
 import 'package:drift/drift.dart';
 
+import 'academic_sessions.dart';
+
 /// Mission opportunities: one row per mission (e.g. Project Hope Africa).
 class Missions extends Table {
   /// Auto-incrementing primary key
@@ -40,4 +42,8 @@ class Missions extends Table {
 
   /// When the record was last updated
   DateTimeColumn get updatedAt => dateTime().nullable()();
+
+  /// Academic session foreign key for session-based mission reporting.
+  IntColumn get academicSessionId =>
+      integer().nullable().references(AcademicSessions, #id)();
 }

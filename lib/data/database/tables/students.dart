@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import 'classes.dart';
+import 'academic_sessions.dart';
 
 /// Students table definition
 /// Stores student information with alphabetical sorting support
@@ -52,6 +53,10 @@ class Students extends Table {
   /// Version number for optimistic locking and conflict detection
   /// Starts at 1, increments on each update
   IntColumn get version => integer().withDefault(const Constant(1))();
+
+  /// Academic session when the student was admitted (e.g. \"2024-2025\").
+  IntColumn get academicSessionId =>
+      integer().nullable().references(AcademicSessions, #id)();
 
   @override
   Set<Column> get primaryKey => {id};

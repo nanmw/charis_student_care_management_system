@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import 'classes.dart';
+import 'academic_sessions.dart';
 
 /// Ministry hours entries: one row per ministry activity per student.
 /// Approved = supervisor-approved; Pending = awaiting approval.
@@ -46,4 +47,8 @@ class MinistryEntries extends Table {
 
   /// When the record was last updated
   DateTimeColumn get updatedAt => dateTime().nullable()();
+
+  /// Academic session foreign key for session-based ministry summaries.
+  IntColumn get academicSessionId =>
+      integer().nullable().references(AcademicSessions, #id)();
 }

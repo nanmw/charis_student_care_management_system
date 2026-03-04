@@ -178,16 +178,18 @@ const _facilitatorSeedPassword = String.fromEnvironment(
   defaultValue: 'facilitator',
 );
 
-/// One-time seed: create one facilitator user per class (Year 1, Year 2, Year 3) if not already present, and assign each to their class.
+/// One-time seed: create one facilitator user per class (Year 1, Year 2, Year 3) with Full-time mode if not already present.
+/// Scope is stored on Users (allowed_class_id, allowed_mode); no longer uses Classes.facilitator_user_id for scope.
 final seedFacilitatorUsersProvider = FutureProvider<void>((ref) async {
   final userRepo = ref.read(userRepositoryProvider);
-  final classRepo = ref.read(classRepositoryProvider);
 
+  final classRepo = ref.read(classRepositoryProvider);
   final year1 = await classRepo.getClassByName('Year 1');
   final year2 = await classRepo.getClassByName('Year 2');
   final year3 = await classRepo.getClassByName('Year 3');
   if (year1 == null || year2 == null || year3 == null) return;
 
+  const defaultMode = 'Full-time';
   for (final entry in [
     ('facilitator_year1', 'Year 1 Facilitator', year1.id),
     ('facilitator_year2', 'Year 2 Facilitator', year2.id),
@@ -198,15 +200,20 @@ final seedFacilitatorUsersProvider = FutureProvider<void>((ref) async {
     final classId = entry.$3;
     final existing = await userRepo.findByUsername(username);
     if (existing != null) {
-      await classRepo.updateFacilitator(classId, existing.id);
+      await userRepo.updateUser(
+        id: existing.id,
+        allowedClassId: classId,
+        allowedMode: defaultMode,
+      );
       continue;
     }
-    final userId = await userRepo.createUser(
+    await userRepo.createUser(
       username: username,
       plainPassword: _facilitatorSeedPassword,
       displayName: displayName,
       role: UserRole.facilitator,
+      allowedClassId: classId,
+      allowedMode: defaultMode,
     );
-    await classRepo.updateFacilitator(classId, userId);
   }
 });

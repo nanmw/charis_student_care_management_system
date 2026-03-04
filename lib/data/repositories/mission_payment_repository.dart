@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
 
 /// DTO for mission payment batch upsert.
 class MissionPaymentData {
@@ -47,6 +48,45 @@ class MissionPaymentRepository {
         .watch();
   }
 
+  /// Stream of mission payment schedule rows for the given academic [sessionCode].
+  /// Backward compatibility: prefer academic_session_id; include legacy rows where
+  /// academic_session_id is null but year matches the session's start year.
+  Stream<List<MissionPaymentScheduleData>> watchForSession(String sessionCode) async* {
+    final sessionId = await _getSessionIdByCode(sessionCode);
+    final legacyYear = AcademicSessionRepository.yearFromSessionCode(sessionCode);
+    final all = _db.select(_db.missionPaymentSchedule).watch();
+    await for (final list in all) {
+      var filtered = list;
+      if (sessionId != null && legacyYear != null) {
+        filtered = filtered.where((r) =>
+            r.academicSessionId == sessionId ||
+            (r.academicSessionId == null && r.year == legacyYear),).toList();
+      } else if (sessionId != null) {
+        filtered = filtered.where((r) => r.academicSessionId == sessionId).toList();
+      } else if (legacyYear != null) {
+        filtered = filtered.where((r) => r.year == legacyYear).toList();
+      } else {
+        filtered = [];
+      }
+      filtered.sort((a, b) => a.studentId.compareTo(b.studentId));
+      yield filtered;
+    }
+  }
+
+  Future<int?> _getSessionIdByCode(String code) async {
+    if (code.trim().isEmpty) return null;
+    try {
+      final result = await _db.customSelect(
+        'SELECT id FROM academic_sessions WHERE code = ? LIMIT 1',
+        variables: [Variable.withString(code.trim())],
+        readsFrom: const {},
+      ).getSingleOrNull();
+      return result?.data['id'] as int?;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// One-time fetch for [studentId] and [year], or null.
   Future<MissionPaymentScheduleData?> getRow(int studentId, String year) async {
     return (_db.select(_db.missionPaymentSchedule)
@@ -57,9 +97,11 @@ class MissionPaymentRepository {
   }
 
   /// Batch upserts mission payment rows. [payments] is studentId -> MissionPaymentData.
+  /// When [academicSessionId] is provided, sets academic_session_id on new rows.
   Future<int> batchUpsertMissionPayments({
     required String year,
     required Map<int, MissionPaymentData> payments,
+    int? academicSessionId,
     String? userId,
   }) async {
     if (payments.isEmpty) return 0;
@@ -102,6 +144,7 @@ class MissionPaymentRepository {
             MissionPaymentScheduleCompanion.insert(
               studentId: studentId,
               year: year,
+              academicSessionId: academicSessionId != null ? Value(academicSessionId) : const Value.absent(),
               tripSelected: Value(data.tripSelected),
               date: Value(data.date),
               amount: Value(data.amount),

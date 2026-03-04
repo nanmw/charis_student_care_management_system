@@ -38,9 +38,11 @@ class StudentRepository {
   /// Stream of students ordered by surname ASC, then firstName ASC.
   /// [statusFilter] default 'Active'; pass null for all statuses.
   /// [classIds] when non-null and non-empty, restrict to students in these classes (for facilitator scope).
+  /// [mode] when non-null and non-empty, restrict to students with this study mode (e.g. 'Full-time', 'Hybrid').
   Stream<List<Student>> watchStudents({
     String? statusFilter = 'Active',
     List<int>? classIds,
+    String? mode,
   }) {
     var query = _db.select(_db.students);
     query = query..where((t) {
@@ -49,6 +51,9 @@ class StudentRepository {
           : t.id.isNotNull();
       if (classIds != null && classIds.isNotEmpty) {
         pred = pred & t.classId.isIn(classIds);
+      }
+      if (mode != null && mode.trim().isNotEmpty) {
+        pred = pred & t.mode.equals(mode.trim());
       }
       return pred;
     });
@@ -64,9 +69,10 @@ class StudentRepository {
   Stream<List<StudentWithClass>> watchStudentsWithClass({
     String? statusFilter = 'Active',
     List<int>? classIds,
+    String? mode,
   }) {
     return _combineStudentsWithClasses(
-      watchStudents(statusFilter: statusFilter, classIds: classIds),
+      watchStudents(statusFilter: statusFilter, classIds: classIds, mode: mode),
     );
   }
 
@@ -95,6 +101,7 @@ class StudentRepository {
   }
 
   /// Adds a student. Requires [userRole] with canManageStudents; throws otherwise.
+  /// When [currentSessionCode] is provided (e.g. from current academic session), sets students.academic_session_id.
   /// [userId], [deviceId], [userDisplayName], [screen] used for change-set if provided.
   Future<int> addStudent(
     String surname,
@@ -112,10 +119,14 @@ class StudentRepository {
     bool? handbook,
     bool? mediaRelease,
     bool? accidentWaiver,
+    String? currentSessionCode,
   }) async {
     if (!RolePermissions.canManageStudents(userRole)) {
       throw StateError('Role cannot add students');
     }
+    final sessionId = currentSessionCode != null && currentSessionCode.trim().isNotEmpty
+        ? await _getSessionIdByCode(currentSessionCode.trim())
+        : null;
     final companion = StudentsCompanion.insert(
       surname: surname.trim(),
       firstName: firstName.trim(),
@@ -135,6 +146,7 @@ class StudentRepository {
       handbook: Value(handbook ?? false),
       mediaRelease: Value(mediaRelease ?? false),
       accidentWaiver: Value(accidentWaiver ?? false),
+      academicSessionId: sessionId != null ? Value(sessionId) : const Value.absent(),
     );
     final id = await _db.into(_db.students).insert(companion);
     if (userId != null) {
@@ -438,6 +450,20 @@ class StudentRepository {
 
       return count;
     });
+  }
+
+  Future<int?> _getSessionIdByCode(String code) async {
+    if (code.trim().isEmpty) return null;
+    try {
+      final result = await _db.customSelect(
+        'SELECT id FROM academic_sessions WHERE code = ? LIMIT 1',
+        variables: [Variable.withString(code.trim())],
+        readsFrom: const {},
+      ).getSingleOrNull();
+      return result?.data['id'] as int?;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _insertChangeSet({

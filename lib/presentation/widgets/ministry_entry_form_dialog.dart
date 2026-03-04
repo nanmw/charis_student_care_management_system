@@ -390,7 +390,7 @@ class _ClassModeLabel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final classAsync = ref.watch(classByIdProvider(classId));
     return classAsync.when(
-      data: (c) => Text(
+      data: (SchoolClass? c) => Text(
         '${c?.name ?? 'Class $classId'} • $studyMode',
         style: TextStyle(
           fontSize: 12,

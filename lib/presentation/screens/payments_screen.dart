@@ -10,13 +10,16 @@ import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:go_router/go_router.dart';
 import 'package:charis_student_care/core/utils/currency_utils.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
 import 'package:charis_student_care/data/repositories/payment_repository.dart';
 import 'package:charis_student_care/data/repositories/payment_repository.dart'
     show PaymentData;
 import 'package:charis_student_care/domain/use_cases/sort_students_alphabetically.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
+import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
+import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/payment_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
@@ -35,8 +38,6 @@ const List<String> _monthLabels = [
   'Sep',
   'Oct',
 ];
-
-const List<String> _modeOptions = ['Full-time', 'Hybrid'];
 
 /// Individual editable payment cell widget to isolate rebuilds
 class _PaymentCell extends StatefulWidget {
@@ -245,17 +246,24 @@ class PaymentsScreen extends ConsumerStatefulWidget {
   ConsumerState<PaymentsScreen> createState() => _PaymentsScreenState();
 }
 
+/// Default academic session code (e.g. 2024-2025) when none is set.
+String _defaultPaymentSession() {
+  final now = DateTime.now();
+  final y = now.year;
+  return now.month >= 7 ? '$y-${y + 1}' : '${y - 1}-$y';
+}
+
 class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   String _selectedMode = 'Full-time';
   int? _classFilter;
   bool _defaultClassScheduled = false;
-  String _paymentYear = DateTime.now().year.toString();
+  String _paymentSession = _defaultPaymentSession();
   String _searchQuery = '';
-  // Store edits per payment year to preserve them when switching years
-  final Map<String, Map<int, _PaymentRowEdit>> _paymentEditsByYear = {};
+  // Store edits per academic session to preserve them when switching sessions
+  final Map<String, Map<int, _PaymentRowEdit>> _paymentEditsBySession = {};
   final Map<String, TextEditingController> _controllers = {};
   String _refillKey = '';
-  String? _lastPaymentYear;
+  String? _lastPaymentSession;
 
   // Debouncing for text input
   final Map<String, Timer> _debounceTimers = {};
@@ -273,9 +281,9 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   bool _isLoadingMore = false;
   final ScrollController _scrollController = ScrollController();
 
-  // Helper to get current year's edits map (ensures it exists)
-  Map<int, _PaymentRowEdit> get _currentYearEdits {
-    return _paymentEditsByYear.putIfAbsent(_paymentYear, () => {});
+  // Helper to get current session's edits map (ensures it exists)
+  Map<int, _PaymentRowEdit> get _currentSessionEdits {
+    return _paymentEditsBySession.putIfAbsent(_paymentSession, () => {});
   }
 
   @override
@@ -335,13 +343,14 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
     final paymentsAsync =
-        ref.watch(paymentsForYearStreamProvider(_paymentYear));
+        ref.watch(paymentsForSessionStreamProvider(_paymentSession));
     final classes = ref.watch(allClassesFutureProvider).valueOrNull ?? [];
     if (classes.isNotEmpty && !_defaultClassScheduled && _classFilter == null) {
       _defaultClassScheduled = true;
-      final year1 = classes.where((c) => c.name == 'Year 1');
+      final year1 = classes.where((SchoolClass c) => c.name == 'Year 1');
+      final firstClass = classes.first;
       final defaultClassId =
-          year1.isEmpty ? classes.first.id : year1.first.id;
+          year1.isEmpty ? firstClass.id : year1.first.id;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
@@ -349,6 +358,13 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           _cachedFilteredStudents = null;
           _displayedCount = 25;
         });
+      });
+    }
+
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1 && _selectedMode != modeOptions[0]) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _selectedMode = modeOptions[0]);
       });
     }
 
@@ -609,17 +625,17 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
 
     // Simplified key generation - use payment count + year + hash
     final key =
-        '${_paymentYear}_${students.length}_${paymentRows.length}_$paymentHash';
+        '${_paymentSession}_${students.length}_${paymentRows.length}_$paymentHash';
     final shouldSkipEditRefill =
-        key == _refillKey && _lastPaymentYear == _paymentYear;
+        key == _refillKey && _lastPaymentSession == _paymentSession;
 
     if (!shouldSkipEditRefill) {
       _refillKey = key;
-      _lastPaymentYear = _paymentYear;
+      _lastPaymentSession = _paymentSession;
     }
 
-    // Get current year's edits map
-    final edits = _currentYearEdits;
+    // Get current session's edits map
+    final edits = _currentSessionEdits;
 
     // Determine which students need controllers (paginated students, or all if not paginated)
     final studentsForControllers = pageStudents ?? students;
@@ -777,13 +793,13 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         const SizedBox(width: 8),
         _buildClassDropdown(colorScheme),
         const SizedBox(width: 24),
-        Text('Payment Year:',
+        Text('Session:',
             style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
                 fontSize: 14,
                 fontFamily: 'Questrial',),),
         const SizedBox(width: 8),
-        _buildPaymentYearField(colorScheme),
+        _buildPaymentSessionField(colorScheme),
         const SizedBox(width: 24),
         Expanded(
           child: TextField(
@@ -820,21 +836,40 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   }
 
   Widget _buildModeToggle(ColorScheme colorScheme, Color redColor) {
+    final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
+    if (modeOptions.length == 1) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: redColor.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: redColor),
+        ),
+        child: Text(
+          modeOptions[0],
+          style: TextStyle(
+            fontFamily: 'Questrial',
+            fontSize: 14,
+            color: colorScheme.onSurface,
+          ),
+        ),
+      );
+    }
     return ToggleButtons(
       constraints: const BoxConstraints(minWidth: 90, minHeight: 44),
       borderRadius: BorderRadius.circular(8),
       fillColor: redColor,
       selectedColor: AppColors.charisWhite,
       color: colorScheme.onSurface,
-      isSelected: _modeOptions.map((m) => m == _selectedMode).toList(),
+      isSelected: modeOptions.map((m) => m == _selectedMode).toList(),
       onPressed: (index) {
         setState(() {
-          _selectedMode = _modeOptions[index];
+          _selectedMode = modeOptions[index];
           _cachedFilteredStudents = null; // Invalidate cache
           _displayedCount = 25; // Reset to initial batch
         });
       },
-      children: _modeOptions
+      children: modeOptions
           .map((l) => Text(l,
               style: const TextStyle(fontFamily: 'Questrial', fontSize: 14),),)
           .toList(),
@@ -863,7 +898,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           borderRadius: BorderRadius.circular(8),
           items: [
             const DropdownMenuItem<int?>(value: null, child: Text('All', style: TextStyle(fontSize: 14))),
-            ...classes.map((c) => DropdownMenuItem<int?>(value: c.id, child: Text(c.name, style: TextStyle(color: colorScheme.onSurface, fontSize: 14)))),
+            ...classes.map<DropdownMenuItem<int?>>((SchoolClass c) => DropdownMenuItem<int?>(value: c.id, child: Text(c.name, style: TextStyle(color: colorScheme.onSurface, fontSize: 14)))),
           ],
           onChanged: (v) {
             setState(() {
@@ -877,9 +912,10 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     );
   }
 
-  Widget _buildPaymentYearField(ColorScheme colorScheme) {
+  Widget _buildPaymentSessionField(ColorScheme colorScheme) {
+    final sessionOptionsAsync = ref.watch(academicSessionOptionsProvider);
     return SizedBox(
-      width: 90,
+      width: 120,
       child: Container(
         height: 44,
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -888,28 +924,53 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: colorScheme.outline),
         ),
-        child: DropdownButton<String>(
-          value: _paymentYear,
-          isExpanded: true,
-          underline: const SizedBox.shrink(),
-          borderRadius: BorderRadius.circular(8),
-          items: ['2024', '2025', '2026', '2027']
-              .map((y) => DropdownMenuItem<String>(
-                    value: y,
-                    child: Text(y,
-                        style: TextStyle(
-                            color: colorScheme.onSurface, fontSize: 14,),),
-                  ),)
-              .toList(),
-          onChanged: (v) {
-            if (v != null) {
-              setState(() {
-                _paymentYear = v;
-                _cachedFilteredStudents = null; // Invalidate cache
-                _displayedCount = 25; // Reset to initial batch
+        child: sessionOptionsAsync.when(
+          data: (options) {
+            final list = options.isNotEmpty ? options : [_defaultPaymentSession()];
+            final value = list.contains(_paymentSession) ? _paymentSession : list.first;
+            if (!list.contains(_paymentSession)) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) setState(() => _paymentSession = list.first);
               });
             }
+            return DropdownButton<String>(
+              value: value,
+              isExpanded: true,
+              underline: const SizedBox.shrink(),
+              borderRadius: BorderRadius.circular(8),
+              items: list
+                  .map((s) => DropdownMenuItem<String>(
+                        value: s,
+                        child: Text(s,
+                            style: TextStyle(
+                                color: colorScheme.onSurface, fontSize: 14,),),
+                      ),)
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) {
+                  setState(() {
+                    _paymentSession = v;
+                    _cachedFilteredStudents = null;
+                    _displayedCount = 25;
+                  });
+                }
+              },
+            );
           },
+          loading: () => DropdownButton<String>(
+            value: _paymentSession,
+            isExpanded: true,
+            underline: const SizedBox.shrink(),
+            items: [DropdownMenuItem(value: _paymentSession, child: Text(_paymentSession))],
+            onChanged: null,
+          ),
+          error: (_, __) => DropdownButton<String>(
+            value: _paymentSession,
+            isExpanded: true,
+            underline: const SizedBox.shrink(),
+            items: [DropdownMenuItem(value: _paymentSession, child: Text(_paymentSession))],
+            onChanged: null,
+          ),
         ),
       ),
     );
@@ -931,7 +992,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
 
   Widget _buildTable(
       BuildContext context, ColorScheme colorScheme, Color redColor, bool isDark, List<Student> students,) {
-    final edits = _currentYearEdits;
+    final edits = _currentSessionEdits;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -1143,7 +1204,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     try {
       final repo = ref.read(paymentRepositoryProvider);
       final edits =
-          _currentYearEdits; // Use the helper to get current year's edits
+          _currentSessionEdits; // Use the helper to get current session's edits
 
       if (edits.isEmpty) {
         if (mounted) {
@@ -1155,7 +1216,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
 
       // Get current payment rows from database for comparison
       final currentPaymentRows =
-          await repo.watchPaymentsForYear(_paymentYear).first;
+          await repo.watchPaymentsForSession(_paymentSession).first;
       final paymentMap = {for (final p in currentPaymentRows) p.studentId: p};
 
       // Convert only changed edits to PaymentData map for batch operation
@@ -1226,9 +1287,13 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       final userDisplayName = auth is Authenticated ? auth.user.displayName : null;
 
       // Use batch upsert for much better performance
+      final sessionRepo = ref.read(academicSessionRepositoryProvider);
+      final year = AcademicSessionRepository.yearFromSessionCode(_paymentSession);
+      final academicSessionId = await sessionRepo.getSessionIdByCode(_paymentSession);
       final savedCount = await repo.batchUpsertPayments(
-        year: _paymentYear,
+        year: year ?? _paymentSession.split('-').first,
         payments: paymentDataMap,
+        academicSessionId: academicSessionId,
         userId: userId,
         userDisplayName: userDisplayName,
         screen: 'Payments',
@@ -1258,7 +1323,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       'Balance (Rand)',
     ];
     rows.add(header.join(','));
-    final edits = _currentYearEdits; // Use current year's edits
+    final edits = _currentSessionEdits; // Use current session's edits
 
     // Optimized: use cached filtered students instead of re-reading from provider
     final students = _cachedFilteredStudents ?? [];

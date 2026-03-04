@@ -1,5 +1,7 @@
 import 'package:drift/drift.dart';
 
+import 'academic_sessions.dart';
+
 /// Daily attendance table: one row per student per date.
 /// Stores present (0/1) and notes.
 class Attendance extends Table {
@@ -17,6 +19,10 @@ class Attendance extends Table {
 
   /// Optional notes
   TextColumn get notes => text().nullable()();
+
+  /// Academic session foreign key for session-scoped attendance reporting.
+  IntColumn get academicSessionId =>
+      integer().nullable().references(AcademicSessions, #id)();
 
   @override
   Set<Column> get primaryKey => {id};

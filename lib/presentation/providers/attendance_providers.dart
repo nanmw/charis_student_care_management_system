@@ -26,7 +26,7 @@ final attendanceForDateProvider = StreamProvider.autoDispose
 });
 
 /// Set of dates that have at least one attendance record.
-/// [classFilter] when non-null (e.g. selected Class on Attendance screen): scope to that class only.
+/// [classFilter] when non-null (e.g. selected Class on Attendance screen): scope to that class (and facilitator mode when set).
 /// When null: admin sees all dates; facilitator sees only dates for their assigned students.
 final datesWithAttendanceProvider = FutureProvider.autoDispose
     .family<Set<DateTime>, int?>((ref, classFilter) async {
@@ -34,15 +34,20 @@ final datesWithAttendanceProvider = FutureProvider.autoDispose
   final studentRepo = ref.watch(studentRepositoryProvider);
 
   if (classFilter != null) {
+    final scope = await ref.watch(currentUserFacilitatorScopeProvider.future);
     final students = await studentRepo
-        .watchStudents(statusFilter: 'Active', classIds: [classFilter])
+        .watchStudents(
+          statusFilter: 'Active',
+          classIds: [classFilter],
+          mode: scope?.mode,
+        )
         .first;
     final ids = students.map((s) => s.id).toList();
     return repo.getDatesWithAttendance(studentIds: ids);
   }
 
-  final classIds = await ref.watch(currentUserAssignedClassIdsProvider.future);
-  if (classIds == null) {
+  final scope = await ref.watch(currentUserFacilitatorScopeProvider.future);
+  if (scope == null) {
     return repo.getDatesWithAttendance(studentIds: null);
   }
   final ids = await ref.watch(allowedStudentIdsStreamProvider.future);

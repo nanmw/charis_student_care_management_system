@@ -21,3 +21,16 @@ final paymentsForYearStreamProvider =
     error: (_, __) => Stream.value([]),
   );
 });
+
+/// Stream of payment rows for academic [sessionCode]. Uses session-based repository API.
+/// Scoped to facilitator's students when allowedStudentIds is non-empty.
+final paymentsForSessionStreamProvider =
+    StreamProvider.autoDispose.family<List<Payment>, String>((ref, sessionCode) {
+  final repo = ref.watch(paymentRepositoryProvider);
+  final allowedIdsAsync = ref.watch(allowedStudentIdsStreamProvider);
+  return allowedIdsAsync.when(
+    data: (ids) => repo.watchPaymentsForSession(sessionCode, studentIds: ids.isEmpty ? null : ids),
+    loading: () => Stream.value([]),
+    error: (_, __) => Stream.value([]),
+  );
+});

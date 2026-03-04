@@ -5,7 +5,7 @@ import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
-import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/repository_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 
 /// Dialog to edit an existing user (display name, role, active, optional new password).
@@ -34,14 +34,17 @@ class UserEditDialog extends ConsumerStatefulWidget {
   ConsumerState<UserEditDialog> createState() => _UserEditDialogState();
 }
 
+const List<String> _modeOptions = ['Full-time', 'Hybrid'];
+
 class _UserEditDialogState extends ConsumerState<UserEditDialog> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _displayNameController;
   late UserRole _role;
   late bool _isActive;
   final _newPasswordController = TextEditingController();
-  final Set<int> _selectedClassIds = {};
-  Set<int> _initialAssignedClassIds = {};
+  int? _selectedClassId;
+  String? _selectedMode;
+  bool _scopeInitialized = false;
 
   @override
   void initState() {
@@ -49,6 +52,12 @@ class _UserEditDialogState extends ConsumerState<UserEditDialog> {
     _displayNameController = TextEditingController(text: widget.user.displayName ?? '');
     _role = UserRole.fromString(widget.user.role);
     _isActive = widget.user.isActive;
+    if (widget.user.allowedClassId != null) {
+      _selectedClassId = widget.user.allowedClassId;
+      _selectedMode = widget.user.allowedMode?.trim().isNotEmpty == true
+          ? widget.user.allowedMode
+          : 'Full-time';
+    }
   }
 
   @override
@@ -67,21 +76,17 @@ class _UserEditDialogState extends ConsumerState<UserEditDialog> {
             role: _role,
             isActive: _isActive,
             newPlainPassword: _newPasswordController.text.isEmpty ? null : _newPasswordController.text,
+            allowedClassId: _role == UserRole.facilitator ? _selectedClassId : null,
+            allowedMode: _role == UserRole.facilitator && _selectedMode != null && _selectedMode!.trim().isNotEmpty
+                ? _selectedMode!.trim()
+                : null,
           );
-      final classRepo = ref.read(classRepositoryProvider);
-      if (_role != UserRole.facilitator) {
-        for (final classId in _initialAssignedClassIds) {
-          await classRepo.updateFacilitator(classId, null);
-        }
-      } else {
-        for (final classId in _initialAssignedClassIds) {
-          if (!_selectedClassIds.contains(classId)) {
-            await classRepo.updateFacilitator(classId, null);
-          }
-        }
-        for (final classId in _selectedClassIds) {
-          if (!_initialAssignedClassIds.contains(classId)) {
-            await classRepo.updateFacilitator(classId, widget.user.id);
+      if (_role == UserRole.facilitator) {
+        final classRepo = ref.read(classRepositoryProvider);
+        final classes = await ref.read(allClassesFutureProvider.future);
+        for (final c in classes) {
+          if (c.facilitatorUserId == widget.user.id) {
+            await classRepo.updateFacilitator(c.id, null);
           }
         }
       }
@@ -105,10 +110,11 @@ class _UserEditDialogState extends ConsumerState<UserEditDialog> {
     final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     ref.listen(classesForFacilitatorUserIdProvider(widget.user.id), (prev, next) {
       next.whenData((classes) {
-        if (mounted && _initialAssignedClassIds.isEmpty) {
+        if (mounted && !_scopeInitialized && _selectedClassId == null && classes.isNotEmpty) {
           setState(() {
-            _initialAssignedClassIds = classes.map((c) => c.id).toSet();
-            _selectedClassIds.addAll(_initialAssignedClassIds);
+            _scopeInitialized = true;
+            _selectedClassId = classes.first.id;
+            _selectedMode ??= 'Full-time';
           });
         }
       });
@@ -162,25 +168,37 @@ class _UserEditDialogState extends ConsumerState<UserEditDialog> {
                 ),
                 if (_role == UserRole.facilitator) ...[
                   const SizedBox(height: 12),
-                  const Text('Assigned class(es)', style: TextStyle(fontFamily: 'Questrial', fontWeight: FontWeight.w500)),
+                  const Text('Assigned class and mode', style: TextStyle(fontFamily: 'Questrial', fontWeight: FontWeight.w500)),
                   const SizedBox(height: 4),
                   ref.watch(allClassesFutureProvider).when(
                     data: (classes) => Column(
                       mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: classes.map((c) => CheckboxListTile(
-                        title: Text(c.name, style: const TextStyle(fontFamily: 'Questrial')),
-                        value: _selectedClassIds.contains(c.id),
-                        onChanged: (v) => setState(() {
-                          if (v == true) {
-                            _selectedClassIds.add(c.id);
-                          } else {
-                            _selectedClassIds.remove(c.id);
-                          }
-                        }),
-                        contentPadding: EdgeInsets.zero,
-                        controlAffinity: ListTileControlAffinity.leading,
-                      ), ).toList(),
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        DropdownButtonFormField<int>(
+                          initialValue: _selectedClassId,
+                          decoration: const InputDecoration(
+                            labelText: 'Class',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: classes
+                              .map<DropdownMenuItem<int>>((SchoolClass c) => DropdownMenuItem<int>(value: c.id, child: Text(c.name)))
+                              .toList(),
+                          onChanged: (v) => setState(() => _selectedClassId = v),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          initialValue: _selectedMode ?? _modeOptions.first,
+                          decoration: const InputDecoration(
+                            labelText: 'Mode',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: _modeOptions
+                              .map((m) => DropdownMenuItem<String>(value: m, child: Text(m)))
+                              .toList(),
+                          onChanged: (v) => setState(() => _selectedMode = v),
+                        ),
+                      ],
                     ),
                     loading: () => const SizedBox(height: 24, child: Center(child: CircularProgressIndicator())),
                     error: (e, _) => Text('Error loading classes: $e', style: TextStyle(color: Theme.of(context).colorScheme.error)),

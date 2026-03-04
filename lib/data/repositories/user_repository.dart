@@ -51,11 +51,14 @@ class UserRepository {
   }
 
   /// Creates a new user. Throws if username already exists.
+  /// For facilitators, [allowedClassId] and [allowedMode] define scope (one class + one mode).
   Future<int> createUser({
     required String username,
     required String plainPassword,
     String? displayName,
     required UserRole role,
+    int? allowedClassId,
+    String? allowedMode,
   }) async {
     final existing = await findByUsername(username);
     if (existing != null) {
@@ -67,20 +70,24 @@ class UserRepository {
       passwordHash: hashPassword(plainPassword),
       displayName: Value(displayName),
       role: role.value,
+      allowedClassId: Value(role == UserRole.facilitator ? allowedClassId : null),
+      allowedMode: Value(role == UserRole.facilitator && allowedMode != null && allowedMode.isNotEmpty ? allowedMode : null),
       createdAt: now,
       updatedAt: now,
     );
     return await _db.into(_db.users).insert(companion);
   }
 
-  /// Updates user profile (display name, role, is_active). Optionally updates password if [newPlainPassword] is non-null.
-  /// When [isActive] is set to false, or [role] is set to non-facilitator, clears this user from any class's facilitator assignment.
+  /// Updates user profile (display name, role, is_active, allowed_class_id, allowed_mode). Optionally updates password if [newPlainPassword] is non-null.
+  /// When [isActive] is set to false, or [role] is set to non-facilitator, clears this user from any class's facilitator assignment and clears allowed_class_id/allowed_mode.
   Future<void> updateUser({
     required int id,
     String? displayName,
     UserRole? role,
     bool? isActive,
     String? newPlainPassword,
+    int? allowedClassId,
+    String? allowedMode,
   }) async {
     if (isActive == false ||
         (role != null && role != UserRole.facilitator)) {
@@ -89,11 +96,18 @@ class UserRepository {
           .write(const ClassesCompanion(facilitatorUserId: Value(null)));
     }
     final now = DateTime.now().millisecondsSinceEpoch;
+    final bool clearScope = role != null && role != UserRole.facilitator;
     final companion = UsersCompanion(
       updatedAt: Value(now),
       displayName: displayName != null ? Value(displayName) : const Value.absent(),
       role: role != null ? Value(role.value) : const Value.absent(),
       isActive: isActive != null ? Value(isActive) : const Value.absent(),
+      allowedClassId: clearScope
+          ? const Value(null)
+          : (allowedClassId != null ? Value(allowedClassId) : const Value.absent()),
+      allowedMode: clearScope
+          ? const Value(null)
+          : (allowedMode != null && allowedMode.isNotEmpty ? Value(allowedMode) : const Value.absent()),
       passwordHash: newPlainPassword != null && newPlainPassword.isNotEmpty
           ? Value(hashPassword(newPlainPassword))
           : const Value.absent(),

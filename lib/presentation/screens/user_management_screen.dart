@@ -125,7 +125,7 @@ class _UserManagementContent extends ConsumerWidget {
                 DataCell(Text(role.displayName, style: const TextStyle(fontFamily: 'Questrial'))),
                 DataCell(
                   role == UserRole.facilitator
-                      ? _AssignedClassesCell(userId: user.id)
+                      ? _AssignedClassesCell(user: user)
                       : const Text('—', style: TextStyle(fontFamily: 'Questrial',),),
                 ),
                 DataCell(Text(user.isActive ? 'Yes' : 'No', style: const TextStyle(fontFamily: 'Questrial'))),
@@ -157,18 +157,32 @@ class _UserManagementContent extends ConsumerWidget {
 
 }
 
-/// Shows assigned class names for a facilitator user.
+/// Shows assigned class and mode for a facilitator user (e.g. "Year 1 • Hybrid").
 class _AssignedClassesCell extends ConsumerWidget {
-  const _AssignedClassesCell({required this.userId});
+  const _AssignedClassesCell({required this.user});
 
-  final int userId;
+  final User user;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final async = ref.watch(classesForFacilitatorUserIdProvider(userId));
+    if (UserRole.fromString(user.role) != UserRole.facilitator) {
+      return const Text('—', style: TextStyle(fontFamily: 'Questrial'));
+    }
+    if (user.allowedClassId != null) {
+      final classAsync = ref.watch(classByIdProvider(user.allowedClassId!));
+      return classAsync.when(
+        data: (SchoolClass? c) => Text(
+          c == null ? '—' : '${c.name} • ${user.allowedMode ?? '—'}',
+          style: const TextStyle(fontFamily: 'Questrial'),
+        ),
+        loading: () => const Text('...', style: TextStyle(fontFamily: 'Questrial')),
+        error: (_, __) => const Text('—', style: TextStyle(fontFamily: 'Questrial')),
+      );
+    }
+    final async = ref.watch(classesForFacilitatorUserIdProvider(user.id));
     return async.when(
       data: (classes) => Text(
-        classes.isEmpty ? '—' : classes.map((c) => c.name).join(', '),
+        classes.isEmpty ? '—' : classes.map((SchoolClass c) => c.name).join(', '),
         style: const TextStyle(fontFamily: 'Questrial'),
       ),
       loading: () => const Text('...', style: TextStyle(fontFamily: 'Questrial')),

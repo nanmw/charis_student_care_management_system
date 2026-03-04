@@ -1,5 +1,7 @@
 import 'package:drift/drift.dart';
 
+import 'academic_sessions.dart';
+
 /// Mission payment schedule: one row per student per schedule year.
 /// Tracks trip selection, total amount, monthly payments (Mar–Oct), and comment.
 /// Paid to date and balance are computed (sum of months; amount − sum).
@@ -34,6 +36,10 @@ class MissionPaymentSchedule extends Table {
 
   /// Comment or notes
   TextColumn get comment => text().nullable()();
+
+  /// Academic session foreign key (preferred over raw year for new data).
+  IntColumn get academicSessionId =>
+      integer().nullable().references(AcademicSessions, #id)();
 
   @override
   List<Set<Column>> get uniqueKeys => [
