@@ -89,18 +89,15 @@ See `.cursor/rules.md` for development guidelines and business rules.
 ## Academic sessions
 
 - **What is an academic session?**  
-  An academic session represents one academic year (for example `2024-2025`). It is stored in the `academic_sessions` table and referenced by core tables (students, tests, attendance, payments, ministry entries, missions, mission payments) via `academic_session_id`.
+  An academic session is one calendar year **Jan–Oct** (for example code `2026` = Jan 2026–Oct 2026). It is stored in the `academic_sessions` table and referenced by core tables (students, tests, attendance, payments, ministry entries, missions, mission payments) via `academic_session_id`. Each session has **3 terms** (e.g. Term 1 Jan–Apr, Term 2 May–Jul, Term 3 Aug–Oct).
 
 - **Current academic session**  
-  The currently selected session is stored in the `app_settings` table under the key `current_academic_session`. The UI reads this value via `AcademicSessionRepository` and Riverpod providers. Reports and dashboards use the current session to scope queries (e.g. test results, balances, ministry hours).
+  The currently selected session is stored in the `app_settings` table under the key `current_academic_session`. Only **Admin (Level 01)** can set or change it, from the **Settings** screen (Academic session section). The UI reads this value via `AcademicSessionRepository` and Riverpod providers. Reports and dashboards use the current session to scope queries (e.g. test results, balances, ministry hours).
 
-- **Creating a new academic session each year**  
-  When a new academic year starts, an admin should:
-  1. Create a new academic session with the desired code (e.g. `2025-2026`).
-  2. Mark the new session as active (the app ensures only one active session at a time).
-  3. The `current_academic_session` setting is updated to this new code so all new records (tests, payments, attendance, ministry, missions) are associated with the correct session.
+- **Managing academic sessions**  
+  On **Settings** (admin only), the admin can create and edit sessions (code, start date, end date, display name, current/active). Suggestions are provided (e.g. current year as code, 1 Jan–31 Oct as dates). The Tests and Payments screens only **filter** by session; they do not set the global current session.
 
 - **Legacy data and backward compatibility**  
-  Existing data that used plain `year` or string `academic_session` values is automatically migrated to `academic_session_id` where possible (e.g. `2024` → `2024-2025`). Older columns (`year`, `tests.academic_session`, etc.) are kept for now and are still written in parallel so older exports and tooling continue to work.
+  Existing data that used plain `year` or string `academic_session` values is automatically migrated to `academic_session_id` where possible. Legacy session codes (e.g. `2024-2025`) are still supported; single-year codes (e.g. `2026`) are the standard. Older columns (`year`, `tests.academic_session`, etc.) are kept for now and are still written in parallel so older exports and tooling continue to work.
 
-  **Transitional query behaviour:** Session-scoped repository methods (e.g. `watchPaymentsForSession`, `watchForSession` for mission payments) prefer rows where `academic_session_id` matches the resolved session. They also **include legacy rows** where `academic_session_id` is null but the `year` (or session string) maps to the same session code. So dashboards and reports show both new session-tagged data and old year-only data for the chosen session. After everything uses `academic_session_id` in production, a follow-up migration could drop or ignore the legacy columns.
+  **Transitional query behaviour:** Session-scoped repository methods prefer rows where `academic_session_id` matches the resolved session. They also **include legacy rows** where `academic_session_id` is null but the `year` (or session string) maps to the same session. So dashboards and reports show both new session-tagged data and old year-only data for the chosen session.

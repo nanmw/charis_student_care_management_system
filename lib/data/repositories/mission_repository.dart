@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:charis_student_care/core/config/sync_folder_config.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/database/tables/mission_participations.dart';
@@ -41,12 +42,23 @@ class MissionParticipationRow {
 /// Mission repository: missions and participations with optional change-set logging.
 /// Only Admin Level 01 can manage missions (create/edit/deactivate).
 class MissionRepository {
-  MissionRepository(this._db, [ClassRepository? classRepo])
-      : _classRepo = classRepo ?? ClassRepository(_db);
+  MissionRepository(
+    this._db, {
+    ClassRepository? classRepo,
+    void Function()? onLocalChangeSetWritten,
+  })  : _classRepo = classRepo ?? ClassRepository(_db),
+        _onLocalChangeSetWritten = onLocalChangeSetWritten;
 
   final AppDatabase _db;
   final ClassRepository _classRepo;
+  final void Function()? _onLocalChangeSetWritten;
   static const _uuid = Uuid();
+
+  Future<String> _effectiveChangeSetDeviceId(String? deviceId) async {
+    final d = deviceId?.trim();
+    if (d != null && d.isNotEmpty && d != 'legacy') return d;
+    return SyncFolderConfig.getOrCreateDeviceId();
+  }
 
   // --- Missions
 
@@ -120,6 +132,8 @@ class MissionRepository {
     );
     final id = await _db.into(_db.missions).insert(companion);
     if (userId != null) {
+      final desc =
+          description?.trim().isEmpty ?? true ? null : description?.trim();
       await _insertChangeSet(
         table: 'missions',
         recordId: id.toString(),
@@ -127,14 +141,19 @@ class MissionRepository {
         payload: {
           'title': t,
           'location': location.trim(),
+          'startDate': startDate.toIso8601String(),
+          'endDate': endDate.toIso8601String(),
+          'slotsTotal': slotsTotal,
+          if (desc != null) 'description': desc,
+          'isActive': isActive,
           'year': year,
           'mode': m,
-          if (userDisplayName != null) 'userDisplayName': userDisplayName,
-          if (screen != null) 'screen': screen,
+          if (amount != null) 'amount': amount,
+          'academicSession': year,
         },
         userId: userId,
         version: 1,
-        deviceId: deviceId ?? 'legacy',
+        deviceId: deviceId,
         userDisplayName: userDisplayName,
         screen: screen,
       );
@@ -195,20 +214,28 @@ class MissionRepository {
       ),
     );
     if (userId != null) {
+      final desc =
+          description?.trim().isEmpty ?? true ? null : description?.trim();
       await _insertChangeSet(
         table: 'missions',
         recordId: id.toString(),
         operation: 'UPDATE',
         payload: {
           'title': t,
+          'location': location.trim(),
+          'startDate': startDate.toIso8601String(),
+          'endDate': endDate.toIso8601String(),
+          'slotsTotal': slotsTotal,
+          if (desc != null) 'description': desc,
+          'isActive': isActive,
           'year': year,
           'mode': m,
-          if (userDisplayName != null) 'userDisplayName': userDisplayName,
-          if (screen != null) 'screen': screen,
+          if (amount != null) 'amount': amount,
+          'academicSession': year,
         },
         userId: userId,
         version: 1,
-        deviceId: deviceId ?? 'legacy',
+        deviceId: deviceId,
         userDisplayName: userDisplayName,
         screen: screen,
       );
@@ -246,7 +273,7 @@ class MissionRepository {
         },
         userId: userId,
         version: 1,
-        deviceId: deviceId ?? 'legacy',
+        deviceId: deviceId,
         userDisplayName: userDisplayName,
         screen: screen,
       );
@@ -350,7 +377,15 @@ class MissionRepository {
     required int studentId,
     required String role,
     required double amount,
+    required UserRole userRole,
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
+    if (!RolePermissions.canManageMissions(userRole)) {
+      throw StateError('Role cannot manage missions');
+    }
     final mission = await getMission(missionId);
     if (mission == null) throw StateError('Mission not found');
     final student = await (_db.select(_db.students)
@@ -383,19 +418,70 @@ class MissionRepository {
     if (taken >= mission.slotsTotal) {
       throw StateError('No slots available for this mission');
     }
+    final resolvedRole = role.trim().isEmpty ? 'Participant' : role.trim();
     final companion = MissionParticipationsCompanion.insert(
       missionId: missionId,
       studentId: studentId,
-      role: role.trim().isEmpty ? 'Participant' : role.trim(),
+      role: resolvedRole,
       amount: Value(amount),
     );
-    return _db.into(_db.missionParticipations).insert(companion);
+    final id = await _db.into(_db.missionParticipations).insert(companion);
+    if (userId != null) {
+      await _insertChangeSet(
+        table: 'mission_participations',
+        recordId: id.toString(),
+        operation: 'INSERT',
+        payload: {
+          'missionId': missionId,
+          'studentId': studentId,
+          'role': resolvedRole,
+          'amount': amount,
+        },
+        userId: userId,
+        version: 1,
+        deviceId: deviceId,
+        userDisplayName: userDisplayName,
+        screen: screen,
+      );
+    }
+    return id;
   }
 
   /// Remove a participation by id.
-  Future<void> removeParticipation(int id) async {
+  Future<void> removeParticipation(
+    int id, {
+    required UserRole userRole,
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+  }) async {
+    if (!RolePermissions.canManageMissions(userRole)) {
+      throw StateError('Role cannot manage missions');
+    }
+    final row = await (_db.select(_db.missionParticipations)
+          ..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
     await (_db.delete(_db.missionParticipations)..where((t) => t.id.equals(id)))
         .go();
+    if (userId != null && row != null) {
+      await _insertChangeSet(
+        table: 'mission_participations',
+        recordId: id.toString(),
+        operation: 'DELETE',
+        payload: {
+          'missionId': row.missionId,
+          'studentId': row.studentId,
+          'role': row.role,
+          'amount': row.amount,
+        },
+        userId: userId,
+        version: 1,
+        deviceId: deviceId,
+        userDisplayName: userDisplayName,
+        screen: screen,
+      );
+    }
   }
 
   /// Stream of payments for a participation (for Record payment dialog / list).
@@ -412,14 +498,42 @@ class MissionRepository {
     required int participationId,
     required DateTime paymentDate,
     required double amount,
+    required UserRole userRole,
+    String? academicSession,
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
+    if (!RolePermissions.canManageFinancials(userRole)) {
+      throw StateError('Role cannot manage financials');
+    }
     if (amount <= 0) throw ArgumentError('Amount must be positive');
     final companion = MissionPaymentsCompanion.insert(
       missionParticipationId: participationId,
       paymentDate: paymentDate,
       amount: amount,
     );
-    return _db.into(_db.missionPayments).insert(companion);
+    final id = await _db.into(_db.missionPayments).insert(companion);
+    if (userId != null) {
+      await _insertChangeSet(
+        table: 'mission_payments',
+        recordId: id.toString(),
+        operation: 'INSERT',
+        payload: {
+          'missionParticipationId': participationId,
+          'paymentDate': paymentDate.toIso8601String(),
+          'amount': amount,
+          if (academicSession != null) 'academicSession': academicSession,
+        },
+        userId: userId,
+        version: 1,
+        deviceId: deviceId,
+        userDisplayName: userDisplayName,
+        screen: screen,
+      );
+    }
+    return id;
   }
 
   /// Count participations for a mission (for slots available).
@@ -438,10 +552,11 @@ class MissionRepository {
     required Map<String, dynamic> payload,
     required String userId,
     required int version,
-    required String deviceId,
+    String? deviceId,
     String? userDisplayName,
     String? screen,
   }) async {
+    final effectiveDeviceId = await _effectiveChangeSetDeviceId(deviceId);
     final fullPayload = Map<String, dynamic>.from(payload);
     if (userDisplayName != null) {
       fullPayload['userDisplayName'] = userDisplayName;
@@ -456,8 +571,9 @@ class MissionRepository {
             payload: jsonEncode(fullPayload),
             userId: userId,
             version: version,
-            deviceId: deviceId,
+            deviceId: effectiveDeviceId,
           ),
         );
+    _onLocalChangeSetWritten?.call();
   }
 }

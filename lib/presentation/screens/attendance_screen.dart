@@ -5,7 +5,8 @@ import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:go_router/go_router.dart';
-import 'package:charis_student_care/core/utils/date_utils.dart' as app_date_utils;
+import 'package:charis_student_care/core/utils/date_utils.dart'
+    as app_date_utils;
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/attendance_repository.dart';
 import 'package:charis_student_care/domain/use_cases/sort_students_alphabetically.dart';
@@ -16,11 +17,13 @@ import 'package:charis_student_care/presentation/providers/class_providers.dart'
 import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
+import 'package:charis_student_care/presentation/theme/app_table_style.dart';
 import 'package:charis_student_care/presentation/widgets/attendance_date_picker_dialog.dart';
 import 'package:charis_student_care/presentation/widgets/student_summary_dialog.dart';
 
 // #region agent log (disabled for performance - synchronous file I/O was blocking UI)
-void _debugLog(String location, String message, Map<String, dynamic> data, String hypothesisId) {
+void _debugLog(String location, String message, Map<String, dynamic> data,
+    String hypothesisId,) {
   // No-op: was causing UI jank due to synchronous file writes on every attendance action.
 }
 // #endregion
@@ -95,10 +98,13 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     final colorScheme = Theme.of(context).colorScheme;
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
-    final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
+    final redColor =
+        isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
-    final attendanceAsync = ref.watch(attendanceForDateProvider(_attendanceDate));
-    final visibleClassesRaw = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull;
+    final attendanceAsync =
+        ref.watch(attendanceForDateProvider(_attendanceDate));
+    final visibleClassesRaw =
+        ref.watch(classesVisibleToCurrentUserProvider).valueOrNull;
     final visibleClasses = visibleClassesRaw ?? <SchoolClass>[];
     final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
     final auth = ref.watch(authStateProvider).valueOrNull;
@@ -117,8 +123,10 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         defaultClassId = scope.classIds!.first;
         defaultMode = scope.mode ?? 'Full-time';
       } else {
-        final year1 = visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
-        defaultClassId = year1.isEmpty ? visibleClasses.first.id : year1.first.id;
+        final year1 =
+            visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
+        defaultClassId =
+            year1.isEmpty ? visibleClasses.first.id : year1.first.id;
       }
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -173,7 +181,8 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
               data: (allStudents) {
                 final filtered = allStudents
                     .where((s) => s.mode == _selectedMode)
-                    .where((s) => _classFilter == null || s.classId == _classFilter)
+                    .where((s) =>
+                        _classFilter == null || s.classId == _classFilter,)
                     .toList();
                 final allStudentsSorted = sortStudentsAlphabetically(filtered);
                 // Reset displayed count if filters changed
@@ -183,9 +192,12 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                 }
                 final displayedStudents = total == 0
                     ? <Student>[]
-                    : allStudentsSorted.sublist(0, _displayedCount.clamp(0, total));
+                    : allStudentsSorted.sublist(
+                        0, _displayedCount.clamp(0, total),);
                 // Initialize edits for all filtered students, but only create controllers for displayed ones
-                _refillEditsIfNeeded(allStudentsSorted, attendanceAsync.valueOrNull, displayedStudents: displayedStudents);
+                _refillEditsIfNeeded(
+                    allStudentsSorted, attendanceAsync.valueOrNull,
+                    displayedStudents: displayedStudents,);
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -215,7 +227,8 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                               onNotification: (notification) {
                                 if (notification is ScrollUpdateNotification) {
                                   final metrics = notification.metrics;
-                                  if (metrics.pixels >= metrics.maxScrollExtent * 0.8 &&
+                                  if (metrics.pixels >=
+                                          metrics.maxScrollExtent * 0.8 &&
                                       _displayedCount < total &&
                                       !_isLoadingMore) {
                                     _loadMore();
@@ -223,29 +236,22 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
                                 }
                                 return false;
                               },
-                              child: _buildTable(context, colorScheme, redColor, displayedStudents),
+                              child: _buildTable(context, colorScheme, redColor,
+                                  displayedStudents,),
                             ),
-                    ),
-                    const SizedBox(height: 16),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          _buildBulkTickButton(colorScheme, redColor),
-                          const SizedBox(width: 12),
-                          _buildSaveButton(colorScheme, redColor),
-                        ],
-                      ),
                     ),
                   ],
                 );
               },
               loading: () => Center(
-                  child: CircularProgressIndicator(color: colorScheme.onSurface),),
+                child: CircularProgressIndicator(color: colorScheme.onSurface),
+              ),
               error: (err, _) => Center(
-                  child: Text('Error: $err',
-                      style: TextStyle(color: colorScheme.onSurface),),),
+                child: Text(
+                  'Error: $err',
+                  style: TextStyle(color: colorScheme.onSurface),
+                ),
+              ),
             ),
           ),
         ],
@@ -253,11 +259,14 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
   }
 
-  void _refillEditsIfNeeded(List<Student> students, List<AttendanceData>? rows, {List<Student>? displayedStudents}) {
-    final key = '${_attendanceDate.millisecondsSinceEpoch}_${students.map((s) => s.id).join(",")}_${rows?.length ?? -1}';
+  void _refillEditsIfNeeded(List<Student> students, List<AttendanceData>? rows,
+      {List<Student>? displayedStudents,}) {
+    final key =
+        '${_attendanceDate.millisecondsSinceEpoch}_${students.map((s) => s.id).join(",")}_${rows?.length ?? -1}';
     if (key == _refillKey) {
       // Still need to ensure controllers exist for displayed students
-      final displayedIds = (displayedStudents ?? students).map((s) => s.id).toSet();
+      final displayedIds =
+          (displayedStudents ?? students).map((s) => s.id).toSet();
       for (final id in displayedIds) {
         final edit = _edits[id] ?? _RowEdit(present: false);
         _noteControllers[id] ??= TextEditingController(text: edit.notes);
@@ -272,7 +281,8 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
       return;
     }
     _refillKey = key;
-    final displayedIds = (displayedStudents ?? students).map((s) => s.id).toSet();
+    final displayedIds =
+        (displayedStudents ?? students).map((s) => s.id).toSet();
     // Clean up controllers for students no longer in displayed list
     for (final id in _noteControllers.keys.toList()) {
       if (!displayedIds.contains(id)) {
@@ -292,7 +302,16 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     for (final s in students) {
       final row = rowMap[s.id];
       // #region agent log
-      _debugLog('attendance_screen.dart:_refillEditsIfNeeded', 'Processing student', {'studentId': s.id, 'hasRow': row != null, 'rowPresent': row?.present, 'rowNotes': row?.notes}, 'D');
+      _debugLog(
+          'attendance_screen.dart:_refillEditsIfNeeded',
+          'Processing student',
+          {
+            'studentId': s.id,
+            'hasRow': row != null,
+            'rowPresent': row?.present,
+            'rowNotes': row?.notes,
+          },
+          'D',);
       // #endregion
       final notes = row?.notes ?? '';
       final originalEdit = _RowEdit(
@@ -308,7 +327,8 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     // Only create controllers for displayed students
     for (final s in (displayedStudents ?? students)) {
       final edit = edits[s.id] ?? _RowEdit(present: false);
-      final controller = _noteControllers[s.id] ??= TextEditingController(text: edit.notes);
+      final controller =
+          _noteControllers[s.id] ??= TextEditingController(text: edit.notes);
       controller.text = edit.notes;
     }
     if (mounted) {
@@ -321,30 +341,58 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
 
   Widget _buildFiltersRow(ColorScheme colorScheme, Color redColor) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Text('Student Mode:',
-            style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 14,
-                fontFamily: 'Questrial',),),
-        const SizedBox(width: 8),
-        _buildModeToggle(colorScheme, redColor),
-        const SizedBox(width: 24),
-        Text('Class:',
-            style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 14,
-                fontFamily: 'Questrial',),),
-        const SizedBox(width: 8),
-        _buildClassDropdown(colorScheme),
-        const SizedBox(width: 24),
-        Text('Attendance Date:',
-            style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 14,
-                fontFamily: 'Questrial',),),
-        const SizedBox(width: 8),
-        _buildDateField(colorScheme),
+        Expanded(
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                Text(
+                  'Student Mode:',
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 14,
+                    fontFamily: 'Questrial',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _buildModeToggle(colorScheme, redColor),
+                const SizedBox(width: 24),
+                Text(
+                  'Class:',
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 14,
+                    fontFamily: 'Questrial',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _buildClassDropdown(colorScheme),
+                const SizedBox(width: 24),
+                Text(
+                  'Attendance Date:',
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 14,
+                    fontFamily: 'Questrial',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _buildDateField(colorScheme),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 16),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildBulkTickButton(colorScheme, redColor),
+            const SizedBox(width: 12),
+            _buildSaveButton(colorScheme, redColor),
+          ],
+        ),
       ],
     );
   }
@@ -383,34 +431,44 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         });
       },
       children: modeOptions
-          .map((l) => Text(l, style: const TextStyle(fontFamily: 'Questrial', fontSize: 14)))
+          .map((l) => Text(l,
+              style: const TextStyle(fontFamily: 'Questrial', fontSize: 14),),)
           .toList(),
     );
   }
 
   Widget _buildClassDropdown(ColorScheme colorScheme) {
-    final classes = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull ?? [];
+    final classes =
+        ref.watch(classesVisibleToCurrentUserProvider).valueOrNull ?? [];
     return SizedBox(
       width: 120,
       child: Container(
         height: 44,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest,
+          color: Colors.transparent,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: colorScheme.outline),
+          border: Border.all(color: colorScheme.outlineVariant),
         ),
         child: DropdownButton<int?>(
           value: classes.isEmpty ? null : _classFilter,
-          hint: Text('Class', style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14)),
+          hint: Text('Class',
+              style:
+                  TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),),
           isExpanded: true,
           underline: const SizedBox.shrink(),
           borderRadius: BorderRadius.circular(8),
           items: classes
-              .map<DropdownMenuItem<int?>>((SchoolClass c) => DropdownMenuItem<int?>(
-                    value: c.id,
-                    child: Text(c.name, style: TextStyle(color: colorScheme.onSurface, fontSize: 14),),
-                  ),)
+              .map<DropdownMenuItem<int?>>(
+                (SchoolClass c) => DropdownMenuItem<int?>(
+                  value: c.id,
+                  child: Text(
+                    c.name,
+                    style:
+                        TextStyle(color: colorScheme.onSurface, fontSize: 14),
+                  ),
+                ),
+              )
               .toList(),
           onChanged: (v) {
             setState(() {
@@ -429,11 +487,12 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         int? effectiveClassFilter = _classFilter;
         if (effectiveClassFilter == null) {
           final visibleClasses = await ref.read(
-              classesVisibleToCurrentUserProvider.future,
+            classesVisibleToCurrentUserProvider.future,
           );
           final auth = await ref.read(authStateProvider.future);
           if (auth is Authenticated && visibleClasses.isNotEmpty) {
-            final year1 = visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
+            final year1 =
+                visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
             final firstClass = visibleClasses.first;
             effectiveClassFilter = auth.role == UserRole.facilitator
                 ? firstClass.id
@@ -443,16 +502,17 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         // Always compute dates with attendance fresh for the current class filter.
         ref.invalidate(datesWithAttendanceProvider(effectiveClassFilter));
         final datesWithAttendance = await ref.read(
-            datesWithAttendanceProvider(effectiveClassFilter).future,
+          datesWithAttendanceProvider(effectiveClassFilter).future,
         );
         if (!mounted) return;
         bool sameDay(DateTime a, DateTime b) =>
             a.year == b.year && a.month == b.month && a.day == b.day;
-        final initialDate = datesWithAttendance.any((d) => sameDay(d, _attendanceDate))
-            ? _attendanceDate
-            : (datesWithAttendance.isNotEmpty
-                ? datesWithAttendance.reduce((a, b) => a.isAfter(b) ? a : b)
-                : DateTime.now());
+        final initialDate =
+            datesWithAttendance.any((d) => sameDay(d, _attendanceDate))
+                ? _attendanceDate
+                : (datesWithAttendance.isNotEmpty
+                    ? datesWithAttendance.reduce((a, b) => a.isAfter(b) ? a : b)
+                    : DateTime.now());
         await showDialog<void>(
           context: context,
           builder: (context) => AttendanceDatePickerDialog(
@@ -474,169 +534,236 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         height: 44,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest,
+          color: Colors.transparent,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: colorScheme.outline),
+          border: Border.all(color: colorScheme.outlineVariant),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
               app_date_utils.DateUtils.formatAttendanceDate(_attendanceDate),
-              style: TextStyle(color: colorScheme.onSurface, fontSize: 14, fontFamily: 'Questrial'),
+              style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontSize: 14,
+                  fontFamily: 'Questrial',),
             ),
             const SizedBox(width: 8),
-            Icon(Icons.calendar_today, size: 20, color: colorScheme.onSurfaceVariant),
+            Icon(Icons.calendar_today,
+                size: 20, color: colorScheme.onSurfaceVariant,),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTable(BuildContext context, ColorScheme colorScheme, Color redColor, List<Student> students) {
+  Widget _buildTable(BuildContext context, ColorScheme colorScheme,
+      Color redColor, List<Student> students,) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final tableWidth = constraints.maxWidth;
         return RepaintBoundary(
           child: SingleChildScrollView(
-          controller: _scrollController,
-          scrollDirection: Axis.vertical,
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SizedBox(
-              width: tableWidth,
-              child: Table(
-                columnWidths: const {
-                  0: FlexColumnWidth(0.5),
-                  1: FlexColumnWidth(2),
-                  2: FlexColumnWidth(0.6),
-                  3: FlexColumnWidth(2),
-                  4: FlexColumnWidth(0.5),
-                  5: FlexColumnWidth(0.4),
-                },
-                border: TableBorder.all(color: colorScheme.outlineVariant),
-                children: [
-                  TableRow(
-                    decoration: BoxDecoration(color: colorScheme.surfaceContainerHighest),
-                    children: [
-                      _tableHeader(context, 'S/N'),
-                      _tableHeader(context, 'Student Name'),
-                      _tableHeader(context, 'Present'),
-                      _tableHeader(context, 'Notes'),
-                      _tableHeader(context, '%'),
-                      _tableHeader(context, 'View'),
-                    ],
-                  ),
-                  ...students.asMap().entries.map((e) {
-                    final index = e.key;
-                    final student = e.value;
-                    final edit = _edits[student.id] ?? _RowEdit(present: false);
-                    final isIncomplete = edit.percent < 100;
-                    Color rowColor = index.isEven
-                        ? colorScheme.surface
-                        : colorScheme.surfaceContainerLow.withValues(alpha: 0.5);
-                    if (isIncomplete) {
-                      rowColor = AppColors.withdrawnStatusBackground;
-                    }
-                    // Ensure controller exists
-                    // #region agent log
-                    _debugLog('attendance_screen.dart:_buildTable', 'Checking controller for student', {'studentId': student.id, 'hasController': _noteControllers.containsKey(student.id)}, 'B');
-                    // #endregion
-                    _noteControllers[student.id] ??= TextEditingController(text: edit.notes);
-                    // #region agent log
-                    _debugLog('attendance_screen.dart:_buildTable', 'Controller ensured', {'studentId': student.id, 'controllerIsNull': _noteControllers[student.id] == null}, 'B');
-                    // #endregion
-                    final controller = _noteControllers[student.id]!;
-                    return TableRow(
-                      decoration: BoxDecoration(color: rowColor),
+            controller: _scrollController,
+            scrollDirection: Axis.vertical,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: tableWidth,
+                child: Table(
+                  columnWidths: const {
+                    0: FlexColumnWidth(0.5),
+                    1: FlexColumnWidth(2),
+                    2: FlexColumnWidth(0.6),
+                    3: FlexColumnWidth(2),
+                    4: FlexColumnWidth(0.5),
+                    5: FlexColumnWidth(0.4),
+                  },
+                  border: AppTableStyle.materialTableBorder(colorScheme),
+                  children: [
+                    TableRow(
+                      decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerHighest,),
                       children: [
-                        _cell(context, colorScheme, Text('${index + 1}', style: TextStyle(color: colorScheme.onSurface, fontSize: 14, fontFamily: 'Questrial'))),
-                        _cell(context, colorScheme, Text('${student.surname} ${student.firstName}', style: TextStyle(color: colorScheme.onSurface, fontSize: 14, fontFamily: 'Questrial'))),
-                        _checkboxCell(context, colorScheme, redColor, edit.present, (v) => _updateEdit(student.id, (e) => e.present = v)),
-                        _cell(context, colorScheme, TextField(
-                          onChanged: (v) => _updateEdit(student.id, (e) => e.notes = v),
-                          controller: controller,
-                          decoration: InputDecoration(
-                            hintText: 'Add notes...',
-                            hintStyle: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 13),
-                            border: InputBorder.none,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                            isDense: true,
-                          ),
-                          style: TextStyle(color: colorScheme.onSurface, fontSize: 13),
-                        ),),
-                        _cell(context, colorScheme, Text('${edit.percent}%', style: TextStyle(color: colorScheme.onSurface, fontSize: 14, fontFamily: 'Questrial'))),
-                        _cell(context, colorScheme, Center(
-                          child: IconButton(
-                            onPressed: () {
-                              StudentSummaryDialog.show(
-                                context: context,
-                                student: student,
-                              );
-                            },
-                            icon: Icon(Icons.visibility_outlined, size: 20, color: colorScheme.onSurfaceVariant),
-                            tooltip: 'View Student Summary',
-                            padding: const EdgeInsets.all(8),
-                            constraints: const BoxConstraints(),
-                          ),
-                        ),),
+                        _tableHeader(context, 'S/N'),
+                        _tableHeader(context, 'Student Name'),
+                        _tableHeader(context, 'Present'),
+                        _tableHeader(context, 'Notes'),
+                        _tableHeader(context, '%'),
+                        _tableHeader(context, 'View'),
                       ],
-                    );
-                  }),
-                ],
+                    ),
+                    ...students.asMap().entries.map((e) {
+                      final index = e.key;
+                      final student = e.value;
+                      final edit =
+                          _edits[student.id] ?? _RowEdit(present: false);
+                      // Ensure controller exists
+                      // #region agent log
+                      _debugLog(
+                          'attendance_screen.dart:_buildTable',
+                          'Checking controller for student',
+                          {
+                            'studentId': student.id,
+                            'hasController':
+                                _noteControllers.containsKey(student.id),
+                          },
+                          'B',);
+                      // #endregion
+                      _noteControllers[student.id] ??=
+                          TextEditingController(text: edit.notes);
+                      // #region agent log
+                      _debugLog(
+                          'attendance_screen.dart:_buildTable',
+                          'Controller ensured',
+                          {
+                            'studentId': student.id,
+                            'controllerIsNull':
+                                _noteControllers[student.id] == null,
+                          },
+                          'B',);
+                      // #endregion
+                      final controller = _noteControllers[student.id]!;
+                      return TableRow(
+                        decoration: BoxDecoration(color: colorScheme.surface),
+                        children: [
+                          _cell(
+                              context,
+                              colorScheme,
+                              Text('${index + 1}',
+                                  style: TextStyle(
+                                      color: colorScheme.onSurface,
+                                      fontSize: 14,
+                                      fontFamily: 'Questrial',),),),
+                          _cell(
+                              context,
+                              colorScheme,
+                              Text('${student.surname} ${student.firstName}',
+                                  style: TextStyle(
+                                      color: colorScheme.onSurface,
+                                      fontSize: 14,
+                                      fontFamily: 'Questrial',),),),
+                          _checkboxCell(
+                              context,
+                              colorScheme,
+                              redColor,
+                              edit.present,
+                              (v) => _updateEdit(
+                                  student.id, (e) => e.present = v,),),
+                          _cell(
+                            context,
+                            colorScheme,
+                            TextField(
+                              onChanged: (v) => _updateEdit(
+                                student.id,
+                                (e) => e.notes = v,
+                                rebuild: false,
+                              ),
+                              controller: controller,
+                              decoration: InputDecoration(
+                                hintText: 'Add notes...',
+                                hintStyle: TextStyle(
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontSize: 13,),
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                disabledBorder: InputBorder.none,
+                                errorBorder: InputBorder.none,
+                                focusedErrorBorder: InputBorder.none,
+                                contentPadding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 6,),
+                                isDense: true,
+                              ),
+                              style: TextStyle(
+                                  color: colorScheme.onSurface, fontSize: 13,),
+                            ),
+                          ),
+                          _cell(
+                              context,
+                              colorScheme,
+                              Text('${edit.percent}%',
+                                  style: TextStyle(
+                                      color: colorScheme.onSurface,
+                                      fontSize: 14,
+                                      fontFamily: 'Questrial',),),),
+                          _cell(
+                            context,
+                            colorScheme,
+                            Center(
+                              child: IconButton(
+                                onPressed: () {
+                                  StudentSummaryDialog.show(
+                                    context: context,
+                                    student: student,
+                                  );
+                                },
+                                icon: Icon(Icons.visibility_outlined,
+                                    size: 14,
+                                    color: colorScheme.onSurfaceVariant,),
+                                tooltip: 'View Student Summary',
+                                padding: const EdgeInsets.all(6),
+                                constraints: const BoxConstraints(),
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    }),
+                  ],
+                ),
               ),
             ),
           ),
-        ),
         );
       },
     );
   }
 
-  void _updateEdit(int studentId, void Function(_RowEdit) update) {
+  void _updateEdit(
+    int studentId,
+    void Function(_RowEdit) update, {
+    bool rebuild = true,
+  }) {
     final e = _edits[studentId];
     if (e != null) {
       update(e);
-      setState(() {});
+      if (rebuild) setState(() {});
     }
   }
 
   Widget _tableHeader(BuildContext context, String text) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Text(
-          text,
-          style: TextStyle(
-            color: colorScheme.onSurface,
-            fontWeight: FontWeight.w600,
-            fontSize: 14,
-            fontFamily: 'Questrial',
-          ),
-        ),
-      ),
-    );
+    return AppTableStyle.sfHeaderCell(context, text);
   }
 
   Widget _cell(BuildContext context, ColorScheme colorScheme, Widget child) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: AppTableStyle.cellPadding,
       child: child,
     );
   }
 
-  Widget _checkboxCell(BuildContext context, ColorScheme colorScheme, Color redColor, bool value, ValueChanged<bool> onChanged) {
+  Widget _checkboxCell(BuildContext context, ColorScheme colorScheme,
+      Color redColor, bool value, ValueChanged<bool> onChanged,) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: AppTableStyle.cellPadding,
       child: Center(
-        child: Checkbox(
-          value: value,
-          onChanged: (v) => onChanged(v ?? false),
-          activeColor: redColor,
-          checkColor: AppColors.charisWhite,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        child: SizedBox(
+          width: 18,
+          height: 18,
+          child: FittedBox(
+            fit: BoxFit.contain,
+            child: Checkbox(
+              value: value,
+              onChanged: (v) => onChanged(v ?? false),
+              activeColor: redColor,
+              checkColor: AppColors.charisWhite,
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              visualDensity: VisualDensity.compact,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4),),
+            ),
+          ),
         ),
       ),
     );
@@ -646,7 +773,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     return OutlinedButton.icon(
       onPressed: () => _handleBulkTickAttendance(context),
       icon: const Icon(Icons.check_circle_outline, size: 20),
-      label: const Text('Tick All Present', style: TextStyle(fontFamily: 'Questrial', fontWeight: FontWeight.w600)),
+      label: const Text('Tick All Present',
+          style:
+              TextStyle(fontFamily: 'Questrial', fontWeight: FontWeight.w600),),
       style: OutlinedButton.styleFrom(
         foregroundColor: redColor,
         side: BorderSide(color: redColor),
@@ -660,7 +789,11 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     return ElevatedButton.icon(
       onPressed: _save,
       icon: const Icon(Icons.save, size: 20, color: AppColors.charisWhite),
-      label: const Text('Save Changes', style: TextStyle(color: AppColors.charisWhite, fontFamily: 'Questrial', fontWeight: FontWeight.w600)),
+      label: const Text('Save Changes',
+          style: TextStyle(
+              color: AppColors.charisWhite,
+              fontFamily: 'Questrial',
+              fontWeight: FontWeight.w600,),),
       style: ElevatedButton.styleFrom(
         backgroundColor: redColor,
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
@@ -672,7 +805,8 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   Future<void> _handleBulkTickAttendance(BuildContext context) async {
     final themeMode = ref.read(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
-    final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
+    final redColor =
+        isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     // Get current filtered students
     final studentsAsync = ref.read(studentsStreamProvider('Active'));
     final allStudents = studentsAsync.when(
@@ -690,7 +824,8 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     if (students.isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No students match the selected filters')),
+          const SnackBar(
+              content: Text('No students match the selected filters'),),
         );
       }
       return;
@@ -705,7 +840,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     if (studentsToUpdate.isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('All filtered students are already marked as present')),
+          const SnackBar(
+              content:
+                  Text('All filtered students are already marked as present'),),
         );
       }
       return;
@@ -731,7 +868,8 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Marked ${studentsToUpdate.length} student${studentsToUpdate.length == 1 ? '' : 's'} as present'),
+          content: Text(
+              'Marked ${studentsToUpdate.length} student${studentsToUpdate.length == 1 ? '' : 's'} as present',),
           backgroundColor: redColor,
         ),
       );
@@ -740,36 +878,47 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
 
   Future<void> _save() async {
     // #region agent log
-    _debugLog('attendance_screen.dart:_save', 'Save method called', {'date': _attendanceDate.toString(), 'editsCount': _edits.length}, 'E');
+    _debugLog('attendance_screen.dart:_save', 'Save method called',
+        {'date': _attendanceDate.toString(), 'editsCount': _edits.length}, 'E',);
     // #endregion
     final repo = ref.read(attendanceRepositoryProvider);
     // Use scoped students (facilitators see only their class)
     // #region agent log
-    _debugLog('attendance_screen.dart:_save', 'Getting students stream', {}, 'C');
+    _debugLog(
+        'attendance_screen.dart:_save', 'Getting students stream', {}, 'C',);
     // #endregion
     final allStudents = await ref.read(studentsStreamProvider('Active').future);
     // #region agent log
-    _debugLog('attendance_screen.dart:_save', 'Got students from stream', {'count': allStudents.length}, 'C');
+    _debugLog('attendance_screen.dart:_save', 'Got students from stream',
+        {'count': allStudents.length}, 'C',);
     // #endregion
-    
+
     final filtered = allStudents
         .where((s) => s.mode == _selectedMode)
         .where((s) => _classFilter == null || s.classId == _classFilter)
         .toList();
     final students = sortStudentsAlphabetically(filtered);
     // #region agent log
-    _debugLog('attendance_screen.dart:_save', 'Filtered students', {'filteredCount': students.length, 'selectedMode': _selectedMode, 'classFilter': _classFilter}, 'E');
+    _debugLog(
+        'attendance_screen.dart:_save',
+        'Filtered students',
+        {
+          'filteredCount': students.length,
+          'selectedMode': _selectedMode,
+          'classFilter': _classFilter,
+        },
+        'E',);
     // #endregion
-    
+
     // Only include entries that have been changed from their original state
     final entries = <AttendanceEntry>[];
     for (final student in students) {
       final edit = _edits[student.id] ?? _RowEdit(present: false);
       final originalEdit = _originalEdits[student.id];
-      
+
       // Check if this entry has changed
       bool hasChanged = false;
-      
+
       if (originalEdit == null) {
         // New entry - include if present is true or notes are not empty
         if (edit.present || (edit.notes.trim().isNotEmpty)) {
@@ -779,52 +928,70 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         // Existing entry - check if present or notes changed
         final notesChanged = (edit.notes.trim()) != (originalEdit.notes.trim());
         final presentChanged = edit.present != originalEdit.present;
-        
+
         if (presentChanged || notesChanged) {
           hasChanged = true;
         }
       }
-      
+
       if (hasChanged) {
-        entries.add(AttendanceEntry(
-          studentId: student.id,
-          present: edit.present,
-          notes: edit.notes.trim().isEmpty ? null : edit.notes.trim(),
-        ),);
+        entries.add(
+          AttendanceEntry(
+            studentId: student.id,
+            present: edit.present,
+            notes: edit.notes.trim().isEmpty ? null : edit.notes.trim(),
+          ),
+        );
       }
     }
     // #region agent log
-    _debugLog('attendance_screen.dart:_save', 'Created entries', {'entriesCount': entries.length, 'totalStudents': students.length}, 'E');
+    _debugLog(
+        'attendance_screen.dart:_save',
+        'Created entries',
+        {'entriesCount': entries.length, 'totalStudents': students.length},
+        'E',);
     // #endregion
-    
+
     try {
       // Get userId for change set logging
       final auth = ref.read(authStateProvider).valueOrNull;
       final userId = auth is Authenticated ? auth.user.id : null;
-      
+
       // #region agent log
-      _debugLog('attendance_screen.dart:_save', 'Calling upsertAttendanceForDate', {'entriesCount': entries.length}, 'A');
+      _debugLog(
+          'attendance_screen.dart:_save',
+          'Calling upsertAttendanceForDate',
+          {'entriesCount': entries.length},
+          'A',);
       // #endregion
-      final userDisplayName = auth is Authenticated ? auth.user.displayName : null;
+      final userDisplayName =
+          auth is Authenticated ? auth.user.displayName : null;
       await repo.upsertAttendanceForDate(
         _attendanceDate,
         entries,
+        userRole: auth is Authenticated
+            ? auth.role
+            : UserRole.facilitator,
         userId: userId,
         userDisplayName: userDisplayName,
         screen: 'Attendance',
       );
       // #region agent log
-      _debugLog('attendance_screen.dart:_save', 'Upsert completed successfully', {}, 'A');
+      _debugLog('attendance_screen.dart:_save', 'Upsert completed successfully',
+          {}, 'A',);
       // #endregion
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Attendance saved.')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('Attendance saved.')));
       }
     } catch (e, stackTrace) {
       // #region agent log
-      _debugLog('attendance_screen.dart:_save', 'Error in save', {'error': e.toString(), 'stackTrace': stackTrace.toString()}, 'A');
+      _debugLog('attendance_screen.dart:_save', 'Error in save',
+          {'error': e.toString(), 'stackTrace': stackTrace.toString()}, 'A',);
       // #endregion
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     }
   }

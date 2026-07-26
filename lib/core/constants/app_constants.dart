@@ -2,10 +2,6 @@
 class AppConstants {
   AppConstants._();
 
-  // Tuition
-  static const double fullTuitionAmount = 19800.0; // Rand
-  static const double lumpSumDiscountAmount = 18000.0; // Rand
-
   // Test passing score
   static const int passingTestScore = 70;
 
@@ -23,12 +19,12 @@ class AppConstants {
     },
   };
 
-  /// Display string for ministry hours rule (e.g. "7 HOURS PER TERM (1st & 2nd term) ON OR OFF CAMPUS").
+  /// Display string for ministry hours rule (3 terms per session).
   /// [modeUi] is the UI label e.g. "Full-time" or "Hybrid"; [yearLevel] is 1, 2, or 3.
   static String ministryHoursRequirementText(String modeUi, int yearLevel) {
     final key = modeUi == 'Full-time' ? 'FullTime' : 'Hybrid';
     final hours = ministryHoursRequirements[key]?[yearLevel] ?? 0;
-    return '$hours HOURS PER TERM (1st & 2nd term) ON OR OFF CAMPUS';
+    return '$hours HOURS PER TERM (1st, 2nd & 3rd term) ON OR OFF CAMPUS';
   }
 
   /// Ministry type options for dropdown (from design)
@@ -38,13 +34,6 @@ class AppConstants {
     'Teaching',
     'Worship',
     'Pastoral Care',
-  ];
-
-  /// Year options for report filters (legacy / single-student export).
-  static const List<String> reportYearOptions = [
-    '2024',
-    '2025',
-    '2026',
   ];
 
   /// Class options for report filters (Export & Reports screen).
@@ -61,11 +50,30 @@ class AppConstants {
     'Both',
   ];
 
-  /// Year filter options for missions (e.g. filter by year).
-  static const List<String> missionYearFilterOptions = [
-    '2024',
-    '2025',
-    '2026',
-    '2027',
+  // --- Dashboard finance KPIs (managerial diagnostics) ---
+
+  /// Age buckets for arrears breakdown: days overdue (0–30, 31–60, 61–90, 90+).
+  static const List<String> dashboardArrearsBucketLabels = [
+    '0–30 days',
+    '31–60 days',
+    '61–90 days',
+    '90+ days',
   ];
+
+  /// Monthly balance due above this amount (Rand) triggers risk highlighting.
+  static const double dashboardBalanceDueAlertThreshold = 50000.0;
+
+  /// When 90+ days bucket exceeds this fraction (0.0–1.0) of total balance due, show risk cue.
+  static const double dashboardArrears90PercentAlertThreshold = 0.25;
+
+  // --- Attendance expected-day thresholds (placeholders; tune with client) ---
+
+  /// Expected present days in a calendar month (placeholder).
+  static const int attendanceExpectedDaysPerMonth = 16;
+
+  /// Expected present days in one academic term (placeholder).
+  static const int attendanceExpectedDaysPerTerm = 48;
+
+  /// Expected present days in a full academic session / year (placeholder).
+  static const int attendanceExpectedDaysPerYear = 144;
 }

@@ -7,8 +7,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:charis_student_care/core/utils/file_export_utils.dart';
 import 'package:charis_student_care/data/services/report_service.dart';
 import 'package:charis_student_care/presentation/providers/dashboard_providers.dart';
+import 'package:charis_student_care/presentation/theme/app_table_style.dart';
 
 final _dateFormat = DateFormat('yyyy-MM-dd HH:mm');
 
@@ -141,9 +143,15 @@ class _RecentActivitiesScreenState
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Export failed: $writeError'),
+                content: Text(
+                  FileExportUtils.userFacingSaveError(
+                    writeError,
+                    itemLabel: 'report',
+                  ),
+                ),
                 backgroundColor: Theme.of(context).colorScheme.error,
                 behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 8),
               ),
             );
           }
@@ -151,11 +159,17 @@ class _RecentActivitiesScreenState
       }
     } catch (e, st) {
       if (mounted) {
+        final message = e is FileSystemException ||
+                e.toString().toLowerCase().contains('pathaccess') ||
+                e.toString().toLowerCase().contains('errno =')
+            ? FileExportUtils.userFacingSaveError(e, itemLabel: 'report')
+            : 'Export failed. Please try again.';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Export failed: $e'),
+            content: Text(message),
             backgroundColor: Theme.of(context).colorScheme.error,
             behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 8),
           ),
         );
       }
@@ -263,7 +277,6 @@ class _RecentActivitiesScreenState
                       elevation: 0,
                       color: colorScheme.surface,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
                         side: BorderSide(
                           color: colorScheme.outlineVariant
                               .withValues(alpha: 0.6),
@@ -272,28 +285,40 @@ class _RecentActivitiesScreenState
                       child: SingleChildScrollView(
                         scrollDirection: Axis.horizontal,
                         child: DataTable(
+                          headingRowColor: AppTableStyle.dataTableHeadingColor(colorScheme),
+                          headingRowHeight: AppTableStyle.dataGridHeaderRowHeight,
+                          dataRowMinHeight: AppTableStyle.dataGridRowHeight,
+                          dataRowMaxHeight: AppTableStyle.dataGridRowHeight,
+                          headingTextStyle:
+                              AppTableStyle.dataGridHeaderTextStyle(colorScheme),
+                          dataTextStyle:
+                              AppTableStyle.dataGridBodyTextStyle(colorScheme),
+                          dividerThickness: 1,
                           columns: const [
-                            DataColumn(label: Text('Timestamp')),
-                            DataColumn(label: Text('User')),
-                            DataColumn(label: Text('Student')),
-                            DataColumn(label: Text('Screen')),
-                            DataColumn(label: Text('What Changed')),
-                            DataColumn(label: Text('Operation')),
-                            DataColumn(label: Text('Table')),
+                            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Timestamp'))),
+                            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('User'))),
+                            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Student'))),
+                            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Screen'))),
+                            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('What Changed'))),
+                            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Operation'))),
+                            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Table'))),
                           ],
                           rows: visibleRows
                               .map(
                                 (r) => DataRow(
                                   cells: [
                                     DataCell(
-                                      Text(_dateFormat.format(r.timestamp)),
+                                      Padding(
+                                        padding: AppTableStyle.cellPadding,
+                                        child: Text(_dateFormat.format(r.timestamp)),
+                                      ),
                                     ),
-                                    DataCell(Text(r.user)),
-                                    DataCell(Text(r.student ?? '—')),
-                                    DataCell(Text(r.screen ?? '—')),
-                                    DataCell(Text(r.whatChanged ?? '—')),
-                                    DataCell(Text(r.operation)),
-                                    DataCell(Text(r.table)),
+                                    DataCell(Padding(padding: AppTableStyle.cellPadding, child: Text(r.user))),
+                                    DataCell(Padding(padding: AppTableStyle.cellPadding, child: Text(r.student ?? '—'))),
+                                    DataCell(Padding(padding: AppTableStyle.cellPadding, child: Text(r.screen ?? '—'))),
+                                    DataCell(Padding(padding: AppTableStyle.cellPadding, child: Text(r.whatChanged ?? '—'))),
+                                    DataCell(Padding(padding: AppTableStyle.cellPadding, child: Text(r.operation))),
+                                    DataCell(Padding(padding: AppTableStyle.cellPadding, child: Text(r.table))),
                                   ],
                                 ),
                               )

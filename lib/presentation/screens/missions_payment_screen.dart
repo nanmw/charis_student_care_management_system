@@ -21,7 +21,9 @@ import 'package:charis_student_care/presentation/providers/academic_session_prov
 import 'package:charis_student_care/presentation/providers/mission_location_providers.dart';
 import 'package:charis_student_care/presentation/providers/mission_payment_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
+import 'package:charis_student_care/presentation/theme/app_table_style.dart';
 import 'package:charis_student_care/presentation/widgets/searchable_dropdown.dart';
 
 /// Mission schedule month columns (Mar–Oct).
@@ -38,6 +40,9 @@ const List<String> _monthLabels = [
 
 /// Sentinel value for "Other (custom)..." in Trip Selected dropdown; never stored.
 const String _otherTripSentinel = '__other__';
+
+/// Height of trip dropdown and numeric fields (amount, months) in the payment table.
+const double _kMissionPaymentControlHeight = 20;
 
 /// One row's editable state for mission payment schedule.
 class _MissionRowEdit {
@@ -84,6 +89,7 @@ class _MissionNumericCell extends StatefulWidget {
     required this.onChanged,
     required this.isDark,
     this.width = 70,
+    this.fixedHeight,
   });
 
   final TextEditingController controller;
@@ -91,6 +97,9 @@ class _MissionNumericCell extends StatefulWidget {
   final void Function(double) onChanged;
   final bool isDark;
   final double width;
+
+  /// When set, matches inline controls (e.g. trip dropdown) in the same row.
+  final double? fixedHeight;
 
   @override
   State<_MissionNumericCell> createState() => _MissionNumericCellState();
@@ -107,12 +116,16 @@ class _MissionNumericCellState extends State<_MissionNumericCell> {
 
   @override
   Widget build(BuildContext context) {
+    final verticalPad = widget.fixedHeight != null ? 0.0 : 6.0;
     return RepaintBoundary(
       child: SizedBox(
+        height: widget.fixedHeight,
         width: widget.width,
         child: TextField(
           controller: widget.controller,
           keyboardType: TextInputType.number,
+          textAlignVertical:
+              widget.fixedHeight != null ? TextAlignVertical.center : null,
           decoration: InputDecoration(
             hintText: '0',
             hintStyle: TextStyle(
@@ -120,11 +133,16 @@ class _MissionNumericCellState extends State<_MissionNumericCell> {
               fontSize: 13,
             ),
             border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            disabledBorder: InputBorder.none,
+            errorBorder: InputBorder.none,
+            focusedErrorBorder: InputBorder.none,
             filled: true,
             fillColor:
                 widget.isDark ? AppColors.surfaceDark : AppColors.charisWhite,
             contentPadding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                EdgeInsets.symmetric(horizontal: 8, vertical: verticalPad),
             isDense: true,
           ),
           style: TextStyle(
@@ -301,7 +319,8 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
                 RoleGuard(
                   canShow: RolePermissions.canExportReports,
                   child: OutlinedButton.icon(
-                    onPressed: () => context.go('/reports?type=missions-payment'),
+                    onPressed: () =>
+                        context.go('/reports?type=missions-payment'),
                     icon: const Icon(Icons.download_outlined, size: 18),
                     label: const Text('Export'),
                   ),
@@ -351,8 +370,9 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
                       final existingCustom = rows
                           .map((r) => r.tripSelected)
                           .whereType<String>()
-                          .where((t) =>
-                              t.isNotEmpty && !locationNames.contains(t),)
+                          .where(
+                            (t) => t.isNotEmpty && !locationNames.contains(t),
+                          )
                           .toSet()
                           .toList();
                       final baseTripOptions = [
@@ -372,7 +392,8 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
                                 label: const Text('Export'),
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: colorScheme.onSurfaceVariant,
-                                  side: BorderSide(color: colorScheme.outline),
+                                  side: BorderSide(
+                                      color: colorScheme.outlineVariant,),
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 20,
                                     vertical: 12,
@@ -525,10 +546,18 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
                 size: 22,
               ),
               filled: true,
-              fillColor: colorScheme.surfaceContainerHighest,
+              fillColor: Colors.transparent,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
-                borderSide: BorderSide.none,
+                borderSide: BorderSide(color: colorScheme.outlineVariant),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: colorScheme.outlineVariant),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: colorScheme.outline),
               ),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -549,8 +578,10 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
       width: 120,
       child: sessionOptionsAsync.when(
         data: (options) {
-          final list = options.isNotEmpty ? options : [_defaultMissionSession()];
-          final value = list.contains(_scheduleSession) ? _scheduleSession : list.first;
+          final list =
+              options.isNotEmpty ? options : [_defaultMissionSession()];
+          final value =
+              list.contains(_scheduleSession) ? _scheduleSession : list.first;
           if (!list.contains(_scheduleSession)) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (mounted) setState(() => _scheduleSession = list.first);
@@ -560,9 +591,9 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
             height: 44,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest,
+              color: Colors.transparent,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: colorScheme.outline),
+              border: Border.all(color: colorScheme.outlineVariant),
             ),
             child: DropdownButton<String>(
               value: value,
@@ -594,9 +625,9 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
           alignment: Alignment.centerLeft,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest,
+            color: Colors.transparent,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colorScheme.outline),
+            border: Border.all(color: colorScheme.outlineVariant),
           ),
           child: Text(
             _scheduleSession,
@@ -608,9 +639,9 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
           alignment: Alignment.centerLeft,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest,
+            color: Colors.transparent,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colorScheme.outline),
+            border: Border.all(color: colorScheme.outlineVariant),
           ),
           child: Text(
             _scheduleSession,
@@ -669,8 +700,10 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
 
     for (final s in students) {
       final edit = edits[s.id]!;
-      _ensureController('${s.id}_amount',
-          edit.amount > 0 ? edit.amount.toStringAsFixed(0) : '',);
+      _ensureController(
+        '${s.id}_amount',
+        edit.amount > 0 ? edit.amount.toStringAsFixed(0) : '',
+      );
       for (var i = 0; i < _monthLabels.length; i++) {
         final vals = [
           edit.mar,
@@ -683,7 +716,9 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
           edit.oct,
         ];
         _ensureController(
-            '${s.id}_m$i', vals[i] > 0 ? vals[i].toStringAsFixed(0) : '',);
+          '${s.id}_m$i',
+          vals[i] > 0 ? vals[i].toStringAsFixed(0) : '',
+        );
       }
       _ensureController('${s.id}_comment', edit.comment ?? '');
     }
@@ -696,27 +731,12 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
   }
 
   Widget _tableHeader(BuildContext context, String text) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Text(
-          text,
-          style: TextStyle(
-            color: colorScheme.onSurface,
-            fontWeight: FontWeight.w600,
-            fontSize: 14,
-            fontFamily: 'Questrial',
-          ),
-        ),
-      ),
-    );
+    return AppTableStyle.sfHeaderCell(context, text);
   }
 
   Widget _cell(BuildContext context, ColorScheme colorScheme, Widget child) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: AppTableStyle.cellPadding,
       child: child,
     );
   }
@@ -735,7 +755,8 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
               border: OutlineInputBorder(),
             ),
             autofocus: true,
-            onSubmitted: (_) => Navigator.of(context).pop(controller.text.trim()),
+            onSubmitted: (_) =>
+                Navigator.of(context).pop(controller.text.trim()),
           ),
           actions: [
             TextButton(
@@ -769,9 +790,7 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
     final optionSet = baseTripOptions.toSet();
     final options = [
       ...baseTripOptions,
-      if (current != null &&
-          current.isNotEmpty &&
-          !optionSet.contains(current))
+      if (current != null && current.isNotEmpty && !optionSet.contains(current))
         current,
     ];
     final items = [...options, _otherTripSentinel];
@@ -783,6 +802,9 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
         hint: '',
         searchHint: 'Search trips...',
         allowClear: true,
+        closedFieldHeight: _kMissionPaymentControlHeight,
+        fieldBackgroundColor:
+            isDark ? AppColors.surfaceDark : AppColors.charisWhite,
         itemBuilder: (context, item) => Text(
           item == _otherTripSentinel ? 'Other (custom)...' : item,
           overflow: TextOverflow.ellipsis,
@@ -849,13 +871,15 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
                   const MapEntry(3, FixedColumnWidth(colTrip)),
                   const MapEntry(4, FixedColumnWidth(colDate)),
                   const MapEntry(5, FixedColumnWidth(colAmount)),
-                  ...List.generate(8,
-                      (i) => MapEntry(6 + i, const FixedColumnWidth(colMonth)),),
+                  ...List.generate(
+                    8,
+                    (i) => MapEntry(6 + i, const FixedColumnWidth(colMonth)),
+                  ),
                   const MapEntry(14, FixedColumnWidth(colPaid)),
                   const MapEntry(15, FixedColumnWidth(colBal)),
                   const MapEntry(16, FixedColumnWidth(colComment)),
                 ]),
-                border: TableBorder.all(color: colorScheme.outlineVariant),
+                border: AppTableStyle.materialTableBorder(colorScheme),
                 children: [
                   TableRow(
                     decoration: BoxDecoration(
@@ -897,23 +921,29 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
                       decoration: BoxDecoration(color: rowColor),
                       children: [
                         _cell(
-                            context,
-                            colorScheme,
-                            _MissionDisplayCell(
-                                text: '${index + 1}',
-                                colorScheme: colorScheme,),),
+                          context,
+                          colorScheme,
+                          _MissionDisplayCell(
+                            text: '${index + 1}',
+                            colorScheme: colorScheme,
+                          ),
+                        ),
                         _cell(
-                            context,
-                            colorScheme,
-                            _MissionDisplayCell(
-                                text: student.firstName,
-                                colorScheme: colorScheme,),),
+                          context,
+                          colorScheme,
+                          _MissionDisplayCell(
+                            text: student.firstName,
+                            colorScheme: colorScheme,
+                          ),
+                        ),
                         _cell(
-                            context,
-                            colorScheme,
-                            _MissionDisplayCell(
-                                text: student.surname,
-                                colorScheme: colorScheme,),),
+                          context,
+                          colorScheme,
+                          _MissionDisplayCell(
+                            text: student.surname,
+                            colorScheme: colorScheme,
+                          ),
+                        ),
                         _cell(
                           context,
                           colorScheme,
@@ -950,7 +980,9 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
                               },
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 8,),
+                                  horizontal: 8,
+                                  vertical: 8,
+                                ),
                                 child: Text(
                                   _formatDate(edit.date),
                                   style: TextStyle(
@@ -970,6 +1002,7 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
                             colorScheme: colorScheme,
                             isDark: isDark,
                             width: colAmount,
+                            fixedHeight: _kMissionPaymentControlHeight,
                             onChanged: (n) {
                               if (mounted) {
                                 setState(() {
@@ -1006,6 +1039,7 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
                               colorScheme: colorScheme,
                               isDark: isDark,
                               width: colMonth,
+                              fixedHeight: _kMissionPaymentControlHeight,
                               onChanged: (n) {
                                 if (mounted) {
                                   setState(() {
@@ -1044,11 +1078,13 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
                           );
                         }),
                         _cell(
-                            context,
-                            colorScheme,
-                            _MissionDisplayCell(
-                                text: edit.paidToDateFormatted,
-                                colorScheme: colorScheme,),),
+                          context,
+                          colorScheme,
+                          _MissionDisplayCell(
+                            text: edit.paidToDateFormatted,
+                            colorScheme: colorScheme,
+                          ),
+                        ),
                         _cell(
                           context,
                           colorScheme,
@@ -1069,20 +1105,30 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
                               controller:
                                   _controllers['${student.id}_comment'] ??=
                                       TextEditingController(
-                                          text: edit.comment ?? '',),
+                                text: edit.comment ?? '',
+                              ),
                               decoration: InputDecoration(
                                 hintText: '',
                                 border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                disabledBorder: InputBorder.none,
+                                errorBorder: InputBorder.none,
+                                focusedErrorBorder: InputBorder.none,
                                 filled: true,
                                 fillColor: isDark
                                     ? AppColors.surfaceDark
                                     : AppColors.charisWhite,
                                 contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 8,),
+                                  horizontal: 8,
+                                  vertical: 8,
+                                ),
                                 isDense: true,
                               ),
                               style: TextStyle(
-                                  color: colorScheme.onSurface, fontSize: 13,),
+                                color: colorScheme.onSurface,
+                                fontSize: 13,
+                              ),
                               onChanged: (v) {
                                 if (mounted) {
                                   setState(() {
@@ -1139,15 +1185,24 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
       }
 
       final sessionRepo = ref.read(academicSessionRepositoryProvider);
-      final year = AcademicSessionRepository.yearFromSessionCode(_scheduleSession) ?? _scheduleSession.split('-').first;
-      final academicSessionId = await sessionRepo.getSessionIdByCode(_scheduleSession);
+      final year =
+          AcademicSessionRepository.yearFromSessionCode(_scheduleSession) ??
+              _scheduleSession.split('-').first;
+      final academicSessionId =
+          await sessionRepo.getSessionIdByCode(_scheduleSession);
+      final auth = ref.read(authStateProvider).valueOrNull;
+      final deviceId = await ref.read(deviceIdProvider.future);
       final count = await repo.batchUpsertMissionPayments(
         year: year,
         payments: paymentDataMap,
         academicSessionId: academicSessionId,
-        userId: ref.read(authStateProvider).valueOrNull is Authenticated
-            ? (ref.read(authStateProvider).valueOrNull as Authenticated).user.id
-            : null,
+        userId: auth is Authenticated ? auth.user.id : null,
+        deviceId: deviceId,
+        userDisplayName: auth is Authenticated ? auth.user.displayName : null,
+        screen: 'Missions Payment',
+        userRole: auth is Authenticated
+            ? auth.role
+            : UserRole.facilitator,
       );
 
       if (mounted) {

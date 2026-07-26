@@ -4,11 +4,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:charis_student_care/core/constants/app_constants.dart';
+import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/ministry_providers.dart';
+import 'package:charis_student_care/presentation/providers/auth_provider.dart';
+import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/searchable_dropdown.dart';
 
@@ -95,6 +99,10 @@ class _MinistryEntryFormDialogState
     }
 
     final repo = ref.read(ministryEntryRepositoryProvider);
+    final auth = ref.read(authStateProvider).valueOrNull;
+    final userId = auth is Authenticated ? auth.user.id : null;
+    final deviceId = await ref.read(deviceIdProvider.future);
+    final userDisplayName = auth is Authenticated ? auth.user.displayName : null;
     final supervisor = _supervisorController.text.trim().isEmpty
         ? null
         : _supervisorController.text.trim();
@@ -120,6 +128,13 @@ class _MinistryEntryFormDialogState
             notes: Value(notes),
             updatedAt: Value(DateTime.now()),
           ),
+          userRole: auth is Authenticated
+              ? auth.role
+              : UserRole.facilitator,
+          userId: userId,
+          deviceId: deviceId,
+          userDisplayName: userDisplayName,
+          screen: 'Ministry Hours',
         );
       } else {
         final now = DateTime.now();
@@ -139,6 +154,13 @@ class _MinistryEntryFormDialogState
             createdAt: Value(now),
             updatedAt: const Value.absent(),
           ),
+          userRole: auth is Authenticated
+              ? auth.role
+              : UserRole.facilitator,
+          userId: userId,
+          deviceId: deviceId,
+          userDisplayName: userDisplayName,
+          screen: 'Ministry Hours',
         );
       }
       if (mounted) Navigator.of(context).pop(true);

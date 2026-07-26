@@ -11,6 +11,7 @@ import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/core/utils/date_utils.dart'
     as app_date_utils;
+import 'package:charis_student_care/core/utils/file_export_utils.dart';
 import 'package:charis_student_care/data/services/report_service.dart';
 import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
@@ -35,9 +36,7 @@ class ExportReportsScreen extends ConsumerStatefulWidget {
 }
 
 String _defaultReportSession() {
-  final now = DateTime.now();
-  final y = now.year;
-  return now.month >= 7 ? '$y-${y + 1}' : '${y - 1}-$y';
+  return DateTime.now().year.toString();
 }
 
 class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
@@ -78,8 +77,60 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
         dateEnd: _dateEnd,
         year: null,
         academicSession: _selectedSession,
-        classFilter: _selectedClass,
+        classFilter: _selectedClass == null ||
+                _selectedClass == kReportClassFilterAll
+            ? null
+            : _selectedClass,
       );
+
+  bool _usesFilters(ReportType type) {
+    return type != ReportType.cohortSummary &&
+        type != ReportType.missionLocations;
+  }
+
+  bool _usesDateRange(ReportType type) {
+    if (type == ReportType.payments) {
+      final session = _selectedSession?.trim();
+      return session == null || session.isEmpty;
+    }
+    return type == ReportType.studentSummary ||
+        type == ReportType.attendance ||
+        type == ReportType.ministryHours ||
+        type == ReportType.tests ||
+        type == ReportType.missionsPayment;
+  }
+
+  bool _usesSession(ReportType type) {
+    return type == ReportType.studentSummary ||
+        type == ReportType.attendance ||
+        type == ReportType.ministryHours ||
+        type == ReportType.tests ||
+        type == ReportType.payments ||
+        type == ReportType.missionsPayment;
+  }
+
+  bool _usesClassAndMode(ReportType type) {
+    return _usesFilters(type);
+  }
+
+  /// Validates class/session filters; returns an error message or null if OK.
+  Future<String?> _validateFiltersForExport() async {
+    final filters = _filters;
+    if (await reportClassFilterIsUnresolved(
+      ref.read(classRepositoryProvider),
+      filters,
+    )) {
+      return 'Selected class "${filters.classFilter}" was not found. Pick another class or All.';
+    }
+    if (_usesSession(_selectedReportType) &&
+        await reportSessionFilterIsUnresolved(
+          ref.read(academicSessionRepositoryProvider),
+          filters,
+        )) {
+      return 'Selected academic session "${filters.academicSession}" was not found. Pick a valid session.';
+    }
+    return null;
+  }
 
   Future<void> _pickDateStart() async {
     final picked = await showDatePicker(
@@ -112,6 +163,20 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
 
   Future<void> _exportReport({ReportFormat? forceFormat}) async {
     final format = forceFormat ?? _reportFormat;
+    final validationError = await _validateFiltersForExport();
+    if (validationError != null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(validationError),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() => _isExporting = true);
     try {
       final extension = format == ReportFormat.pdf ? 'pdf' : 'xlsx';
@@ -140,15 +205,15 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
           }
           break;
         case ReportType.students:
-          final rows = await ref.read(studentsReportDataProvider.future);
+          final rows = await ref.read(studentsReportDataProvider(_filters).future);
           const headers = ['Surname', 'First name', 'Status', 'Mode', 'Admission year', 'Class'];
           final tableRows = rows.map((s) => [
-            s.surname,
-            s.firstName,
-            s.status,
-            s.mode ?? '—',
-            s.admissionYear ?? '—',
-            '—',
+            s.student.surname,
+            s.student.firstName,
+            s.student.status,
+            s.student.mode ?? '—',
+            s.student.admissionYear ?? '—',
+            s.className,
           ],).toList();
           const title = 'Students Report';
           if (format == ReportFormat.pdf) {
@@ -158,7 +223,7 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
           }
           break;
         case ReportType.subjects:
-          final rows = await ref.read(subjectsReportDataProvider.future);
+          final rows = await ref.read(subjectsReportDataProvider(_filters).future);
           const headers = ['Subject', 'Class'];
           final tableRows = rows.map((s) => [s.name, s.className]).toList();
           const title = 'Subjects Report';
@@ -227,15 +292,16 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
             r.year,
             r.totalPaid.toStringAsFixed(2),
           ],).toList();
-          const title = 'Payments Report';
+          const title = 'Finances Report';
           if (format == ReportFormat.pdf) {
             bytes = await ReportService.buildTablePdf(title, headers, tableRows);
           } else {
-            bytes = ReportService.buildTableExcel(title, 'Payments', headers, tableRows);
+            bytes = ReportService.buildTableExcel(title, 'Finances', headers, tableRows);
           }
           break;
         case ReportType.missionsPayment:
-          final rows = await ref.read(missionPaymentsReportDataProvider.future);
+          final rows =
+              await ref.read(missionPaymentsReportDataProvider(_filters).future);
           const headers = ['Payment date', 'Student', 'Amount'];
           final tableRows = rows.map((r) => [
             app_date_utils.DateUtils.formatIsoDate(r.paymentDate),
@@ -264,6 +330,12 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
             bytes = ReportService.buildTableExcel(title, 'Mission Locations', headers, tableRows);
           }
           break;
+      }
+
+      if (bytes.isEmpty) {
+        throw StateError(
+          'Generated report is empty. Please review filters and try again.',
+        );
       }
 
       final downloadsDir = await getDownloadsDirectory();
@@ -295,9 +367,15 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Export failed: $writeError'),
+                content: Text(
+                  FileExportUtils.userFacingSaveError(
+                    writeError,
+                    itemLabel: 'report',
+                  ),
+                ),
                 backgroundColor: Theme.of(context).colorScheme.error,
                 behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 8),
               ),
             );
           }
@@ -306,11 +384,19 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
       }
     } catch (e, st) {
       if (mounted) {
+        final message = e is FileSystemException ||
+                e.toString().toLowerCase().contains('pathaccess') ||
+                e.toString().toLowerCase().contains('errno =')
+            ? FileExportUtils.userFacingSaveError(e, itemLabel: 'report')
+            : e is StateError
+                ? e.message
+                : 'Export failed. Please try again.';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Export failed: $e'),
+            content: Text(message),
             backgroundColor: Theme.of(context).colorScheme.error,
             behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 8),
           ),
         );
       }
@@ -320,7 +406,7 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
     }
   }
 
-  Widget _buildModeField(ColorScheme colorScheme) {
+  Widget _buildModeField(ColorScheme colorScheme, {required bool enabled}) {
     final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
     if (modeOptions.length == 1) {
       if (_selectedMode != modeOptions[0]) {
@@ -367,8 +453,9 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                 child: Text(m),
               ),)
           .toList(),
-      onChanged: (v) =>
-          setState(() => _selectedMode = v ?? _selectedMode),
+      onChanged: enabled
+          ? (v) => setState(() => _selectedMode = v ?? _selectedMode)
+          : null,
     );
   }
 
@@ -394,9 +481,13 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
     }
     final classOptionsAsync = ref.watch(reportClassOptionsForCurrentUserProvider);
     classOptionsAsync.whenData((classOptions) {
-      if (classOptions.isNotEmpty && (_selectedClass == null || !classOptions.contains(_selectedClass))) {
+      // Keep "All" as default; only reset if current selection is invalid.
+      if (_selectedClass != null &&
+          _selectedClass != kReportClassFilterAll &&
+          classOptions.isNotEmpty &&
+          !classOptions.contains(_selectedClass)) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => _selectedClass = classOptions.first);
+          if (mounted) setState(() => _selectedClass = kReportClassFilterAll);
         });
       }
     });
@@ -455,6 +546,13 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
     List<ReportType> visibleReportTypes,
     AsyncValue<List<String>> classOptionsAsync,
   ) {
+    final usesDateRange = _usesDateRange(_selectedReportType);
+    final usesSession = _usesSession(_selectedReportType);
+    final usesClassAndMode = _usesClassAndMode(_selectedReportType);
+    final isCohort = _selectedReportType == ReportType.cohortSummary;
+    final financesSessionLocksDate =
+        _selectedReportType == ReportType.payments &&
+            (_selectedSession?.trim().isNotEmpty ?? false);
     return Card(
       elevation: 0,
       color: isDark
@@ -542,6 +640,17 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                     ],
                   ),
                   const SizedBox(height: 20),
+                  if (isCohort) ...[
+                    Text(
+                      'Exports the current Dashboard cohort view. Class, mode, session, and date filters do not apply.',
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                        fontFamily: 'Questrial',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
                   Text(
                     'Class',
                     style: TextStyle(
@@ -554,10 +663,14 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                   const SizedBox(height: 8),
                   classOptionsAsync.when(
                     data: (classOptions) {
-                      final options = classOptions.isEmpty ? ['—'] : classOptions;
-                      final value = _selectedClass != null && options.contains(_selectedClass)
+                      final options = [
+                        kReportClassFilterAll,
+                        ...classOptions,
+                      ];
+                      final value = _selectedClass != null &&
+                              options.contains(_selectedClass)
                           ? _selectedClass!
-                          : options.first;
+                          : kReportClassFilterAll;
                       return DropdownButtonFormField<String>(
                         isExpanded: true,
                         key: ValueKey<String?>(_selectedClass),
@@ -578,11 +691,16 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                                   child: Text(c),
                                 ),)
                             .toList(),
-                        onChanged: (v) => setState(() => _selectedClass = v),
+                        onChanged: usesClassAndMode
+                            ? (v) => setState(
+                                  () => _selectedClass =
+                                      v ?? kReportClassFilterAll,
+                                )
+                            : null,
                       );
                     },
                     loading: () => DropdownButtonFormField<String>(
-                      initialValue: _selectedClass ?? '—',
+                      initialValue: _selectedClass ?? kReportClassFilterAll,
                       isExpanded: true,
                       decoration: InputDecoration(
                         border: OutlineInputBorder(
@@ -595,12 +713,15 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                         isDense: true,
                       ),
                       items: [
-                        DropdownMenuItem(value: _selectedClass ?? '—', child: Text(_selectedClass ?? '—')),
+                        DropdownMenuItem(
+                          value: _selectedClass ?? kReportClassFilterAll,
+                          child: Text(_selectedClass ?? kReportClassFilterAll),
+                        ),
                       ],
                       onChanged: null,
                     ),
                     error: (_, __) => DropdownButtonFormField<String>(
-                      initialValue: _selectedClass ?? '—',
+                      initialValue: _selectedClass ?? kReportClassFilterAll,
                       isExpanded: true,
                       decoration: InputDecoration(
                         border: OutlineInputBorder(
@@ -613,7 +734,10 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                         isDense: true,
                       ),
                       items: [
-                        DropdownMenuItem(value: _selectedClass ?? '—', child: Text(_selectedClass ?? '—')),
+                        DropdownMenuItem(
+                          value: _selectedClass ?? kReportClassFilterAll,
+                          child: Text(_selectedClass ?? kReportClassFilterAll),
+                        ),
                       ],
                       onChanged: null,
                     ),
@@ -631,16 +755,58 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                   const SizedBox(height: 8),
                   Consumer(
                     builder: (context, ref, _) {
-                      final sessionOptionsAsync = ref.watch(academicSessionOptionsProvider);
+                      final auth = ref.watch(authStateProvider).valueOrNull;
+                      final canManageSession = auth is Authenticated &&
+                          RolePermissions.canManageAcademicSession(auth.role);
+                      final currentSessionAsync =
+                          ref.watch(currentAcademicSessionProvider);
+                      final currentSession = currentSessionAsync.valueOrNull;
+
+                      // Non-admins always work in the current academic session; show it read-only.
+                      if (!canManageSession) {
+                        final effective = currentSession ??
+                            _selectedSession ??
+                            _defaultReportSession();
+                        if (effective != _selectedSession) {
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (mounted) {
+                              setState(() => _selectedSession = effective);
+                            }
+                          });
+                        }
+
+                        return InputDecorator(
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            isDense: true,
+                          ),
+                          child: Text(effective),
+                        );
+                      }
+
+                      final sessionOptionsAsync =
+                          ref.watch(academicSessionOptionsProvider);
                       return sessionOptionsAsync.when(
                         data: (options) {
-                          final list = options.isNotEmpty ? options : [_defaultReportSession()];
-                          final value = _selectedSession != null && list.contains(_selectedSession)
+                          final list = options.isNotEmpty
+                              ? options
+                              : [_defaultReportSession()];
+                          final value = _selectedSession != null &&
+                                  list.contains(_selectedSession)
                               ? _selectedSession!
                               : list.first;
-                          if (_selectedSession == null || !list.contains(_selectedSession!)) {
+                          if (_selectedSession == null ||
+                              !list.contains(_selectedSession!)) {
                             WidgetsBinding.instance.addPostFrameCallback((_) {
-                              if (mounted) setState(() => _selectedSession = list.first);
+                              if (mounted) {
+                                setState(() => _selectedSession = list.first);
+                              }
                             });
                           }
                           return DropdownButtonFormField<String>(
@@ -657,17 +823,21 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                               isDense: true,
                             ),
                             items: list
-                                .map((s) => DropdownMenuItem(
-                                      value: s,
-                                      child: Text(s),
-                                    ),)
+                                .map(
+                                  (s) => DropdownMenuItem(
+                                    value: s,
+                                    child: Text(s),
+                                  ),
+                                )
                                 .toList(),
-                            onChanged: (v) =>
-                                setState(() => _selectedSession = v),
+                            onChanged: usesSession
+                                ? (v) => setState(() => _selectedSession = v)
+                                : null,
                           );
                         },
                         loading: () => DropdownButtonFormField<String>(
-                          initialValue: _selectedSession ?? _defaultReportSession(),
+                          initialValue:
+                              _selectedSession ?? _defaultReportSession(),
                           isExpanded: true,
                           decoration: InputDecoration(
                             border: OutlineInputBorder(
@@ -681,14 +851,18 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                           ),
                           items: [
                             DropdownMenuItem(
-                              value: _selectedSession ?? _defaultReportSession(),
-                              child: Text(_selectedSession ?? _defaultReportSession()),
+                              value:
+                                  _selectedSession ?? _defaultReportSession(),
+                              child: Text(
+                                _selectedSession ?? _defaultReportSession(),
+                              ),
                             ),
                           ],
                           onChanged: null,
                         ),
                         error: (_, __) => DropdownButtonFormField<String>(
-                          initialValue: _selectedSession ?? _defaultReportSession(),
+                          initialValue:
+                              _selectedSession ?? _defaultReportSession(),
                           isExpanded: true,
                           decoration: InputDecoration(
                             border: OutlineInputBorder(
@@ -702,8 +876,11 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                           ),
                           items: [
                             DropdownMenuItem(
-                              value: _selectedSession ?? _defaultReportSession(),
-                              child: Text(_selectedSession ?? _defaultReportSession()),
+                              value:
+                                  _selectedSession ?? _defaultReportSession(),
+                              child: Text(
+                                _selectedSession ?? _defaultReportSession(),
+                              ),
                             ),
                           ],
                           onChanged: null,
@@ -722,7 +899,7 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  _buildModeField(colorScheme),
+                  _buildModeField(colorScheme, enabled: usesClassAndMode),
                   const SizedBox(height: 16),
                   Text(
                     'Date Range',
@@ -738,7 +915,7 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: _pickDateStart,
+                          onPressed: usesDateRange ? _pickDateStart : null,
                           icon: const Icon(Icons.calendar_today, size: 18),
                           label: Text(
                             app_date_utils.DateUtils.formatIsoDate(_dateStart),
@@ -757,7 +934,7 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: _pickDateEnd,
+                          onPressed: usesDateRange ? _pickDateEnd : null,
                           icon: const Icon(Icons.calendar_today, size: 18),
                           label: Text(
                             app_date_utils.DateUtils.formatIsoDate(_dateEnd),
@@ -773,6 +950,17 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                       ),
                     ],
                   ),
+                  if (financesSessionLocksDate) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Date range is unused while an academic session is selected; payments are scoped by session.',
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                        fontFamily: 'Questrial',
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -790,9 +978,7 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
     required ColorScheme colorScheme,
   }) {
     return Material(
-      color: selected
-          ? redColor.withValues(alpha: 0.15)
-          : colorScheme.surfaceContainerHighest,
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(8),
       child: InkWell(
         onTap: onTap,
@@ -820,6 +1006,48 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
     );
   }
 
+  /// Live row count for the current report type + filters (same sources as export).
+  AsyncValue<int> _watchExportRowCount() {
+    switch (_selectedReportType) {
+      case ReportType.studentSummary:
+        return ref.watch(reportDataProvider(_filters)).whenData((r) => r.length);
+      case ReportType.cohortSummary:
+        return ref.watch(cohortReportDataProvider).whenData((r) => r.length);
+      case ReportType.students:
+        return ref
+            .watch(studentsReportDataProvider(_filters))
+            .whenData((r) => r.length);
+      case ReportType.subjects:
+        return ref
+            .watch(subjectsReportDataProvider(_filters))
+            .whenData((r) => r.length);
+      case ReportType.attendance:
+        return ref
+            .watch(attendanceReportDataProvider(_filters))
+            .whenData((r) => r.length);
+      case ReportType.ministryHours:
+        return ref
+            .watch(ministryReportDataProvider(_filters))
+            .whenData((r) => r.length);
+      case ReportType.tests:
+        return ref
+            .watch(testsReportDataProvider(_filters))
+            .whenData((r) => r.length);
+      case ReportType.payments:
+        return ref
+            .watch(paymentsReportDataProvider(_filters))
+            .whenData((r) => r.length);
+      case ReportType.missionsPayment:
+        return ref
+            .watch(missionPaymentsReportDataProvider(_filters))
+            .whenData((r) => r.length);
+      case ReportType.missionLocations:
+        return ref
+            .watch(missionLocationsReportDataProvider)
+            .whenData((r) => r.length);
+    }
+  }
+
   Widget _buildRightPanel(
     ColorScheme colorScheme,
     Color redColor,
@@ -827,9 +1055,13 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
     String dateRangeStr,
   ) {
     final isPdf = _reportFormat == ReportFormat.pdf;
-    final previewTitle = isPdf
-        ? 'Student Summary PDF Preview'
-        : 'Student Summary Report Preview';
+    final typeLabel = _selectedReportType.label;
+    final previewTitle = isPdf ? '$typeLabel PDF Preview' : '$typeLabel Report Preview';
+    final usesDateRange = _usesDateRange(_selectedReportType);
+    final previewBody = usesDateRange
+        ? 'This ${isPdf ? 'PDF summary' : 'report'} includes data for the selected period ($dateRangeStr).'
+        : 'This ${isPdf ? 'PDF summary' : 'report'} exports the current dataset for $typeLabel.';
+    final rowCountAsync = _watchExportRowCount();
 
     return Card(
       elevation: 0,
@@ -874,15 +1106,40 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              'This ${isPdf ? 'PDF summary' : 'report'} includes student '
-              'attendance, test scores, and payment overviews for the '
-              'selected period ($dateRangeStr). It\'s designed for quick '
-              'review and record-keeping.',
+              previewBody,
               style: TextStyle(
                 color: colorScheme.onSurfaceVariant,
                 fontSize: 14,
                 fontFamily: 'Questrial',
                 height: 1.4,
+              ),
+            ),
+            const SizedBox(height: 12),
+            rowCountAsync.when(
+              data: (n) => Text(
+                '$n row${n == 1 ? '' : 's'} will be exported',
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  fontFamily: 'Questrial',
+                ),
+              ),
+              loading: () => Text(
+                'Counting rows…',
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 14,
+                  fontFamily: 'Questrial',
+                ),
+              ),
+              error: (e, _) => Text(
+                'Could not count rows: $e',
+                style: TextStyle(
+                  color: colorScheme.error,
+                  fontSize: 13,
+                  fontFamily: 'Questrial',
+                ),
               ),
             ),
             const SizedBox(height: 24),

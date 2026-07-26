@@ -44,10 +44,10 @@ final currentUserFacilitatorScopeProvider =
     );
   }
 
-  // Legacy: scope from classes table
+  // Legacy: scope from classes table — keep empty list (fail-closed), never null classIds.
   final classRepo = ref.watch(classRepositoryProvider);
   final classIds = await classRepo.getClassIdsByFacilitatorUserId(userId);
-  return FacilitatorScope(classIds: classIds.isEmpty ? null : classIds, mode: null);
+  return FacilitatorScope(classIds: classIds, mode: null);
 });
 
 /// Mode options the current user is allowed to see/select.

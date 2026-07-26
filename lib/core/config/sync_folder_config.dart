@@ -11,10 +11,12 @@ class SyncFolderConfig {
   SyncFolderConfig({
     this.syncFolderPath,
     required this.deviceId,
+    this.autoSyncOnRemoteChange = true,
   });
 
   final String? syncFolderPath;
   final String deviceId;
+  final bool autoSyncOnRemoteChange;
 
   static const String _configFileName = 'charis_sync_config.json';
   static const _uuid = Uuid();
@@ -35,6 +37,7 @@ class SyncFolderConfig {
       return SyncFolderConfig(
         syncFolderPath: map['syncFolderPath'] as String?,
         deviceId: map['deviceId'] as String? ?? _uuid.v4(),
+        autoSyncOnRemoteChange: map['autoSyncOnRemoteChange'] as bool? ?? true,
       );
     } catch (_) {
       final deviceId = _uuid.v4();
@@ -48,6 +51,7 @@ class SyncFolderConfig {
     final map = <String, dynamic>{
       'syncFolderPath': syncFolderPath,
       'deviceId': deviceId,
+      'autoSyncOnRemoteChange': autoSyncOnRemoteChange,
     };
     await file.writeAsString(const JsonEncoder.withIndent('  ').convert(map));
   }
@@ -60,6 +64,20 @@ class SyncFolderConfig {
     final updated = SyncFolderConfig(
       syncFolderPath: path,
       deviceId: config.deviceId,
+      autoSyncOnRemoteChange: config.autoSyncOnRemoteChange,
+    );
+    await updated._save(file);
+  }
+
+  /// Saves whether auto-sync should run when sync files change.
+  static Future<void> saveAutoSyncOnRemoteChange(bool enabled) async {
+    final config = await load();
+    final dir = await getApplicationSupportDirectory();
+    final file = File(p.join(dir.path, _configFileName));
+    final updated = SyncFolderConfig(
+      syncFolderPath: config.syncFolderPath,
+      deviceId: config.deviceId,
+      autoSyncOnRemoteChange: enabled,
     );
     await updated._save(file);
   }

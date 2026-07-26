@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:charis_student_care/core/config/sync_folder_config.dart';
+import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 
 /// Normalizes [date] to date-only (midnight UTC) for storage/comparison.
@@ -12,10 +14,18 @@ DateTime _dateOnly(DateTime date) {
 
 /// Attendance repository: watch/get/upsert daily attendance by date.
 class AttendanceRepository {
-  AttendanceRepository(this._db);
+  AttendanceRepository(this._db, {void Function()? onLocalChangeSetWritten})
+      : _onLocalChangeSetWritten = onLocalChangeSetWritten;
 
   final AppDatabase _db;
+  final void Function()? _onLocalChangeSetWritten;
   static const _uuid = Uuid();
+
+  Future<String> _effectiveChangeSetDeviceId(String? deviceId) async {
+    final d = deviceId?.trim();
+    if (d != null && d.isNotEmpty && d != 'legacy') return d;
+    return SyncFolderConfig.getOrCreateDeviceId();
+  }
 
   Future<String?> _classNameForId(int? classId) async {
     if (classId == null) return null;
@@ -25,6 +35,20 @@ class AttendanceRepository {
 
   static Map<String, dynamic> _studentYearEntry(String? name) =>
       (name != null && name.isNotEmpty) ? {'studentYear': name} : {};
+
+  Future<String?> _getSessionCodeById(int? sessionId) async {
+    if (sessionId == null) return null;
+    try {
+      final result = await _db.customSelect(
+        'SELECT code FROM academic_sessions WHERE id = ? LIMIT 1',
+        variables: [Variable.withInt(sessionId)],
+        readsFrom: const {},
+      ).getSingleOrNull();
+      return result?.data['code'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Stream of attendance rows for [date] (date-only).
   /// When [studentIds] is non-null and non-empty, restrict to those students (for facilitator scope).
@@ -36,8 +60,12 @@ class AttendanceRepository {
     return (_db.select(_db.attendance)
           ..where((t) {
             var pred = t.date.equals(d);
-            if (studentIds != null && studentIds.isNotEmpty) {
-              pred = pred & t.studentId.isIn(studentIds);
+            if (studentIds != null) {
+              if (studentIds.isEmpty) {
+                pred = pred & t.studentId.equals(-1);
+              } else {
+                pred = pred & t.studentId.isIn(studentIds);
+              }
             }
             return pred;
           })
@@ -54,8 +82,12 @@ class AttendanceRepository {
     var query = _db.select(_db.attendance)
       ..where((t) {
         var pred = t.date.equals(d);
-        if (studentIds != null && studentIds.isNotEmpty) {
-          pred = pred & t.studentId.isIn(studentIds);
+        if (studentIds != null) {
+          if (studentIds.isEmpty) {
+            pred = pred & t.studentId.equals(-1);
+          } else {
+            pred = pred & t.studentId.isIn(studentIds);
+          }
         }
         return pred;
       });
@@ -83,12 +115,16 @@ class AttendanceRepository {
   Future<void> upsertAttendanceForDate(
     DateTime date,
     List<AttendanceEntry> rows, {
+    required UserRole userRole,
     int? academicSessionId,
     String? userId,
     String? deviceId,
     String? userDisplayName,
     String? screen,
   }) async {
+    if (!RolePermissions.canEnterAttendance(userRole)) {
+      throw StateError('Role cannot enter attendance');
+    }
     if (rows.isEmpty) return;
     
     final d = _dateOnly(date);
@@ -101,6 +137,7 @@ class AttendanceRepository {
         .get();
 
     final existingMap = {for (final a in existingAttendance) a.studentId: a};
+    final sessionCode = await _getSessionCodeById(academicSessionId);
 
     // Use a transaction to batch all operations
     await _db.transaction(() async {
@@ -144,6 +181,7 @@ class AttendanceRepository {
             'studentId': e.studentId,
             'present': e.present,
             if (e.notes != null && e.notes!.trim().isNotEmpty) 'notes': e.notes!.trim(),
+            if (sessionCode != null) 'academicSession': sessionCode,
             if (studentRow != null) 'studentName': '${studentRow.surname}, ${studentRow.firstName}',
             if (studentRow != null) ..._studentYearEntry(await _classNameForId(studentRow.classId)),
             if (studentRow != null && studentRow.mode != null && studentRow.mode!.isNotEmpty) 'studentMode': studentRow.mode,
@@ -157,13 +195,38 @@ class AttendanceRepository {
             payload: payload,
             userId: userId,
             version: 1,
-            deviceId: deviceId ?? 'legacy',
+            deviceId: deviceId,
             userDisplayName: userDisplayName,
             screen: screen,
+            notifySync: false,
           );
         }
       }
     });
+    if (userId != null) {
+      _onLocalChangeSetWritten?.call();
+    }
+  }
+
+  /// Stream of all attendance records for optional [studentIds] (no date range).
+  /// When [studentIds] is null, returns all students (admin scope).
+  /// When [studentIds] is empty, returns no rows (fail-closed for facilitators with no students).
+  Stream<List<AttendanceData>> watchAttendanceForStudents({
+    List<int>? studentIds,
+  }) {
+    final query = _db.select(_db.attendance);
+    if (studentIds != null) {
+      if (studentIds.isEmpty) {
+        query.where((t) => t.studentId.equals(-1));
+      } else {
+        query.where((t) => t.studentId.isIn(studentIds));
+      }
+    }
+    query.orderBy([
+      (t) => OrderingTerm.asc(t.date),
+      (t) => OrderingTerm.asc(t.studentId),
+    ]);
+    return query.watch();
   }
 
   /// Stream of all attendance records in the last [days] days.
@@ -184,8 +247,12 @@ class AttendanceRepository {
           ..where((t) {
             var pred = t.date.isBiggerOrEqualValue(startDate) &
                 t.date.isSmallerOrEqualValue(endDate);
-            if (studentIds != null && studentIds.isNotEmpty) {
-              pred = pred & t.studentId.isIn(studentIds);
+            if (studentIds != null) {
+              if (studentIds.isEmpty) {
+                pred = pred & t.studentId.equals(-1);
+              } else {
+                pred = pred & t.studentId.isIn(studentIds);
+              }
             }
             if (sessionId != null) {
               pred = pred & t.academicSessionId.equals(sessionId);
@@ -265,10 +332,12 @@ class AttendanceRepository {
     required Map<String, dynamic> payload,
     required String userId,
     required int version,
-    required String deviceId,
+    String? deviceId,
     String? userDisplayName,
     String? screen,
+    bool notifySync = true,
   }) async {
+    final effectiveDeviceId = await _effectiveChangeSetDeviceId(deviceId);
     final fullPayload = Map<String, dynamic>.from(payload);
     if (userDisplayName != null) fullPayload['userDisplayName'] = userDisplayName;
     if (screen != null) fullPayload['screen'] = screen;
@@ -281,9 +350,12 @@ class AttendanceRepository {
             payload: jsonEncode(fullPayload),
             userId: userId,
             version: version,
-            deviceId: deviceId,
+            deviceId: effectiveDeviceId,
           ),
         );
+    if (notifySync) {
+      _onLocalChangeSetWritten?.call();
+    }
   }
 }
 

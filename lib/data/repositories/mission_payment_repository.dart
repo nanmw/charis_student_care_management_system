@@ -1,5 +1,10 @@
-import 'package:drift/drift.dart';
+import 'dart:convert';
 
+import 'package:drift/drift.dart';
+import 'package:uuid/uuid.dart';
+
+import 'package:charis_student_care/core/config/sync_folder_config.dart';
+import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
 
@@ -36,9 +41,34 @@ class MissionPaymentData {
 
 /// Mission payment schedule repository: watch/upsert by student and year.
 class MissionPaymentRepository {
-  MissionPaymentRepository(this._db);
+  MissionPaymentRepository(
+    this._db, {
+    void Function()? onLocalChangeSetWritten,
+  }) : _onLocalChangeSetWritten = onLocalChangeSetWritten;
 
   final AppDatabase _db;
+  final void Function()? _onLocalChangeSetWritten;
+  static const _uuid = Uuid();
+
+  Future<String> _effectiveChangeSetDeviceId(String? deviceId) async {
+    final d = deviceId?.trim();
+    if (d != null && d.isNotEmpty && d != 'legacy') return d;
+    return SyncFolderConfig.getOrCreateDeviceId();
+  }
+
+  Future<String?> _getSessionCodeById(int? sessionId) async {
+    if (sessionId == null) return null;
+    try {
+      final result = await _db.customSelect(
+        'SELECT code FROM academic_sessions WHERE id = ? LIMIT 1',
+        variables: [Variable.withInt(sessionId)],
+        readsFrom: const {},
+      ).getSingleOrNull();
+      return result?.data['code'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Stream of mission payment schedule rows for [year], ordered by studentId.
   Stream<List<MissionPaymentScheduleData>> watchForYear(String year) {
@@ -103,7 +133,14 @@ class MissionPaymentRepository {
     required Map<int, MissionPaymentData> payments,
     int? academicSessionId,
     String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+    required UserRole userRole,
   }) async {
+    if (!RolePermissions.canManageFinancials(userRole)) {
+      throw StateError('Role cannot manage financials');
+    }
     if (payments.isEmpty) return 0;
 
     final studentIds = payments.keys.toList();
@@ -112,6 +149,8 @@ class MissionPaymentRepository {
               t.year.equals(year) & t.studentId.isIn(studentIds),))
         .get();
     final existingMap = {for (final r in existing) r.studentId: r};
+    final sessionCode =
+        await _getSessionCodeById(academicSessionId) ?? year;
 
     return await _db.transaction(() async {
       int count = 0;
@@ -119,8 +158,12 @@ class MissionPaymentRepository {
         final studentId = entry.key;
         final data = entry.value;
         final row = existingMap[studentId];
+        late final int paymentId;
+        late final String operation;
 
         if (row != null) {
+          paymentId = row.id;
+          operation = 'UPDATE';
           await (_db.update(_db.missionPaymentSchedule)
                 ..where((t) => t.id.equals(row.id)))
               .write(
@@ -140,11 +183,14 @@ class MissionPaymentRepository {
             ),
           );
         } else {
-          await _db.into(_db.missionPaymentSchedule).insert(
+          operation = 'INSERT';
+          paymentId = await _db.into(_db.missionPaymentSchedule).insert(
             MissionPaymentScheduleCompanion.insert(
               studentId: studentId,
               year: year,
-              academicSessionId: academicSessionId != null ? Value(academicSessionId) : const Value.absent(),
+              academicSessionId: academicSessionId != null
+                  ? Value(academicSessionId)
+                  : const Value.absent(),
               tripSelected: Value(data.tripSelected),
               date: Value(data.date),
               amount: Value(data.amount),
@@ -160,9 +206,71 @@ class MissionPaymentRepository {
             ),
           );
         }
+
+        if (userId != null) {
+          await _insertChangeSet(
+            table: 'mission_payment_schedule',
+            recordId: paymentId.toString(),
+            operation: operation,
+            payload: {
+              'studentId': studentId,
+              'year': year,
+              'academicSession': sessionCode,
+              if (data.tripSelected != null) 'tripSelected': data.tripSelected,
+              if (data.date != null) 'date': data.date,
+              'amount': data.amount,
+              'mar': data.mar,
+              'apr': data.apr,
+              'may': data.may,
+              'jun': data.jun,
+              'jul': data.jul,
+              'aug': data.aug,
+              'sep': data.sep,
+              'oct': data.oct,
+              if (data.comment != null) 'comment': data.comment,
+            },
+            userId: userId,
+            version: 1,
+            deviceId: deviceId,
+            userDisplayName: userDisplayName,
+            screen: screen,
+          );
+        }
         count++;
       }
       return count;
     });
+  }
+
+  Future<void> _insertChangeSet({
+    required String table,
+    required String recordId,
+    required String operation,
+    required Map<String, dynamic> payload,
+    required String userId,
+    required int version,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+  }) async {
+    final effectiveDeviceId = await _effectiveChangeSetDeviceId(deviceId);
+    final fullPayload = Map<String, dynamic>.from(payload);
+    if (userDisplayName != null) {
+      fullPayload['userDisplayName'] = userDisplayName;
+    }
+    if (screen != null) fullPayload['screen'] = screen;
+    await _db.into(_db.changeSets).insert(
+          ChangeSetsCompanion.insert(
+            id: _uuid.v4(),
+            table: table,
+            recordId: recordId,
+            operation: operation,
+            payload: jsonEncode(fullPayload),
+            userId: userId,
+            version: version,
+            deviceId: effectiveDeviceId,
+          ),
+        );
+    _onLocalChangeSetWritten?.call();
   }
 }

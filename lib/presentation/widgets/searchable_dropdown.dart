@@ -34,6 +34,8 @@ class SearchableDropdown<T> extends StatefulWidget {
     this.searchFilter,
     this.enabled = true,
     this.allowClear = false,
+    this.fieldBackgroundColor,
+    this.closedFieldHeight,
   });
 
   /// Optional label displayed above the dropdown
@@ -71,6 +73,13 @@ class SearchableDropdown<T> extends StatefulWidget {
 
   /// Whether to show a "Clear" option when a value is selected
   final bool allowClear;
+
+  /// When set, used as the closed dropdown field background (e.g. [Colors.transparent] in tables).
+  /// When null, defaults to white / light gray per enabled state.
+  final Color? fieldBackgroundColor;
+
+  /// When [label] is null, fixes the closed field height (e.g. to match a table TextField).
+  final double? closedFieldHeight;
 
   @override
   State<SearchableDropdown<T>> createState() => _SearchableDropdownState<T>();
@@ -331,9 +340,39 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
       throw StateError('RenderBox not attached');
     }
     final size = renderBox.size;
+    final overlayRenderBox =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final fieldTopLeft =
+        renderBox.localToGlobal(Offset.zero, ancestor: overlayRenderBox);
+    final mediaQuery = MediaQuery.of(context);
+    final screenHeight = mediaQuery.size.height;
+    final viewPadding = mediaQuery.padding;
+
+    const gap = 4.0;
+    const edgeMargin = 8.0;
+    const designMaxHeight = 300.0;
+    const minMenuHeight = 140.0;
+    const switchToUpwardThreshold = 220.0;
+
+    final availableBelow = screenHeight -
+        viewPadding.bottom -
+        (fieldTopLeft.dy + size.height) -
+        gap -
+        edgeMargin;
+    final availableAbove =
+        fieldTopLeft.dy - viewPadding.top - gap - edgeMargin;
+    final openUpward = availableBelow < switchToUpwardThreshold &&
+        availableAbove > availableBelow;
+    final menuMaxHeight =
+        (openUpward ? availableAbove : availableBelow).clamp(
+      minMenuHeight,
+      designMaxHeight,
+    ).toDouble();
 
     return OverlayEntry(
-      builder: (context) => KeyboardListener(
+      builder: (context) {
+        final colorScheme = Theme.of(context).colorScheme;
+        return KeyboardListener(
         focusNode: FocusNode()..requestFocus(),
         onKeyEvent: _handleKeyboardEvent,
         child: Stack(
@@ -352,16 +391,20 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
               child: CompositedTransformFollower(
                 link: _layerLink,
                 showWhenUnlinked: false,
-                offset: Offset(0.0, size.height + 4.0),
+                targetAnchor:
+                    openUpward ? Alignment.topLeft : Alignment.bottomLeft,
+                followerAnchor:
+                    openUpward ? Alignment.bottomLeft : Alignment.topLeft,
+                offset: Offset(0.0, openUpward ? -gap : gap),
                 child: Material(
                     elevation: 8,
                     borderRadius: BorderRadius.circular(8),
-                    color: AppColors.charisWhite,
+                    color: colorScheme.surface,
                     child: Container(
-                      constraints: const BoxConstraints(maxHeight: 300),
+                      constraints: BoxConstraints(maxHeight: menuMaxHeight),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: AppColors.charisMidGray),
+                        border: Border.all(color: colorScheme.outlineVariant),
                       ),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
@@ -377,20 +420,20 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                                 controller: _searchController,
                                 focusNode: _searchFocusNode,
                                 autofocus: true,
-                                style: const TextStyle(
-                                  color: AppColors.charisBlack,
+                                style: TextStyle(
+                                  color: colorScheme.onSurface,
                                   fontSize: 14,
                                   fontFamily: 'Questrial',
                                 ),
                                 decoration: InputDecoration(
                                   hintText: widget.searchHint,
-                                  hintStyle: const TextStyle(
-                                    color: AppColors.charisMidGray,
+                                  hintStyle: TextStyle(
+                                    color: colorScheme.onSurfaceVariant,
                                     fontSize: 14,
                                   ),
-                                  prefixIcon: const Icon(
+                                  prefixIcon: Icon(
                                     Icons.search,
-                                    color: AppColors.charisMidGray,
+                                    color: colorScheme.onSurfaceVariant,
                                     size: 20,
                                   ),
                                   border: OutlineInputBorder(
@@ -398,7 +441,7 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                                   ),
                                   enabledBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(8),
-                                    borderSide: const BorderSide(color: AppColors.charisMidGray),
+                                    borderSide: BorderSide(color: colorScheme.outlineVariant),
                                   ),
                                   focusedBorder: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(8),
@@ -412,7 +455,7 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                                     vertical: 10,
                                   ),
                                   filled: true,
-                                  fillColor: AppColors.charisWhite,
+                                  fillColor: colorScheme.surface,
                                 ),
                                 // Fix 6: Handle Escape key in TextField
                                 onSubmitted: (value) {
@@ -424,16 +467,16 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                             ),
                           ),
                           // Divider
-                          const Divider(height: 1, color: AppColors.charisLightGray),
+                          Divider(height: 1, color: colorScheme.outlineVariant),
                           // Items list
                           Flexible(
                             child: _filteredItems.isEmpty
-                                ? const Padding(
-                                    padding: EdgeInsets.all(16.0),
+                                ? Padding(
+                                    padding: const EdgeInsets.all(16.0),
                                     child: Text(
                                       'No items found',
                                       style: TextStyle(
-                                        color: AppColors.charisMidGray,
+                                        color: colorScheme.onSurfaceVariant,
                                         fontSize: 14,
                                         fontFamily: 'Questrial',
                                       ),
@@ -455,17 +498,17 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                                           label: 'Clear selection',
                                           button: true,
                                           child: ListTile(
-                                            title: const Text(
+                                            title: Text(
                                               'Clear',
                                               style: TextStyle(
-                                                color: AppColors.charisMidGray,
+                                                color: colorScheme.onSurfaceVariant,
                                                 fontSize: 14,
                                                 fontFamily: 'Questrial',
                                                 fontStyle: FontStyle.italic,
                                               ),
                                             ),
                                             tileColor: isHighlighted
-                                                ? AppColors.charisLightGray.withValues(alpha: 0.5)
+                                                ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
                                                 : null,
                                             onTap: () {
                                               widget.onChanged(null);
@@ -490,8 +533,8 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                                         } catch (e) {
                                           titleWidget = Text(
                                             item.toString(),
-                                            style: const TextStyle(
-                                              color: AppColors.charisBlack,
+                                            style: TextStyle(
+                                              color: colorScheme.onSurface,
                                               fontSize: 14,
                                               fontFamily: 'Questrial',
                                             ),
@@ -500,8 +543,8 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                                       } else {
                                         titleWidget = Text(
                                           item.toString(),
-                                          style: const TextStyle(
-                                            color: AppColors.charisBlack,
+                                          style: TextStyle(
+                                            color: colorScheme.onSurface,
                                             fontSize: 14,
                                             fontFamily: 'Questrial',
                                           ),
@@ -516,9 +559,9 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                                         child: ListTile(
                                           title: titleWidget,
                                           selected: isSelected,
-                                          selectedTileColor: AppColors.charisLightGray.withValues(alpha: 0.3),
+                                          selectedTileColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
                                           tileColor: isHighlighted && !isSelected
-                                              ? AppColors.charisLightGray.withValues(alpha: 0.5)
+                                              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.5)
                                               : null,
                                           onTap: () {
                                             widget.onChanged(item);
@@ -537,7 +580,8 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
               ),
           ],
         ),
-      ),
+      );
+      },
     );
   }
 
@@ -571,10 +615,13 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     // Check if we're in a constrained height context (like DataGrid cells)
     final hasLabel = widget.label != null;
     final verticalPadding = hasLabel ? 10.0 : 6.0; // Reduce padding when no label
-    
+    final fixedClosedHeight =
+        !hasLabel ? widget.closedFieldHeight : null;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -605,20 +652,31 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                 onTap: _toggleDropdown,
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
+                  height: fixedClosedHeight,
+                  alignment:
+                      fixedClosedHeight != null ? Alignment.centerLeft : null,
                   decoration: BoxDecoration(
                     border: Border.all(
                       color: _isOpen
                           ? AppColors.primaryActionRed
-                          : AppColors.charisMidGray,
+                          : colorScheme.outlineVariant,
                       width: _isOpen ? 2 : 1,
                     ),
                     borderRadius: BorderRadius.circular(8),
-                    color: widget.enabled
-                        ? AppColors.charisWhite
-                        : AppColors.charisLightGray,
+                    color: widget.fieldBackgroundColor ??
+                        (widget.enabled
+                            ? AppColors.charisWhite
+                            : AppColors.charisLightGray),
                   ),
-                  padding: EdgeInsets.symmetric(horizontal: 14, vertical: verticalPadding),
-                  constraints: hasLabel ? null : const BoxConstraints(maxHeight: 32),
+                  padding: fixedClosedHeight != null
+                      ? const EdgeInsets.symmetric(horizontal: 14)
+                      : EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: verticalPadding,
+                        ),
+                  constraints: hasLabel || fixedClosedHeight != null
+                      ? null
+                      : const BoxConstraints(maxHeight: 32),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -629,7 +687,8 @@ class _SearchableDropdownState<T> extends State<SearchableDropdown<T>> {
                             color: widget.selectedValue == null
                                 ? AppColors.charisMidGray
                                 : AppColors.charisBlack,
-                            fontSize: 14,
+                            fontSize:
+                                fixedClosedHeight != null ? 13 : 14,
                             fontFamily: 'Questrial',
                           ),
                           overflow: TextOverflow.ellipsis,

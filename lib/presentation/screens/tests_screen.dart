@@ -11,7 +11,8 @@ import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:go_router/go_router.dart';
-import 'package:charis_student_care/core/utils/date_utils.dart' as app_date_utils;
+import 'package:charis_student_care/core/utils/date_utils.dart'
+    as app_date_utils;
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/domain/use_cases/sort_students_alphabetically.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
@@ -23,29 +24,31 @@ import 'package:charis_student_care/presentation/providers/academic_session_prov
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
+import 'package:charis_student_care/presentation/theme/app_table_style.dart';
 import 'package:charis_student_care/presentation/widgets/searchable_dropdown.dart';
 import 'package:charis_student_care/presentation/widgets/student_summary_dialog.dart';
 
-/// Returns current academic session string (e.g. "2025-2026") for default selection.
+/// Fallback session for default selection (single year, e.g. "2026").
 String _defaultCurrentAcademicSession() {
-  final now = DateTime.now();
-  final year = now.year;
-  return now.month >= 7 ? '$year-${year + 1}' : '${year - 1}-$year';
+  return DateTime.now().year.toString();
 }
+
+/// Height of subject dropdown and score field on Tests → Data Entry grid.
+const double _kDataEntryControlHeight = 20;
 
 /// Test row edit data class to track unsaved changes (used by TestDataSource).
 class TestRowEdit {
   TestRowEdit({
     this.subjectId,
-    this.score = 0,
+    this.score,
     this.label,
   });
 
   int? subjectId;
-  int score;
+  int? score;
   String? label;
 
-  bool get passed => score >= 70;
+  bool get passed => score != null && score! >= 70;
 }
 
 /// Tests Entry screen: table-based layout for managing student test scores
@@ -59,13 +62,15 @@ class TestsScreen extends ConsumerStatefulWidget {
 class _TestsScreenState extends ConsumerState<TestsScreen> {
   String _selectedMode = 'Full-time';
   int? _studentClassId; // Student class filter (from DB classes)
-  String? _selectedAcademicSession; // Academic session (e.g. 2024-2025)
+  String?
+      _selectedAcademicSession; // Academic session filter (e.g. 2026). Does not set global current.
   String _searchQuery = '';
   int? _bulkSubjectId;
   DateTime? _selectedDate; // Date filter for tests
 
   bool _hasInitializedSession = false;
   bool _defaultClassScheduled = false;
+  bool _showAdvancedFilters = false;
 
   @override
   void initState() {
@@ -111,7 +116,12 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
   /// "Clear fields" state (blank subject, Passed "-") persists across rebuilds.
   bool _cohortFieldsCleared = false;
 
+  /// At least one student in the current cohort has a test for the filtered subject/session.
+  /// Stored when building the grid so callbacks can pass it to updateData / _initializeEdits.
+  bool _cohortHasTestForSubjectSession = false;
+
   TestDataSource? _dataSource;
+  ThemeMode? _dataSourceThemeMode;
 
   @override
   void dispose() {
@@ -127,14 +137,14 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
 
   void _loadMore() {
     if (_isLoadingMore) return;
-    
+
     // Check if we have more items to load
     final allFilteredStudents = _cachedFilteredStudents;
     if (allFilteredStudents == null) return;
-    
+
     final total = allFilteredStudents.length;
     if (_displayedCount >= total) return; // Already showing all items
-    
+
     setState(() {
       _isLoadingMore = true;
       _displayedCount = (_displayedCount + 25).clamp(0, total);
@@ -163,11 +173,12 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
     final allTestsAsync = ref.watch(allTestsProvider);
-    
+
     // Initialize session from global current session on first build
     _initializeSessionFromGlobal(ref);
 
-    final visibleClasses = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull;
+    final visibleClasses =
+        ref.watch(classesVisibleToCurrentUserProvider).valueOrNull;
     final auth = ref.watch(authStateProvider).valueOrNull;
     final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
     if (auth is Authenticated &&
@@ -186,7 +197,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         defaultClassId = scope.classIds!.first;
         defaultMode = scope.mode ?? 'Full-time';
       } else {
-        final year1 = visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
+        final year1 =
+            visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
         final firstClass = visibleClasses.first;
         defaultClassId = year1.isEmpty ? firstClass.id : year1.first.id;
       }
@@ -279,6 +291,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                   ),
                   const SizedBox(height: 16),
                   Expanded(
+                    key: ValueKey(themeMode),
                     child: TabBarView(
                       children: [
                         _buildReportTab(context, colorScheme, redColor),
@@ -287,6 +300,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                           colorScheme,
                           redColor,
                           isDark,
+                          themeMode,
                           studentsAsync,
                           allTestsAsync,
                         ),
@@ -411,7 +425,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       ...subjectColumns.map(
         (subject) => GridColumn(
           columnName: 'subject_${subject.id}',
-          width: 130,
+          width: 48,
           label: _buildReportSubjectHeader(subject.name, colorScheme),
         ),
       ),
@@ -420,7 +434,9 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     return SfDataGrid(
       source: reportDataSource,
       columnWidthMode: ColumnWidthMode.none,
-      gridLinesVisibility: GridLinesVisibility.horizontal,
+      rowHeight: AppTableStyle.dataGridRowHeight,
+      headerRowHeight: AppTableStyle.dataGridVerticalHeaderRowHeight,
+      gridLinesVisibility: GridLinesVisibility.both,
       headerGridLinesVisibility: GridLinesVisibility.both,
       columns: columns,
     );
@@ -477,11 +493,17 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       list.sort((a, b) {
         final classCmp = a.classId.compareTo(b.classId);
         if (classCmp != 0) return classCmp;
+        final orderCmp = a.sortOrder.compareTo(b.sortOrder);
+        if (orderCmp != 0) return orderCmp;
         return a.name.compareTo(b.name);
       });
       return list;
     }
-    list.sort((a, b) => a.name.compareTo(b.name));
+    list.sort((a, b) {
+      final orderCmp = a.sortOrder.compareTo(b.sortOrder);
+      if (orderCmp != 0) return orderCmp;
+      return a.name.compareTo(b.name);
+    });
     return list;
   }
 
@@ -546,8 +568,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     }
     final set = <(int, int)>{};
     for (final subject in subjectColumns) {
-      final cohortHasSubject = cohortScoreMap.values
-          .any((m) => m[subject.id] != null);
+      final cohortHasSubject =
+          cohortScoreMap.values.any((m) => m[subject.id] != null);
       if (!cohortHasSubject) continue;
       for (final student in reportStudents) {
         if (scoreMap[student.id]?[subject.id] == null) {
@@ -564,6 +586,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     ColorScheme colorScheme,
     Color redColor,
     bool isDark,
+    ThemeMode themeMode,
     AsyncValue<List<Student>> studentsAsync,
     AsyncValue<List<Test>> allTestsAsync,
   ) {
@@ -576,6 +599,15 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
             color: colorScheme.onSurface,
             fontWeight: FontWeight.w600,
             fontSize: 18,
+            fontFamily: 'Questrial',
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'Select a subject to load existing scores. Leave it unselected for a clean entry form.',
+          style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 12,
             fontFamily: 'Questrial',
           ),
         ),
@@ -625,306 +657,319 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         const SizedBox(height: 16),
         Expanded(
           child: studentsAsync.when(
-              data: (allStudents) {
-                // Filter and sort students
-                final dateKey = _selectedDate != null
-                    ? app_date_utils.DateUtils.formatIsoDate(_selectedDate!)
-                    : 'all';
-                final sessionKey = _selectedAcademicSession ?? 'all';
-                final filterKey =
-                    '$_selectedMode|$_studentClassId|$_searchQuery|$dateKey|$_bulkSubjectId|$sessionKey';
-                if (_cachedFilteredStudents == null ||
-                    _lastFilterKey != filterKey) {
-                  _cohortFieldsCleared = false;
-                  final searchQueryLower = _searchQuery.toLowerCase();
-                  final filtered = allStudents.where((s) {
-                    if (s.mode != _selectedMode) return false;
-                    if (_studentClassId != null && s.classId != _studentClassId) {
+            data: (allStudents) {
+              // Filter and sort students
+              final dateKey = _selectedDate != null
+                  ? app_date_utils.DateUtils.formatIsoDate(_selectedDate!)
+                  : 'all';
+              final sessionKey = _selectedAcademicSession ?? 'all';
+              final filterKey =
+                  '$_selectedMode|$_studentClassId|$_searchQuery|$dateKey|$_bulkSubjectId|$sessionKey';
+              if (_cachedFilteredStudents == null ||
+                  _lastFilterKey != filterKey) {
+                _cohortFieldsCleared = false;
+                final searchQueryLower = _searchQuery.toLowerCase();
+                final filtered = allStudents.where((s) {
+                  if (s.mode != _selectedMode) return false;
+                  if (_studentClassId != null && s.classId != _studentClassId) {
+                    return false;
+                  }
+                  if (searchQueryLower.isNotEmpty) {
+                    if (!s.surname.toLowerCase().contains(searchQueryLower) &&
+                        !s.firstName.toLowerCase().contains(searchQueryLower) &&
+                        !(s.email?.toLowerCase().contains(searchQueryLower) ??
+                            false)) {
                       return false;
                     }
-                    if (searchQueryLower.isNotEmpty) {
-                      if (!s.surname.toLowerCase().contains(searchQueryLower) &&
-                          !s.firstName
-                              .toLowerCase()
-                              .contains(searchQueryLower) &&
-                          !(s.email?.toLowerCase().contains(searchQueryLower) ??
-                              false)) {
-                        return false;
-                      }
-                    }
-                    return true;
-                  }).toList();
-                  _cachedFilteredStudents =
-                      sortStudentsAlphabetically(filtered);
-                  _lastFilterKey = filterKey;
-                  // Reset displayed count when filters change
-                  _displayedCount = 25;
-                }
+                  }
+                  return true;
+                }).toList();
+                _cachedFilteredStudents = sortStudentsAlphabetically(filtered);
+                _lastFilterKey = filterKey;
+                // Reset displayed count when filters change
+                _displayedCount = 25;
+              }
 
-                final allFilteredStudents = _cachedFilteredStudents!;
-                final total = allFilteredStudents.length;
-                if (_displayedCount > total) {
-                  _displayedCount = total;
-                }
-                final displayedStudents = allFilteredStudents.sublist(
-                    0,
-                    _displayedCount.clamp(0, total),
-                );
+              final allFilteredStudents = _cachedFilteredStudents!;
+              final total = allFilteredStudents.length;
+              if (_displayedCount > total) {
+                _displayedCount = total;
+              }
+              final displayedStudents = allFilteredStudents.sublist(
+                0,
+                _displayedCount.clamp(0, total),
+              );
 
-                // Load tests for displayed students
-                return allTestsAsync.when(
-                  data: (allTests) {
-                    // Filter tests by academic session, subject, and date
-                    var filteredTests = allTests;
+              // Load tests for displayed students
+              return allTestsAsync.when(
+                data: (allTests) {
+                  // Filter tests by academic session, subject, and date
+                  var filteredTests = allTests;
 
-                    // Filter by academic session when selected
-                    if (_selectedAcademicSession != null &&
-                        _selectedAcademicSession!.trim().isNotEmpty) {
-                      filteredTests = filteredTests
-                          .where((test) =>
-                              test.academicSession == _selectedAcademicSession,)
-                          .toList();
-                    }
-
-                    // Filter by subject if bulk subject is selected
-                    if (_bulkSubjectId != null) {
-                      filteredTests = filteredTests
-                          .where((test) => test.subjectId == _bulkSubjectId)
-                          .toList();
-                    }
-
-                    // Filter by date if date filter is active
-                    if (_selectedDate != null) {
-                      final selectedDateOnly = DateTime(
-                        _selectedDate!.year,
-                        _selectedDate!.month,
-                        _selectedDate!.day,
-                      );
-                      filteredTests = filteredTests.where((test) {
-                        // Use updatedAt if available, otherwise createdAt
-                        final testDate = test.updatedAt ?? test.createdAt;
-                        final testDateOnly = DateTime(
-                          testDate.year,
-                          testDate.month,
-                          testDate.day,
-                        );
-                        return testDateOnly.isAtSameMomentAs(selectedDateOnly);
-                      }).toList();
-                    }
-                    
-                    // Filter by cohort (year + mode) - only include tests from students in the cohort
-                    final cohortStudentIds = allStudents
-                        .where((s) => s.mode == _selectedMode && s.classId == _studentClassId)
-                        .map((s) => s.id)
-                        .toSet();
+                  // Filter by academic session when selected
+                  if (_selectedAcademicSession != null &&
+                      _selectedAcademicSession!.trim().isNotEmpty) {
                     filteredTests = filteredTests
-                        .where((test) => cohortStudentIds.contains(test.studentId))
+                        .where(
+                          (test) =>
+                              test.academicSession == _selectedAcademicSession,
+                        )
                         .toList();
-                    
-                    // Build test map (latest test per student for the selected subject)
-                    final testMap = <int, Test>{};
-                    for (final test in filteredTests) {
-                      // If bulk subject is selected, prioritize tests matching that subject
-                      // Otherwise, use the most recent test per student
-                      if (_bulkSubjectId != null) {
-                        // For bulk subject, only include tests matching that subject
-                        if (test.subjectId == _bulkSubjectId) {
-                          if (!testMap.containsKey(test.studentId) ||
-                              (test.updatedAt ?? test.createdAt).isAfter(
-                                    testMap[test.studentId]!.updatedAt ??
-                                        testMap[test.studentId]!.createdAt,
-                                  )) {
-                            testMap[test.studentId] = test;
-                          }
-                        }
-                      } else {
-                        // No bulk subject selected - use most recent test per student
+                  }
+
+                  // Filter by subject if bulk subject is selected
+                  if (_bulkSubjectId != null) {
+                    filteredTests = filteredTests
+                        .where((test) => test.subjectId == _bulkSubjectId)
+                        .toList();
+                  }
+
+                  // Filter by date if date filter is active
+                  if (_selectedDate != null) {
+                    final selectedDateOnly = DateTime(
+                      _selectedDate!.year,
+                      _selectedDate!.month,
+                      _selectedDate!.day,
+                    );
+                    filteredTests = filteredTests.where((test) {
+                      // Use updatedAt if available, otherwise createdAt
+                      final testDate = test.updatedAt ?? test.createdAt;
+                      final testDateOnly = DateTime(
+                        testDate.year,
+                        testDate.month,
+                        testDate.day,
+                      );
+                      return testDateOnly.isAtSameMomentAs(selectedDateOnly);
+                    }).toList();
+                  }
+
+                  // Filter by cohort (year + mode) - only include tests from students in the cohort
+                  final cohortStudentIds = allStudents
+                      .where((s) =>
+                          s.mode == _selectedMode &&
+                          s.classId == _studentClassId,)
+                      .map((s) => s.id)
+                      .toSet();
+                  filteredTests = filteredTests
+                      .where(
+                          (test) => cohortStudentIds.contains(test.studentId),)
+                      .toList();
+
+                  // Build test map only when subject context is explicit.
+                  // Without a selected subject, keep rows clean (no implicit latest prefill).
+                  final testMap = <int, Test>{};
+                  for (final test in filteredTests) {
+                    if (_bulkSubjectId != null) {
+                      if (test.subjectId == _bulkSubjectId) {
                         if (!testMap.containsKey(test.studentId) ||
                             (test.updatedAt ?? test.createdAt).isAfter(
-                                  testMap[test.studentId]!.updatedAt ??
-                                      testMap[test.studentId]!.createdAt,
-                                )) {
+                              testMap[test.studentId]!.updatedAt ??
+                                  testMap[test.studentId]!.createdAt,
+                            )) {
                           testMap[test.studentId] = test;
                         }
                       }
                     }
-                    if (!_cohortFieldsCleared) {
-                      _cachedTests = testMap;
-                    }
-                    final mapForDisplay = _cachedTests ?? testMap;
+                  }
+                  if (!_cohortFieldsCleared) {
+                    _cachedTests = testMap;
+                  }
+                  final mapForDisplay = _cachedTests ?? testMap;
 
-                    // At least one test in cohort for this subject/session (for "Outstanding" label)
-                    // cohortStudentIds already computed above for filtering
-                    final cohortHasTestForSubjectSession = filteredTests
-                        .any((test) => cohortStudentIds.contains(test.studentId));
-
-                    // Initialize edits if needed
-                    _initializeEdits(displayedStudents, mapForDisplay, filterKey: filterKey);
-
-                    // Build data source
-                    _dataSource ??= TestDataSource(
-                      students: displayedStudents,
-                      testMap: mapForDisplay,
-                      edits: _edits,
-                      controllers: _controllers,
-                      colorScheme: colorScheme,
-                      isDark: isDark,
-                      redColor: redColor,
-                      cohortHasTestForSubjectSession: cohortHasTestForSubjectSession,
-                      onSubjectChanged: (studentId, subjectId) {
-                        _onSubjectChanged(studentId, subjectId);
-                      },
-                      onScoreChanged: (studentId, score) {
-                        setState(() {
-                          _edits[studentId] ??= TestRowEdit();
-                          _edits[studentId]!.score = score;
-                        });
-                      },
-                      onLabelChanged: (studentId, label) {
-                        setState(() {
-                          _edits[studentId] ??= TestRowEdit();
-                          _edits[studentId]!.label = label;
-                        });
-                      },
-                      onView: (student) {
-                        StudentSummaryDialog.show(
-                          context: context,
-                          student: student,
-                        );
-                      },
-                      ref: ref,
-                    );
-                    _dataSource!.updateData(
-                      displayedStudents,
-                      mapForDisplay,
-                      _edits,
-                      cohortHasTestForSubjectSession: cohortHasTestForSubjectSession,
-                    );
-
-                    if (displayedStudents.isEmpty) {
-                      return Center(
-                        child: Text(
-                          'No students found.',
-                          style: TextStyle(
-                            color: colorScheme.onSurfaceVariant,
-                            fontSize: 14,
-                            fontFamily: 'Questrial',
-                          ),
-                        ),
+                  // At least one test in cohort for this subject/session (for "Outstanding" label)
+                  // cohortStudentIds already computed above for filtering
+                  final cohortHasTestForSubjectSession = _bulkSubjectId != null &&
+                      filteredTests.any(
+                        (test) =>
+                            cohortStudentIds.contains(test.studentId) &&
+                            test.subjectId == _bulkSubjectId,
                       );
-                    }
+                  _cohortHasTestForSubjectSession =
+                      cohortHasTestForSubjectSession;
 
-                    return RepaintBoundary(
-                      child: NotificationListener<ScrollNotification>(
-                        onNotification: (notification) {
-                          if (notification is ScrollUpdateNotification) {
-                            final metrics = notification.metrics;
-                            // Load more when scrolled 80% down
-                            if (metrics.pixels >= metrics.maxScrollExtent * 0.8) {
-                              _loadMore();
-                            }
-                          }
-                          return false;
-                        },
-                        child: SfDataGrid(
-                          source: _dataSource!,
-                          columnWidthMode: ColumnWidthMode.fill,
-                          gridLinesVisibility: GridLinesVisibility.horizontal,
-                          headerGridLinesVisibility: GridLinesVisibility.both,
-                          columns: [
-                            GridColumn(
-                              columnName: 'sno',
-                              width: 50,
-                              label: _buildHeader('#', colorScheme),
-                            ),
-                            GridColumn(
-                              columnName: 'studentName',
-                              width: 200,
-                              label: _buildHeader('Student Name', colorScheme),
-                            ),
-                            GridColumn(
-                              columnName: 'subject',
-                              width: 250,
-                              label: _buildHeader('Subject', colorScheme),
-                            ),
-                            GridColumn(
-                              columnName: 'score',
-                              width: 100,
-                              label: _buildHeader('Score', colorScheme),
-                            ),
-                            GridColumn(
-                              columnName: 'passed',
-                              width: 100,
-                              label: _buildHeader('Passed', colorScheme),
-                            ),
-                            GridColumn(
-                              columnName: 'notes',
-                              width: double.nan,
-                              label: _buildHeader('Notes', colorScheme),
-                            ),
-                            GridColumn(
-                              columnName: 'view',
-                              width: 80,
-                              label: _buildHeader('View', colorScheme),
-                            ),
-                          ],
+                  // Initialize edits if needed
+                  _initializeEdits(
+                    displayedStudents,
+                    mapForDisplay,
+                    filterKey: filterKey,
+                    cohortHasTestForSubjectSession:
+                        cohortHasTestForSubjectSession,
+                  );
+
+                  // Recreate data source when theme changes so grid text colors update (names stay visible).
+                  final currentThemeMode = ref.watch(themeModeProvider);
+                  if (_dataSource != null &&
+                      _dataSourceThemeMode != null &&
+                      currentThemeMode != _dataSourceThemeMode) {
+                    _dataSource = null;
+                  }
+                  _dataSourceThemeMode = currentThemeMode;
+
+                  // Build data source
+                  _dataSource ??= TestDataSource(
+                    students: displayedStudents,
+                    testMap: mapForDisplay,
+                    edits: _edits,
+                    controllers: _controllers,
+                    colorScheme: colorScheme,
+                    isDark: isDark,
+                    redColor: redColor,
+                    cohortHasTestForSubjectSession:
+                        cohortHasTestForSubjectSession,
+                    onSubjectChanged: (studentId, subjectId) {
+                      _onSubjectChanged(studentId, subjectId);
+                    },
+                    onScoreChanged: (studentId, score) {
+                      _edits[studentId] ??= TestRowEdit();
+                      _edits[studentId]!.score = score;
+                      // Avoid setState (full grid remount) while typing; refresh Passed cell only.
+                      _dataSource?.refreshPassedCell(studentId);
+                    },
+                    onLabelChanged: (studentId, label) {
+                      _edits[studentId] ??= TestRowEdit();
+                      _edits[studentId]!.label = label;
+                    },
+                    onView: (student) {
+                      StudentSummaryDialog.show(
+                        context: context,
+                        student: student,
+                      );
+                    },
+                    ref: ref,
+                  );
+                  _dataSource!.updateData(
+                    displayedStudents,
+                    mapForDisplay,
+                    _edits,
+                    cohortHasTestForSubjectSession:
+                        cohortHasTestForSubjectSession,
+                    colorScheme: colorScheme,
+                    isDark: isDark,
+                    redColor: redColor,
+                  );
+
+                  if (displayedStudents.isEmpty) {
+                    return Center(
+                      child: Text(
+                        'No students found.',
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 14,
+                          fontFamily: 'Questrial',
                         ),
                       ),
                     );
-                  },
-                  loading: () =>
-                      const Center(child: CircularProgressIndicator()),
-                  error: (err, _) => Center(
-                    child: Text(
-                      'Error loading tests: $err',
-                      style: TextStyle(color: colorScheme.error, fontSize: 14),
+                  }
+
+                  return RepaintBoundary(
+                    key: ValueKey(themeMode),
+                    child: NotificationListener<ScrollNotification>(
+                      onNotification: (notification) {
+                        if (notification is ScrollUpdateNotification) {
+                          final metrics = notification.metrics;
+                          // Load more when scrolled 80% down
+                          if (metrics.pixels >= metrics.maxScrollExtent * 0.8) {
+                            _loadMore();
+                          }
+                        }
+                        return false;
+                      },
+                      child: SfDataGrid(
+                        source: _dataSource!,
+                        columnWidthMode: ColumnWidthMode.fill,
+                        headerRowHeight: AppTableStyle.dataGridHeaderRowHeight,
+                        gridLinesVisibility: GridLinesVisibility.both,
+                        headerGridLinesVisibility: GridLinesVisibility.both,
+                        columns: [
+                          GridColumn(
+                            columnName: 'sno',
+                            width: 50,
+                            label: _buildHeader('#', colorScheme),
+                          ),
+                          GridColumn(
+                            columnName: 'studentName',
+                            width: 200,
+                            label: _buildHeader('Student Name', colorScheme),
+                          ),
+                          GridColumn(
+                            columnName: 'subject',
+                            width: 250,
+                            label: _buildHeader('Subject', colorScheme),
+                          ),
+                          GridColumn(
+                            columnName: 'score',
+                            width: 100,
+                            label: _buildHeader('Score', colorScheme),
+                          ),
+                          GridColumn(
+                            columnName: 'passed',
+                            width: 120,
+                            label: _buildHeader('Passed', colorScheme),
+                          ),
+                          GridColumn(
+                            columnName: 'notes',
+                            width: double.nan,
+                            label: _buildHeader('Notes', colorScheme),
+                          ),
+                          GridColumn(
+                            columnName: 'view',
+                            width: 80,
+                            label: _buildHeader('View', colorScheme),
+                          ),
+                        ],
+                      ),
                     ),
+                  );
+                },
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (err, _) => Center(
+                  child: Text(
+                    'Error loading tests: $err',
+                    style: TextStyle(color: colorScheme.error, fontSize: 14),
                   ),
-                );
-              },
-              loading: () => const Center(child: CircularProgressIndicator()),
-              error: (err, _) => Center(
-                child: Text(
-                  'Error loading students: $err',
-                  style: TextStyle(color: colorScheme.error, fontSize: 14),
                 ),
+              );
+            },
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (err, _) => Center(
+              child: Text(
+                'Error loading students: $err',
+                style: TextStyle(color: colorScheme.error, fontSize: 14),
               ),
             ),
           ),
-        ],
-      );
+        ),
+      ],
+    );
   }
 
   Widget _buildHeader(String text, ColorScheme colorScheme) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: AppTableStyle.headerPadding,
       alignment: Alignment.centerLeft,
+      color: Colors.transparent,
       child: Text(
         text,
-        style: TextStyle(
-          color: colorScheme.onSurface,
-          fontWeight: FontWeight.w600,
-          fontSize: 14,
-          fontFamily: 'Questrial',
-        ),
+        style: AppTableStyle.dataGridHeaderTextStyle(colorScheme),
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
       ),
     );
   }
 
-  /// Header for report subject columns: wraps up to 4 lines for longer names.
+  /// Header for report subject columns: vertical text reading bottom → top.
   Widget _buildReportSubjectHeader(String text, ColorScheme colorScheme) {
     return Container(
-      padding: const EdgeInsets.all(12),
-      alignment: Alignment.centerLeft,
-      child: Text(
-        text,
-        maxLines: 4,
-        softWrap: true,
-        style: TextStyle(
-          color: colorScheme.onSurface,
-          fontWeight: FontWeight.w600,
-          fontSize: 14,
-          fontFamily: 'Questrial',
+      padding: AppTableStyle.headerPadding,
+      alignment: Alignment.bottomCenter,
+      color: Colors.transparent,
+      child: RotatedBox(
+        quarterTurns: 3,
+        child: Text(
+          text,
+          softWrap: false,
+          overflow: TextOverflow.ellipsis,
+          style: AppTableStyle.dataGridHeaderTextStyle(colorScheme),
         ),
       ),
     );
@@ -932,17 +977,14 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
 
   Widget _buildFiltersAndBulkActions(ColorScheme colorScheme, Color redColor) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
           children: [
             _buildModeToggle(colorScheme, redColor),
-            const SizedBox(width: 16),
+            const SizedBox(width: 12),
             _buildStudentYearDropdown(colorScheme),
-            const SizedBox(width: 16),
-            _buildAcademicSessionDropdown(colorScheme),
-            const SizedBox(width: 16),
-            _buildDateFilter(colorScheme),
-            const SizedBox(width: 16),
+            const SizedBox(width: 12),
             Expanded(
               child: TextField(
                 onChanged: (v) {
@@ -962,54 +1004,104 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                   hintText: 'Search students...',
                   hintStyle: TextStyle(
                     color: colorScheme.onSurfaceVariant,
-                    fontSize: 14,
+                    fontSize: 13,
                   ),
                   prefixIcon: Icon(
                     Icons.search,
                     color: colorScheme.onSurfaceVariant,
-                    size: 22,
+                    size: 20,
                   ),
                   filled: true,
-                  fillColor: colorScheme.surfaceContainerHighest,
+                  fillColor: Colors.transparent,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide: BorderSide.none,
+                    borderSide: BorderSide(color: colorScheme.outlineVariant),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: colorScheme.outlineVariant),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: redColor, width: 2),
                   ),
                   contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  isDense: true,
                 ),
-                style: TextStyle(color: colorScheme.onSurface, fontSize: 14),
+                style: TextStyle(color: colorScheme.onSurface, fontSize: 13),
+              ),
+            ),
+            const SizedBox(width: 12),
+            TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  _showAdvancedFilters = !_showAdvancedFilters;
+                });
+              },
+              style: TextButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                minimumSize: const Size(0, 0),
+              ),
+              icon: Icon(
+                _showAdvancedFilters
+                    ? Icons.keyboard_arrow_up
+                    : Icons.keyboard_arrow_down,
+                size: 18,
+                color: redColor,
+              ),
+              label: Text(
+                _showAdvancedFilters ? 'Fewer filters' : 'More filters',
+                style: TextStyle(
+                  color: redColor,
+                  fontSize: 13,
+                  fontFamily: 'Questrial',
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 16),
-        // Bulk subject selector
-        Row(
-          children: [
-            const Text(
-              'Apply Subject to All Filtered:',
-              style: TextStyle(
-                fontSize: 14,
-                fontFamily: 'Questrial',
-                fontWeight: FontWeight.w600,
-              ),
+        AnimatedCrossFade(
+          crossFadeState: _showAdvancedFilters
+              ? CrossFadeState.showFirst
+              : CrossFadeState.showSecond,
+          duration: const Duration(milliseconds: 200),
+          firstChild: Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: Row(
+              children: [
+                _buildDateFilter(colorScheme),
+                const SizedBox(width: 12),
+                const Text(
+                  'Apply Subject to All Filtered:',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontFamily: 'Questrial',
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _buildBulkSubjectSelector(colorScheme),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _bulkSubjectId != null ? _applyBulkSubject : null,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: redColor,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                  ),
+                  child: const Text('Apply to All Filtered'),
+                ),
+              ],
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildBulkSubjectSelector(colorScheme),
-            ),
-            const SizedBox(width: 12),
-            FilledButton(
-              onPressed: _bulkSubjectId != null ? _applyBulkSubject : null,
-              style: FilledButton.styleFrom(
-                backgroundColor: redColor,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              ),
-              child: const Text('Apply to All Filtered'),
-            ),
-          ],
+          ),
+          secondChild: const SizedBox.shrink(),
         ),
       ],
     );
@@ -1052,8 +1144,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         if (!mounted) return;
         setState(() {
           _bulkSubjectId = null;
-          _studentClassId =
-              classes.isNotEmpty ? classes.first.id : null;
+          _studentClassId = classes.isNotEmpty ? classes.first.id : null;
           _cachedFilteredStudents = null;
           _cachedTests = null;
           _dataSource = null;
@@ -1062,10 +1153,10 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       });
     }
 
-    final effectiveBulkSubjectId = _bulkSubjectId != null &&
-            allSubjects.any((s) => s.id == _bulkSubjectId)
-        ? _bulkSubjectId
-        : null;
+    final effectiveBulkSubjectId =
+        _bulkSubjectId != null && allSubjects.any((s) => s.id == _bulkSubjectId)
+            ? _bulkSubjectId
+            : null;
 
     return SearchableDropdown<int>(
       key: const ValueKey('bulk_subject_selector'),
@@ -1075,7 +1166,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       searchHint: 'Search subjects...',
       itemBuilder: (context, subjectId) {
         final subject = subjectMap[subjectId];
-        final className = subject != null ? (classIdToName[subject.classId] ?? '') : '';
+        final className =
+            subject != null ? (classIdToName[subject.classId] ?? '') : '';
         return Text(
           subject != null ? '${subject.name} ($className)' : 'Unknown',
           style: const TextStyle(
@@ -1087,7 +1179,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       },
       displayTextBuilder: (subjectId) {
         final subject = subjectMap[subjectId];
-        final className = subject != null ? (classIdToName[subject.classId] ?? '') : '';
+        final className =
+            subject != null ? (classIdToName[subject.classId] ?? '') : '';
         return subject != null ? '${subject.name} ($className)' : 'Unknown';
       },
       searchFilter: (subjectId, query) {
@@ -1098,22 +1191,22 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         return subject.name.toLowerCase().contains(q) ||
             className.toLowerCase().contains(q);
       },
-                  onChanged: (value) {
-                    setState(() {
-                      _bulkSubjectId = value;
-                      if (value != null) {
-                        final subject = subjectMap[value];
-                        if (subject != null) {
-                          _studentClassId = subject.classId; // Auto-filter by student class
-                        }
-                      }
-                      _cachedFilteredStudents = null; // Reset cache
-                      _cachedTests = null;
-                      _dataSource = null;
-                      _displayedCount = 25; // Reset scroll
-                    });
-                  },
-                );
+      onChanged: (value) {
+        setState(() {
+          _bulkSubjectId = value;
+          if (value != null) {
+            final subject = subjectMap[value];
+            if (subject != null) {
+              _studentClassId = subject.classId; // Auto-filter by student class
+            }
+          }
+          _cachedFilteredStudents = null; // Reset cache
+          _cachedTests = null;
+          _dataSource = null;
+          _displayedCount = 25; // Reset scroll
+        });
+      },
+    );
   }
 
   Widget _buildModeToggle(ColorScheme colorScheme, Color redColor) {
@@ -1153,13 +1246,15 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         });
       },
       children: modeOptions
-          .map((l) => Text(
-                l,
-                style: const TextStyle(
-                  fontFamily: 'Questrial',
-                  fontSize: 14,
-                ),
-              ),)
+          .map(
+            (l) => Text(
+              l,
+              style: const TextStyle(
+                fontFamily: 'Questrial',
+                fontSize: 14,
+              ),
+            ),
+          )
           .toList(),
     );
   }
@@ -1171,9 +1266,9 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         height: 44,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest,
+          color: Colors.transparent,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: colorScheme.outline),
+          border: Border.all(color: colorScheme.outlineVariant),
         ),
         child: _buildStudentClassDropdown(colorScheme),
       ),
@@ -1181,7 +1276,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
   }
 
   Widget _buildStudentClassDropdown(ColorScheme colorScheme) {
-    final classes = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull ?? [];
+    final classes =
+        ref.watch(classesVisibleToCurrentUserProvider).valueOrNull ?? [];
     final effectiveClassId = classes.isEmpty
         ? null
         : (classes.any((SchoolClass c) => c.id == _studentClassId)
@@ -1213,10 +1309,15 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       underline: const SizedBox.shrink(),
       borderRadius: BorderRadius.circular(8),
       items: classes
-          .map<DropdownMenuItem<int?>>((SchoolClass c) => DropdownMenuItem<int?>(
-                value: c.id,
-                child: Text(c.name, style: TextStyle(color: colorScheme.onSurface, fontSize: 14),),
-              ),)
+          .map<DropdownMenuItem<int?>>(
+            (SchoolClass c) => DropdownMenuItem<int?>(
+              value: c.id,
+              child: Text(
+                c.name,
+                style: TextStyle(color: colorScheme.onSurface, fontSize: 14),
+              ),
+            ),
+          )
           .toList(),
       onChanged: (v) {
         setState(() {
@@ -1230,97 +1331,14 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     );
   }
 
-  Widget _buildAcademicSessionDropdown(ColorScheme colorScheme) {
-    final sessionOptionsAsync = ref.watch(academicSessionOptionsProvider);
-    return sessionOptionsAsync.when(
-      data: (options) {
-        if (options.isNotEmpty &&
-            (_selectedAcademicSession == null || !options.contains(_selectedAcademicSession!))) {
-          final defaultSession = options.contains(_defaultCurrentAcademicSession())
-              ? _defaultCurrentAcademicSession()
-              : options.first;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              setState(() => _selectedAcademicSession = defaultSession);
-            }
-          });
-        }
-        final effectiveOptions = options.isEmpty ? <String>[] : options;
-        return SizedBox(
-          width: 140,
-          child: Container(
-            height: 44,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: colorScheme.outline),
-            ),
-            child: DropdownButton<String?>(
-              value: effectiveOptions.isEmpty ? null : _selectedAcademicSession,
-              hint: Text(
-                'Session',
-                style: TextStyle(
-                  color: colorScheme.onSurfaceVariant,
-                  fontSize: 14,
-                ),
-              ),
-              isExpanded: true,
-              underline: const SizedBox.shrink(),
-              borderRadius: BorderRadius.circular(8),
-              items: effectiveOptions
-                  .map((s) => DropdownMenuItem<String?>(
-                        value: s,
-                        child: Text(
-                          s,
-                          style: TextStyle(
-                            color: colorScheme.onSurface,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ),)
-                  .toList(),
-              onChanged: (v) async {
-                if (v == null) return;
-                setState(() {
-                  _selectedAcademicSession = v;
-                  _cachedFilteredStudents = null;
-                  _cachedTests = null;
-                  _dataSource = null;
-                  _displayedCount = 25;
-                });
-                // Persist the selection as the global current session
-                final repo = ref.read(academicSessionRepositoryProvider);
-                await repo.setCurrentSession(v);
-                // Invalidate the current session provider to update other features
-                ref.invalidate(currentAcademicSessionProvider);
-              },
-            ),
-          ),
-        );
-      },
-      loading: () => const SizedBox(
-        width: 140,
-        height: 44,
-        child: Center(
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      ),
-      error: (_, __) => const SizedBox(width: 140, height: 44),
-    );
-  }
-
   Widget _buildDateFilter(ColorScheme colorScheme) {
     return InkWell(
       onTap: () async {
         final datesWithChanges = await ref.read(
-            datesWithTestChangesProvider(_selectedAcademicSession).future,);
+          datesWithTestChangesProvider(_selectedAcademicSession).future,
+        );
         if (!mounted) return;
-        
+
         // Compute initial date that satisfies the predicate
         final DateTime initialDate;
         if (_selectedDate != null) {
@@ -1333,7 +1351,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
           // Use DateTime.now() when predicate is null (empty datesWithChanges)
           initialDate = DateTime.now();
         }
-        
+
         final picked = await showDatePicker(
           context: context,
           initialDate: initialDate,
@@ -1343,10 +1361,12 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
               ? null
               : (date) {
                   final d = DateTime(date.year, date.month, date.day);
-                  return datesWithChanges.any((x) =>
-                      x.year == d.year &&
-                      x.month == d.month &&
-                      x.day == d.day,);
+                  return datesWithChanges.any(
+                    (x) =>
+                        x.year == d.year &&
+                        x.month == d.month &&
+                        x.day == d.day,
+                  );
                 },
         );
         if (picked != null && mounted) {
@@ -1366,7 +1386,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         decoration: BoxDecoration(
           color: colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: colorScheme.outline),
+          border: Border.all(color: colorScheme.outlineVariant),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1413,7 +1433,12 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     );
   }
 
-  void _initializeEdits(List<Student> students, Map<int, Test> testMap, {String? filterKey}) {
+  void _initializeEdits(
+    List<Student> students,
+    Map<int, Test> testMap, {
+    String? filterKey,
+    bool cohortHasTestForSubjectSession = false,
+  }) {
     final filterChanged = filterKey != null && filterKey != _lastEditFilterKey;
     if (filterKey != null) {
       _lastEditFilterKey = filterKey;
@@ -1422,18 +1447,19 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     for (final student in students) {
       final test = testMap[student.id];
       final existingEdit = _edits[student.id];
+      final canonicalScore = test?.score;
 
-      final hasUnsavedChanges = !filterChanged && existingEdit != null && (
-        existingEdit.subjectId != test?.subjectId ||
-        existingEdit.score != (test?.score ?? 0) ||
-        existingEdit.label != test?.label
-      );
+      final hasUnsavedChanges = !filterChanged &&
+          existingEdit != null &&
+          (existingEdit.subjectId != test?.subjectId ||
+              existingEdit.score != canonicalScore ||
+              existingEdit.label != test?.label);
 
       if (filterChanged || !hasUnsavedChanges) {
         final subjectId = test?.subjectId ?? existingEdit?.subjectId;
         _edits[student.id] = TestRowEdit(
           subjectId: subjectId,
-          score: test?.score ?? 0,
+          score: test?.score,
           label: test?.label,
         );
       }
@@ -1443,9 +1469,8 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       final scoreKey = '${student.id}_score';
       final labelKey = '${student.id}_label';
 
-      // Update score controller
-      final isUnscored = test == null && edit.score == 0;
-      final expectedScoreText = isUnscored ? '' : edit.score.toString();
+      // Update score controller (null = unscored)
+      final expectedScoreText = edit.score?.toString() ?? '';
       if (!_controllers.containsKey(scoreKey)) {
         _controllers[scoreKey] = TextEditingController(text: expectedScoreText);
       } else if (_controllers[scoreKey]!.text != expectedScoreText) {
@@ -1473,8 +1498,9 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     String? academicSession,
   }) {
     var matchingTests = allTests
-        .where((test) =>
-            test.studentId == studentId && test.subjectId == subjectId,)
+        .where(
+          (test) => test.studentId == studentId && test.subjectId == subjectId,
+        )
         .toList();
 
     if (academicSession != null && academicSession.trim().isNotEmpty) {
@@ -1520,7 +1546,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     setState(() {
       _edits[studentId] ??= TestRowEdit();
       _edits[studentId]!.subjectId = subjectId;
-      
+
       // Load existing test data for this student+subject combination
       if (subjectId != null) {
         final allTestsAsync = ref.read(allTestsProvider);
@@ -1535,94 +1561,96 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
             null,
             academicSession: _selectedAcademicSession,
           );
-          
+
           if (!mounted) return;
-          
+
           setState(() {
             if (test != null) {
               _edits[studentId]!.score = test.score;
               _edits[studentId]!.label = test.label;
-              
+
               // Update controllers
               final scoreKey = '${studentId}_score';
               if (!_controllers.containsKey(scoreKey)) {
                 _controllers[scoreKey] = TextEditingController();
               }
               _controllers[scoreKey]!.text = test.score.toString();
-              
+
               final labelKey = '${studentId}_label';
               if (!_controllers.containsKey(labelKey)) {
                 _controllers[labelKey] = TextEditingController();
               }
               _controllers[labelKey]!.text = test.label ?? '';
-              
+
               // Update cached test map
               if (_cachedTests != null) {
                 _cachedTests![studentId] = test;
               }
             } else {
-              // No test found - reset to defaults
-              _edits[studentId]!.score = 0;
+              // No test found - score undefined (null)
+              _edits[studentId]!.score = null;
               _edits[studentId]!.label = null;
-              
+
               final scoreKey = '${studentId}_score';
               if (!_controllers.containsKey(scoreKey)) {
                 _controllers[scoreKey] = TextEditingController();
               }
-              _controllers[scoreKey]!.text = '0';
-              
+              _controllers[scoreKey]!.text = '';
+
               final labelKey = '${studentId}_label';
               if (!_controllers.containsKey(labelKey)) {
                 _controllers[labelKey] = TextEditingController();
               }
               _controllers[labelKey]!.text = '';
-              
+
               // Remove from cache if no test found
               if (_cachedTests != null) {
                 _cachedTests!.remove(studentId);
               }
             }
           });
-          
+
           // Update data source after state update completes
           // Use post-frame callback to ensure DataGrid rebuilds properly
           SchedulerBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
-            
+
             if (_dataSource != null && _cachedTests != null) {
               // Get current displayed students from cached filtered students
               final students = _cachedFilteredStudents ?? [];
               final total = students.length;
               final displayedCount = _displayedCount.clamp(0, total);
               final displayedStudents = students.sublist(0, displayedCount);
-              
+
               _dataSource!.updateData(
                 displayedStudents,
                 _cachedTests!,
                 _edits,
+                cohortHasTestForSubjectSession: _cohortHasTestForSubjectSession,
               );
             }
           });
         });
       } else {
-        // Subject cleared - reset to defaults
-        _edits[studentId]!.score = 0;
+        // Subject cleared - score undefined (null)
+        _edits[studentId]!.score = null;
         _edits[studentId]!.label = null;
-        
+
         // Update data source immediately
         SchedulerBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          
+
           if (_dataSource != null && _cachedTests != null) {
             final students = _cachedFilteredStudents ?? [];
             final total = students.length;
             final displayedCount = _displayedCount.clamp(0, total);
             final displayedStudents = students.sublist(0, displayedCount);
-            
+
             _dataSource!.updateData(
               displayedStudents,
               _cachedTests!,
               _edits,
+              cohortHasTestForSubjectSession: _cohortHasTestForSubjectSession,
             );
           }
         });
@@ -1641,7 +1669,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       _cachedTests ??= <int, Test>{};
       for (final student in students) {
         final id = student.id;
-        _edits[id] = TestRowEdit(subjectId: null, score: 0, label: null);
+        _edits[id] = TestRowEdit(subjectId: null, score: null, label: null);
         _cachedTests!.remove(id);
 
         final scoreKey = '${id}_score';
@@ -1653,11 +1681,18 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
 
     SchedulerBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (_dataSource != null && _cachedTests != null && _cachedFilteredStudents != null) {
+      if (_dataSource != null &&
+          _cachedTests != null &&
+          _cachedFilteredStudents != null) {
         final list = _cachedFilteredStudents!;
         final total = list.length;
         final displayed = list.sublist(0, _displayedCount.clamp(0, total));
-        _dataSource!.updateData(displayed, _cachedTests!, _edits);
+        _dataSource!.updateData(
+          displayed,
+          _cachedTests!,
+          _edits,
+          cohortHasTestForSubjectSession: _cohortHasTestForSubjectSession,
+        );
       }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1669,24 +1704,25 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     });
   }
 
-  /// True when there is at least one row that can be saved: new test or rewrite of failed test.
-  /// Only a passing test blocks new input (guidelines 6 & 7).
+  /// True when there is at least one row with a complete, changed value that can be saved.
+  /// Existing rows can be updated via upsert flow.
   bool _hasUnsavedChanges() {
     if (_cachedTests == null) return false;
     for (final entry in _edits.entries) {
       final studentId = entry.key;
       final edit = entry.value;
       final test = _cachedTests![studentId];
-      // Allow save for new test or rewrite (existing test is failed)
-      final canSaveRow = test == null || test.score < AppConstants.passingTestScore;
-      if (canSaveRow && edit.subjectId != null) {
-        return true;
-      }
+      if (edit.subjectId == null || edit.score == null) continue;
+      if (test == null) return true;
+      final hasChange = edit.subjectId != test.subjectId ||
+          edit.score != test.score ||
+          (edit.label ?? '') != (test.label ?? '');
+      if (hasChange) return true;
     }
     return false;
   }
 
-  /// Saves only new test insertions (guideline 10). Subject and score required (guideline 8).
+  /// Saves tests by upserting per (student, subject, session). Subject and score required.
   Future<void> _saveAllChanges() async {
     if (_cachedTests == null) return;
 
@@ -1705,37 +1741,53 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     try {
       final repo = ref.read(testRepositoryProvider);
       int savedCount = 0;
+      int createdCount = 0;
+      int updatedCount = 0;
       final invalid = <String>[];
+      final failures = <String>[];
       final savedStudentIds = <int>{};
+      final studentNameById = {
+        for (final s in (_cachedFilteredStudents ?? <Student>[]))
+          s.id: '${s.surname}, ${s.firstName}',
+      };
 
       for (final entry in _edits.entries) {
         final studentId = entry.key;
         final edit = entry.value;
-        final test = _cachedTests![studentId];
-
-        if (test != null && test.score >= AppConstants.passingTestScore) continue; // Passing test: edit only in Student Summary (guideline 10). Rewrites of failed tests are allowed.
 
         if (edit.subjectId == null) continue; // Subject required (guideline 8)
+        if (edit.score == null) {
+          continue; // Score undefined: not yet entered, skip
+        }
         // Score required: use edit.score (0-100)
-        final score = edit.score;
+        final score = edit.score!;
         if (score < 0 || score > 100) {
           invalid.add('student $studentId');
           continue;
         }
 
-        await repo.addTest(
-          studentId,
-          score,
-          label: edit.label,
-          subjectId: edit.subjectId,
-          academicSession: _selectedAcademicSession,
-          userRole: auth.role,
-          userId: auth.user.id,
-          userDisplayName: auth.user.displayName,
-          screen: 'Tests',
-        );
-        savedCount++;
-        savedStudentIds.add(studentId);
+        try {
+          final action = await repo.saveOrUpdateTestForStudentSubjectSession(
+            studentId,
+            score,
+            label: edit.label,
+            subjectId: edit.subjectId!,
+            academicSession: _selectedAcademicSession,
+            userRole: auth.role,
+            userId: auth.user.id,
+            userDisplayName: auth.user.displayName,
+            screen: 'Tests',
+          );
+          savedCount++;
+          if (action == 'created') {
+            createdCount++;
+          } else if (action == 'updated') {
+            updatedCount++;
+          }
+          savedStudentIds.add(studentId);
+        } catch (_) {
+          failures.add(studentNameById[studentId] ?? 'student $studentId');
+        }
       }
 
       if (invalid.isNotEmpty && mounted) {
@@ -1748,10 +1800,10 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         );
       }
 
-      if (savedCount == 0 && invalid.isEmpty) {
+      if (savedCount == 0 && invalid.isEmpty && failures.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('No new test entries to save')),
+            const SnackBar(content: Text('No test changes to save')),
           );
         }
         return;
@@ -1770,7 +1822,10 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Successfully saved $savedCount test record(s)'),
+            content: Text(
+              'Saved $savedCount test record(s): $createdCount created, $updatedCount updated'
+              '${failures.isNotEmpty ? '. Failed: ${failures.join(", ")}' : ''}',
+            ),
           ),
         );
       }
@@ -1802,10 +1857,10 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
       setState(() {
         // Invalidate data source to force rebuild
         _dataSource = null;
-        
+
         // Initialize or clear cached test map
         _cachedTests ??= <int, Test>{};
-        
+
         for (final student in students) {
           // Find test for this student+subject+date combination
           final test = _findTestForStudentAndSubject(
@@ -1816,10 +1871,10 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
             academicSession: _selectedAcademicSession,
           );
 
-          // Update edits with loaded test data or defaults
+          // Update edits with loaded test data or defaults (undefined when no test)
           _edits[student.id] ??= TestRowEdit(
             subjectId: _bulkSubjectId,
-            score: test?.score ?? 0,
+            score: test?.score,
             label: test?.label,
           );
           _edits[student.id]!.subjectId = _bulkSubjectId;
@@ -1827,26 +1882,27 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
             _edits[student.id]!.score = test.score;
             _edits[student.id]!.label = test.label;
           } else {
-            // No test found - reset to defaults
-            _edits[student.id]!.score = 0;
+            // No test found - score undefined (null), not 0
+            _edits[student.id]!.score = null;
             _edits[student.id]!.label = null;
           }
 
           // Update controllers - dispose old ones first to prevent memory leaks
           final scoreKey = '${student.id}_score';
-          final isUnscored = test == null && _edits[student.id]!.score == 0;
-          final expectedScoreText = isUnscored ? '' : _edits[student.id]!.score.toString();
-          
+          final expectedScoreText = _edits[student.id]!.score?.toString() ?? '';
+
           // Dispose old controller if it exists
           _controllers[scoreKey]?.dispose();
-          _controllers[scoreKey] = TextEditingController(text: expectedScoreText);
+          _controllers[scoreKey] =
+              TextEditingController(text: expectedScoreText);
 
           final labelKey = '${student.id}_label';
           final expectedLabelText = _edits[student.id]!.label ?? '';
-          
+
           // Dispose old controller if it exists
           _controllers[labelKey]?.dispose();
-          _controllers[labelKey] = TextEditingController(text: expectedLabelText);
+          _controllers[labelKey] =
+              TextEditingController(text: expectedLabelText);
 
           // Update cached test map
           if (test != null) {
@@ -1856,23 +1912,23 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
             _cachedTests!.remove(student.id);
           }
         }
-
       });
-      
+
       // Update data source after state update completes
       // Use post-frame callback to ensure DataGrid rebuilds properly
       SchedulerBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        
+
         if (_dataSource != null && _cachedTests != null) {
           final total = students.length;
           final displayedCount = _displayedCount.clamp(0, total);
           final displayedStudents = students.sublist(0, displayedCount);
-          
+
           _dataSource!.updateData(
             displayedStudents,
             _cachedTests!,
             _edits,
+            cohortHasTestForSubjectSession: _cohortHasTestForSubjectSession,
           );
         }
       });
@@ -1889,52 +1945,70 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     }
   }
 
-  void _exportCsv(BuildContext context) {
+  Future<void> _exportCsv(BuildContext context) async {
     final rows = <String>[];
     final header = ['#', 'Student Name', 'Subject', 'Score', 'Passed', 'Notes'];
     rows.add(header.join(','));
 
     final students = _cachedFilteredStudents ?? [];
     final testMap = _cachedTests ?? {};
+    final messenger = ScaffoldMessenger.of(context);
 
-    // This is a simplified export - in a real implementation, you'd fetch all subjects
+    final subjectNameById = <int, String>{};
+    try {
+      final classes =
+          await ref.read(classesVisibleToCurrentUserProvider.future);
+      final repo = ref.read(subjectRepositoryProvider);
+      for (final c in classes) {
+        final subjects = await repo.getSubjectsForClass(c.id);
+        for (final s in subjects) {
+          subjectNameById[s.id] = s.name;
+        }
+      }
+    } catch (_) {
+      // Fall back to id-based labels if subjects cannot be loaded.
+    }
+
+    if (!mounted) return;
+
+    String csvEscape(String value) {
+      final escaped = value.replaceAll('"', '""');
+      return '"$escaped"';
+    }
+
     var serial = 1;
-    for (final entry in _edits.entries) {
-      final studentId = entry.key;
-      final edit = entry.value;
-      final student = students.firstWhere(
-        (s) => s.id == studentId,
-        orElse: () => students.first,
-      );
-      final test = testMap[studentId];
-      final subjectId = edit.subjectId ?? test?.subjectId;
+    for (final student in students) {
+      final edit = _edits[student.id];
+      final test = testMap[student.id];
+      final subjectId = edit?.subjectId ?? test?.subjectId;
+      final score = edit?.score ?? test?.score;
+      final notes = edit?.label ?? test?.label ?? '';
+      final passed = score != null &&
+          score >= AppConstants.passingTestScore;
 
       final name = '${student.surname}, ${student.firstName}';
-      final subjectName = subjectId != null ? 'Subject $subjectId' : '';
-      final score = edit.score.toString();
-      final passed = edit.passed ? 'Passed' : 'Failed';
-      final notes = edit.label ?? test?.label ?? '';
+      final subjectName = subjectId == null
+          ? ''
+          : (subjectNameById[subjectId] ?? 'Subject $subjectId');
 
       final rowList = <String>[
         (serial++).toString(),
-        '"$name"',
-        '"$subjectName"',
-        score,
-        passed,
-        '"$notes"',
+        csvEscape(name),
+        csvEscape(subjectName),
+        score?.toString() ?? '',
+        score == null ? '' : (passed ? 'Passed' : 'Failed'),
+        csvEscape(notes),
       ];
       rows.add(rowList.join(','));
     }
 
     final csv = rows.join('\n');
-    if (mounted) {
-      Clipboard.setData(ClipboardData(text: csv));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Exported ${rows.length - 1} rows to clipboard'),
-        ),
-      );
-    }
+    Clipboard.setData(ClipboardData(text: csv));
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('Exported ${rows.length - 1} rows to clipboard'),
+      ),
+    );
   }
 }
 
@@ -1965,10 +2039,12 @@ class TestsReportPivotDataSource extends DataGridSource {
       ];
       for (final subject in _subjectColumns) {
         final test = _scoreMap[student.id]?[subject.id];
-        cells.add(DataGridCell<int?>(
-          columnName: 'subject_${subject.id}',
-          value: test?.score,
-        ),);
+        cells.add(
+          DataGridCell<int?>(
+            columnName: 'subject_${subject.id}',
+            value: test?.score,
+          ),
+        );
       }
       return DataGridRow(cells: cells);
     }).toList();
@@ -1995,24 +2071,20 @@ class TestsReportPivotDataSource extends DataGridSource {
     return DataGridRowAdapter(
       cells: cells.map((cell) {
         if (cell.columnName == 'sno') {
-          return _buildCell(Text(
-            '${cell.value as int}',
-            style: TextStyle(
-              color: _colorScheme.onSurface,
-              fontSize: 14,
-              fontFamily: 'Questrial',
+          return _buildCell(
+            Text(
+              '${cell.value as int}',
+              style: AppTableStyle.dataGridBodyTextStyle(_colorScheme),
             ),
-          ),);
+          );
         }
         if (cell.columnName == 'name') {
-          return _buildCell(Text(
-            cell.value as String,
-            style: TextStyle(
-              color: _colorScheme.onSurface,
-              fontSize: 14,
-              fontFamily: 'Questrial',
+          return _buildCell(
+            Text(
+              cell.value as String,
+              style: AppTableStyle.dataGridBodyTextStyle(_colorScheme),
             ),
-          ),);
+          );
         }
         final score = cell.value as int?;
         final student = _students[index];
@@ -2021,28 +2093,43 @@ class TestsReportPivotDataSource extends DataGridSource {
             score == null &&
             _outstandingSet.contains((student.id, subjectId));
         if (score == null) {
-          return _buildCell(Text(
-            isOutstanding ? 'Outstanding' : '-',
-            style: TextStyle(
-              color: isOutstanding
-                  ? _redColor
-                  : _colorScheme.onSurfaceVariant,
-              fontSize: 14,
-              fontFamily: 'Questrial',
-              fontWeight: isOutstanding ? FontWeight.w600 : null,
+          if (isOutstanding) {
+            return _buildCell(
+              Tooltip(
+                message: 'Outstanding',
+                child: Icon(
+                  Icons.warning_amber_rounded,
+                  size: 18,
+                  color: _redColor,
+                ),
+              ),
+            );
+          }
+          return _buildCell(
+            Text(
+              '-',
+              style: TextStyle(
+                color: _colorScheme.onSurfaceVariant,
+                fontSize: 14,
+                height: 1.1,
+                fontFamily: 'Questrial',
+              ),
             ),
-          ),);
+          );
         }
         final isFailed = score < AppConstants.passingTestScore;
-        return _buildCell(Text(
-          score.toString(),
-          style: TextStyle(
-            color: isFailed ? _redColor : _colorScheme.onSurface,
-            fontSize: 14,
-            fontFamily: 'Questrial',
-            fontWeight: isFailed ? FontWeight.w600 : null,
+        return _buildCell(
+          Text(
+            score.toString(),
+            style: TextStyle(
+              color: isFailed ? _redColor : _colorScheme.onSurface,
+              fontSize: 14,
+              height: 1.1,
+              fontFamily: 'Questrial',
+              fontWeight: isFailed ? FontWeight.w600 : null,
+            ),
           ),
-        ),);
+        );
       }).toList(),
     );
   }
@@ -2054,7 +2141,7 @@ class TestsReportPivotDataSource extends DataGridSource {
 
   Widget _buildCell(Widget child) {
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: AppTableStyle.cellPadding,
       alignment: Alignment.centerLeft,
       child: child,
     );
@@ -2073,11 +2160,11 @@ class TestDataSource extends DataGridSource {
     required Color redColor,
     bool cohortHasTestForSubjectSession = false,
     required void Function(int studentId, int? subjectId) onSubjectChanged,
-    required void Function(int studentId, int score) onScoreChanged,
+    required void Function(int studentId, int? score) onScoreChanged,
     required void Function(int studentId, String? label) onLabelChanged,
     required void Function(Student) onView,
     required WidgetRef ref,
-  }) : _students = students,
+  })  : _students = students,
         _testMap = testMap,
         _edits = edits,
         _controllers = controllers,
@@ -2097,12 +2184,12 @@ class TestDataSource extends DataGridSource {
   Map<int, Test> _testMap;
   Map<int, TestRowEdit> _edits;
   final Map<String, TextEditingController> _controllers;
-  final ColorScheme _colorScheme;
-  final bool _isDark;
-  final Color _redColor;
+  ColorScheme _colorScheme;
+  bool _isDark;
+  Color _redColor;
   bool _cohortHasTestForSubjectSession;
   final void Function(int studentId, int? subjectId) _onSubjectChanged;
-  final void Function(int studentId, int score) _onScoreChanged;
+  final void Function(int studentId, int? score) _onScoreChanged;
   final void Function(int studentId, String? label) _onLabelChanged;
   final void Function(Student) _onView;
   final WidgetRef _ref;
@@ -2114,12 +2201,41 @@ class TestDataSource extends DataGridSource {
     Map<int, Test> testMap,
     Map<int, TestRowEdit> edits, {
     bool cohortHasTestForSubjectSession = false,
+    ColorScheme? colorScheme,
+    bool? isDark,
+    Color? redColor,
   }) {
     _students = students;
     _testMap = testMap;
     _edits = edits;
     _cohortHasTestForSubjectSession = cohortHasTestForSubjectSession;
+    if (colorScheme != null) _colorScheme = colorScheme;
+    if (isDark != null) _isDark = isDark;
+    if (redColor != null) _redColor = redColor;
     _buildRows();
+    notifyListeners();
+  }
+
+  /// Updates only the Passed display for [studentId] without rebuilding score TextFields.
+  void refreshPassedCell(int studentId) {
+    final rowIndex = _students.indexWhere((s) => s.id == studentId);
+    if (rowIndex < 0 || rowIndex >= _dataGridRows.length) return;
+    final edit = _edits[studentId];
+    final test = _testMap[studentId];
+    final score = edit?.score ?? test?.score;
+    final passed = score != null && score >= AppConstants.passingTestScore;
+    final old = _dataGridRows[rowIndex];
+    final cells = List<DataGridCell>.from(old.getCells());
+    final scoreIdx = cells.indexWhere((c) => c.columnName == 'score');
+    final passedIdx = cells.indexWhere((c) => c.columnName == 'passed');
+    if (scoreIdx >= 0) {
+      cells[scoreIdx] = DataGridCell<int?>(columnName: 'score', value: score);
+    }
+    if (passedIdx >= 0) {
+      cells[passedIdx] =
+          DataGridCell<bool>(columnName: 'passed', value: passed);
+    }
+    _dataGridRows[rowIndex] = DataGridRow(cells: cells);
     notifyListeners();
   }
 
@@ -2131,29 +2247,31 @@ class TestDataSource extends DataGridSource {
       final edit = _edits[student.id] ??
           TestRowEdit(
             subjectId: test?.subjectId,
-            score: test?.score ?? 0,
+            score: test?.score,
             label: test?.label,
           );
 
-      return DataGridRow(cells: [
-        DataGridCell<int>(columnName: 'sno', value: index + 1),
-        DataGridCell<String>(
-          columnName: 'studentName',
-          value: '${student.surname}, ${student.firstName}',
-        ),
-        DataGridCell<int?>(
-          columnName: 'subject',
-          value: edit.subjectId ?? test?.subjectId,
-        ),
-        DataGridCell<int>(columnName: 'score', value: edit.score),
-        DataGridCell<bool>(columnName: 'passed', value: edit.passed),
-        DataGridCell<String?>(
-          columnName: 'notes',
-          value: edit.label ?? test?.label,
-        ),
-        DataGridCell<Student>(columnName: 'student', value: student),
-        DataGridCell<Student>(columnName: 'view', value: student),
-      ],);
+      return DataGridRow(
+        cells: [
+          DataGridCell<int>(columnName: 'sno', value: index + 1),
+          DataGridCell<String>(
+            columnName: 'studentName',
+            value: '${student.surname}, ${student.firstName}',
+          ),
+          DataGridCell<int?>(
+            columnName: 'subject',
+            value: edit.subjectId ?? test?.subjectId,
+          ),
+          DataGridCell<int?>(columnName: 'score', value: edit.score),
+          DataGridCell<bool>(columnName: 'passed', value: edit.passed),
+          DataGridCell<String?>(
+            columnName: 'notes',
+            value: edit.label ?? test?.label,
+          ),
+          DataGridCell<Student>(columnName: 'student', value: student),
+          DataGridCell<Student>(columnName: 'view', value: student),
+        ],
+      );
     }).toList();
   }
 
@@ -2164,39 +2282,40 @@ class TestDataSource extends DataGridSource {
   DataGridRowAdapter buildRow(DataGridRow row) {
     final student = row
         .getCells()
-        .firstWhere((c) => c.columnName == 'student',)
+        .firstWhere(
+          (c) => c.columnName == 'student',
+        )
         .value as Student;
     final test = _testMap[student.id];
     final edit = _edits[student.id] ??
         TestRowEdit(
           subjectId: test?.subjectId,
-          score: test?.score ?? 0,
+          score: test?.score,
           label: test?.label,
         );
 
     return DataGridRowAdapter(
-      cells: row.getCells()
+      cells: row
+          .getCells()
           .where((cell) => cell.columnName != 'student')
           .map((cell) {
         switch (cell.columnName) {
           case 'sno':
-            return _buildCell(Text(
-              '${cell.value as int}',
-              style: TextStyle(
-                color: _colorScheme.onSurface,
-                fontSize: 14,
-                fontFamily: 'Questrial',
+            return _buildCell(
+              Text(
+                '${cell.value as int}',
+                style: AppTableStyle.dataGridBodyTextStyle(_colorScheme)
+                    .copyWith(fontSize: 13),
               ),
-            ),);
+            );
           case 'studentName':
-            return _buildCell(Text(
-              cell.value as String,
-              style: TextStyle(
-                color: _colorScheme.onSurface,
-                fontSize: 14,
-                fontFamily: 'Questrial',
+            return _buildCell(
+              Text(
+                cell.value as String,
+                style: AppTableStyle.dataGridBodyTextStyle(_colorScheme)
+                    .copyWith(fontSize: 13),
               ),
-            ),);
+            );
           case 'subject':
             return _buildCell(
               _buildSubjectDropdown(student, edit.subjectId ?? test?.subjectId),
@@ -2226,7 +2345,7 @@ class TestDataSource extends DataGridSource {
 
   Widget _buildCell(Widget child) {
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: AppTableStyle.cellPadding,
       alignment: Alignment.centerLeft,
       child: child,
     );
@@ -2239,7 +2358,8 @@ class TestDataSource extends DataGridSource {
     int fallbackClassId = 0;
     if (classes.isNotEmpty) fallbackClassId = classes.first.id;
     final effectiveClassId = classId ?? fallbackClassId;
-    final subjectsAsync = _ref.watch(subjectsForClassStreamProvider(effectiveClassId));
+    final subjectsAsync =
+        _ref.watch(subjectsForClassStreamProvider(effectiveClassId));
 
     return subjectsAsync.when(
       data: (subjects) {
@@ -2251,12 +2371,14 @@ class TestDataSource extends DataGridSource {
           selectedValue: currentSubjectId,
           hint: 'Select subject...',
           searchHint: 'Search subjects...',
+          fieldBackgroundColor: Colors.transparent,
+          closedFieldHeight: _kDataEntryControlHeight,
           itemBuilder: (context, subjectId) {
             final subject = subjectMap[subjectId];
             return Text(
               subject?.name ?? 'Unknown',
-              style: const TextStyle(
-                color: AppColors.charisBlack,
+              style: TextStyle(
+                color: _isDark ? AppColors.textOnDark : AppColors.charisBlack,
                 fontSize: 14,
                 fontFamily: 'Questrial',
               ),
@@ -2277,56 +2399,69 @@ class TestDataSource extends DataGridSource {
         );
       },
       loading: () => const SizedBox(
-          height: 32,
-          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),),
+        height: _kDataEntryControlHeight,
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      ),
       error: (_, __) => const SizedBox(),
     );
   }
 
-  Widget _buildScoreField(Student student, int currentScore, {bool hasTest = true}) {
+  Widget _buildScoreField(Student student, int? currentScore,
+      {bool hasTest = true,}) {
     final key = '${student.id}_score';
-    final isUnscored = !hasTest && currentScore == 0;
-    final expectedText = isUnscored ? '' : currentScore.toString();
-    
+    final expectedText = currentScore?.toString() ?? '';
+
     // Get or create controller
-    final controller = _controllers[key] ??=
-        TextEditingController(text: expectedText);
-    
-    // Sync controller text with current edit value if it doesn't match
-    if (controller.text != expectedText) {
-      controller.text = expectedText;
+    final controller =
+        _controllers[key] ??= TextEditingController(text: expectedText);
+
+    // Sync only when not focused so typing does not reset caret.
+    final focusNode = FocusManager.instance.primaryFocus;
+    final fieldFocused = focusNode != null &&
+        focusNode.context != null &&
+        identical(
+          (focusNode.context!.widget is EditableText)
+              ? (focusNode.context!.widget as EditableText).controller
+              : null,
+          controller,
+        );
+    if (!fieldFocused && controller.text != expectedText) {
+      controller.value = TextEditingValue(
+        text: expectedText,
+        selection: TextSelection.collapsed(offset: expectedText.length),
+      );
     }
 
     return SizedBox(
+      height: _kDataEntryControlHeight,
       width: 80,
       child: TextField(
         controller: controller,
         keyboardType: TextInputType.number,
+        textAlignVertical: TextAlignVertical.center,
         inputFormatters: [FilteringTextInputFormatter.digitsOnly],
         decoration: InputDecoration(
           hintText: hasTest ? '0' : '-',
           hintStyle:
               TextStyle(color: _colorScheme.onSurfaceVariant, fontSize: 13),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: _colorScheme.outline),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: _colorScheme.outline),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: _redColor, width: 2),
-          ),
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          disabledBorder: InputBorder.none,
+          errorBorder: InputBorder.none,
+          focusedErrorBorder: InputBorder.none,
           filled: true,
-          fillColor: _isDark ? AppColors.surfaceDark : AppColors.charisWhite,
+          fillColor: Colors.transparent,
           contentPadding:
-              const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
           isDense: true,
         ),
         style: TextStyle(color: _colorScheme.onSurface, fontSize: 13),
         onChanged: (v) {
+          if (v.isEmpty) {
+            _onScoreChanged(student.id, null);
+            return;
+          }
           final n = int.tryParse(v);
           if (n != null && n >= 0 && n <= 100) {
             _onScoreChanged(student.id, n);
@@ -2339,10 +2474,12 @@ class TestDataSource extends DataGridSource {
   Widget _buildPassedDisplayWhenUnscored() {
     final text = _cohortHasTestForSubjectSession ? 'Outstanding' : '-';
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: _cohortHasTestForSubjectSession
-            ? _colorScheme.tertiaryContainer.withValues(alpha: 0.5)
+            ? (_isDark
+                ? AppColors.surfaceDarkElevated
+                : AppColors.charisLightGray)
             : null,
         borderRadius: BorderRadius.circular(12),
       ),
@@ -2350,9 +2487,12 @@ class TestDataSource extends DataGridSource {
         text,
         style: TextStyle(
           color: _cohortHasTestForSubjectSession
-              ? _colorScheme.onTertiaryContainer
-              : _colorScheme.onSurfaceVariant,
+              ? (_isDark ? AppColors.textOnDark : AppColors.charisDarkGray)
+              : (_isDark
+                  ? AppColors.textSecondaryOnDark
+                  : AppColors.charisMidGray),
           fontSize: 12,
+          height: 1.1,
           fontFamily: 'Questrial',
           fontWeight: FontWeight.w600,
         ),
@@ -2362,20 +2502,23 @@ class TestDataSource extends DataGridSource {
 
   Widget _buildPassedBadge(bool passed) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: passed
-            ? _colorScheme.primaryContainer.withValues(alpha: 0.5)
-            : _colorScheme.errorContainer.withValues(alpha: 0.5),
+            ? (_isDark
+                ? AppColors.surfaceDarkElevated
+                : AppColors.charisLightGray)
+            : AppColors.withdrawnStatusBackground,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Text(
         passed ? 'Passed' : 'Failed',
         style: TextStyle(
           color: passed
-              ? _colorScheme.onPrimaryContainer
-              : _colorScheme.onErrorContainer,
+              ? (_isDark ? AppColors.textOnDark : AppColors.charisDarkGray)
+              : _redColor,
           fontSize: 12,
+          height: 1.1,
           fontFamily: 'Questrial',
           fontWeight: FontWeight.w600,
         ),
@@ -2386,58 +2529,59 @@ class TestDataSource extends DataGridSource {
   Widget _buildNotesField(Student student, String? currentLabel) {
     final key = '${student.id}_label';
     final expectedText = currentLabel ?? '';
-    
+
     // Get or create controller
     final controller =
         _controllers[key] ??= TextEditingController(text: expectedText);
-    
+
     // Sync controller text with current edit value if it doesn't match
     if (controller.text != expectedText) {
       controller.text = expectedText;
     }
 
-    return TextField(
-      controller: controller,
-      maxLines: 2,
-      decoration: InputDecoration(
-        hintText: 'Enter notes...',
-        hintStyle:
-            TextStyle(color: _colorScheme.onSurfaceVariant, fontSize: 13),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(color: _colorScheme.outline),
+    return SizedBox(
+      height: _kDataEntryControlHeight,
+      child: TextField(
+        controller: controller,
+        maxLines: 1,
+        textAlignVertical: TextAlignVertical.center,
+        decoration: InputDecoration(
+          hintText: 'Enter notes...',
+          hintStyle:
+              TextStyle(color: _colorScheme.onSurfaceVariant, fontSize: 13),
+          border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          disabledBorder: InputBorder.none,
+          errorBorder: InputBorder.none,
+          focusedErrorBorder: InputBorder.none,
+          filled: true,
+          fillColor: Colors.transparent,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+          isDense: true,
         ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(color: _colorScheme.outline),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: BorderSide(color: _redColor, width: 2),
-        ),
-        filled: true,
-        fillColor: _isDark ? AppColors.surfaceDark : AppColors.charisWhite,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-        isDense: true,
+        style: TextStyle(color: _colorScheme.onSurface, fontSize: 13),
+        onChanged: (v) {
+          _onLabelChanged(student.id, v.isEmpty ? null : v);
+        },
       ),
-      style: TextStyle(color: _colorScheme.onSurface, fontSize: 13),
-      onChanged: (v) {
-        _onLabelChanged(student.id, v.isEmpty ? null : v);
-      },
     );
   }
 
   Widget _buildViewButton(Student student) {
-    return Center(
+    return Align(
+      alignment: Alignment.centerLeft,
       child: IconButton(
         onPressed: () => _onView(student),
         icon: Icon(
           Icons.visibility_outlined,
-          size: 20,
+          size: 14,
           color: _colorScheme.onSurfaceVariant,
         ),
         tooltip: 'View Student Summary',
-        padding: const EdgeInsets.all(8),
+        padding: const EdgeInsets.all(4),
+        visualDensity: VisualDensity.compact,
         constraints: const BoxConstraints(),
       ),
     );

@@ -169,6 +169,7 @@ final seedFirstAdminProvider = FutureProvider<void>((ref) async {
     plainPassword: initialPassword,
     displayName: 'Administrator',
     role: UserRole.adminLevel01,
+    actorRole: UserRole.adminLevel01,
   );
 });
 
@@ -204,6 +205,7 @@ final seedFacilitatorUsersProvider = FutureProvider<void>((ref) async {
         id: existing.id,
         allowedClassId: classId,
         allowedMode: defaultMode,
+        actorRole: UserRole.adminLevel01,
       );
       continue;
     }
@@ -214,6 +216,7 @@ final seedFacilitatorUsersProvider = FutureProvider<void>((ref) async {
       role: UserRole.facilitator,
       allowedClassId: classId,
       allowedMode: defaultMode,
+      actorRole: UserRole.adminLevel01,
     );
   }
 });

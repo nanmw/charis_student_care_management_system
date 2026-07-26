@@ -19,6 +19,8 @@ class AppColors {
   static const Color charisMidGray = Color(0xFF696969); // #696969
   static const Color charisLightGray = Color(0xFFe6e6e6); // #e6e6e6
   static const Color charisWhite = Color(0xFFffffff); // #ffffff
+  static const Color borderLight = charisLightGray;
+  static const Color borderDark = Color(0xFF4A4A4A);
 
   // Dark UI (design: #1E1E1E background, red accents #CC3B3B)
   static const Color surfaceDark = Color(0xFF1E1E1E);

@@ -3,10 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:charis_student_care/data/repositories/ministry_entry_repository.dart';
 import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 
 final ministryEntryRepositoryProvider = Provider<MinistryEntryRepository>((ref) {
   final db = ref.watch(appDatabaseProvider);
-  return MinistryEntryRepository(db);
+  return MinistryEntryRepository(
+    db,
+    onLocalChangeSetWritten: () =>
+        ref.read(postCrudSyncSchedulerProvider).schedule(),
+  );
 });
 
 /// Summary stats for ministry hours dashboard cards. Scoped by current user's classes when facilitator.
@@ -15,11 +20,9 @@ final ministrySummaryStatsProvider =
   final repo = ref.watch(ministryEntryRepositoryProvider);
   final classIdsAsync = ref.watch(currentUserAssignedClassIdsProvider);
   return classIdsAsync.when(
-    data: (classIds) => repo.watchMinistrySummaryStats(
-      classIds: (classIds != null && classIds.isNotEmpty) ? classIds : null,
-    ),
-    loading: () => repo.watchMinistrySummaryStats(),
-    error: (_, __) => repo.watchMinistrySummaryStats(),
+    data: (classIds) => repo.watchMinistrySummaryStats(classIds: classIds),
+    loading: () => const Stream.empty(),
+    error: (e, st) => Stream.error(e, st),
   );
 });
 
@@ -67,16 +70,20 @@ class MinistryEntriesNotifier extends StateNotifier<MinistryEntriesState> {
   final MinistryEntryRepository _repo;
 
   MinistryEntryFilters get _effectiveFilters {
-    final classIds = _ref.read(currentUserAssignedClassIdsProvider).valueOrNull;
-    final scopeClassIds =
-        (classIds != null && classIds.isNotEmpty) ? classIds : null;
+    final classIdsAsync = _ref.read(currentUserAssignedClassIdsProvider);
+    // While loading, deny-all rather than unscoped.
+    final classIds = classIdsAsync.when(
+      data: (ids) => ids,
+      loading: () => <int>[],
+      error: (_, __) => <int>[],
+    );
     return MinistryEntryFilters(
       search: state.filters.search,
       year: state.filters.year,
       ministryType: state.filters.ministryType,
       dateFrom: state.filters.dateFrom,
       dateTo: state.filters.dateTo,
-      classIds: scopeClassIds,
+      classIds: classIds,
     );
   }
 

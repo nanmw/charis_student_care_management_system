@@ -16,7 +16,9 @@ import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/ministry_providers.dart';
+import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
+import 'package:charis_student_care/presentation/theme/app_table_style.dart';
 import 'package:charis_student_care/presentation/widgets/ministry_entry_form_dialog.dart';
 
 /// Builds summary tab options from classes (classId + studyMode + label).
@@ -68,6 +70,7 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
   MinistryEntryDataSource? _dataSource;
   MinistryHoursSummaryDataSource? _summaryDataSource;
   bool _initialLoadDone = false;
+  bool _showAnalytics = false;
 
   @override
   void initState() {
@@ -209,8 +212,53 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
             ],
           ),
           const SizedBox(height: 24),
-          _buildStatCards(context, colorScheme, redColor, summaryAsync),
-          const SizedBox(height: 16),
+          Tooltip(
+            message:
+                'Click to show or hide analytics to see more rows in the table.',
+            child: InkWell(
+              onTap: () {
+                setState(() {
+                  _showAnalytics = !_showAnalytics;
+                });
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: Row(
+                children: [
+                  Text(
+                    'Dashboard Analytics',
+                    style: TextStyle(
+                      color: colorScheme.onSurface,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      fontFamily: 'Questrial',
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    _showAnalytics
+                        ? Icons.keyboard_arrow_up
+                        : Icons.keyboard_arrow_down,
+                    size: 20,
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          AnimatedCrossFade(
+            crossFadeState: _showAnalytics
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            duration: const Duration(milliseconds: 200),
+            firstChild: Padding(
+              padding: const EdgeInsets.only(top: 8.0, bottom: 8.0),
+              child:
+                  _buildStatCards(context, colorScheme, redColor, summaryAsync),
+            ),
+            secondChild: const SizedBox.shrink(),
+          ),
+          const SizedBox(height: 8),
           TabBar(
             controller: _tabController,
             labelColor: redColor,
@@ -348,46 +396,45 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
                 colorScheme: colorScheme,
                 requiredHours: requiredHours,
               );
-              _summaryDataSource!.updateData(rows, requiredHours);
+              _summaryDataSource!.updateData(
+                rows,
+                requiredHours,
+                colorScheme: colorScheme,
+              );
               return SfDataGrid(
                 source: _summaryDataSource!,
                 columnWidthMode: ColumnWidthMode.fill,
-                gridLinesVisibility: GridLinesVisibility.horizontal,
+                rowHeight: AppTableStyle.dataGridRowHeight,
+                headerRowHeight: AppTableStyle.dataGridHeaderRowHeight,
+                gridLinesVisibility: GridLinesVisibility.both,
                 headerGridLinesVisibility: GridLinesVisibility.both,
                 columns: [
                   GridColumn(
                     columnName: 'sn',
-                    width: 60,
                     label: _buildHeader('S/N', colorScheme),
                   ),
                   GridColumn(
                     columnName: 'firstName',
-                    width: 140,
                     label: _buildHeader('First Name', colorScheme),
                   ),
                   GridColumn(
                     columnName: 'lastName',
-                    width: 140,
                     label: _buildHeader('Last Name', colorScheme),
                   ),
                   GridColumn(
                     columnName: 'term1',
-                    width: 80,
                     label: _buildHeader('Term 1', colorScheme),
                   ),
                   GridColumn(
                     columnName: 'term2',
-                    width: 80,
                     label: _buildHeader('Term 2', colorScheme),
                   ),
                   GridColumn(
                     columnName: 'term3',
-                    width: 80,
                     label: _buildHeader('Term 3', colorScheme),
                   ),
                   GridColumn(
                     columnName: 'total',
-                    width: 80,
                     label: _buildHeader('Total', colorScheme),
                   ),
                 ],
@@ -496,7 +543,7 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
   }) {
     return Container(
       width: width,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: colorScheme.surface,
         borderRadius: BorderRadius.circular(12),
@@ -533,7 +580,7 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
             style: TextStyle(
               color: valueColor,
               fontWeight: FontWeight.w700,
-              fontSize: 28,
+              fontSize: 24,
               fontFamily: 'Questrial',
             ),
           ),
@@ -576,37 +623,118 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
           ),
         ),
         const SizedBox(width: 12),
-        DropdownButton<String?>(
-          value: _selectedYear,
-          hint: const Text('All Years'),
-          items: [
-            const DropdownMenuItem<String?>(value: null, child: Text('All Years')),
-            ...List.generate(5, (i) => DateTime.now().year - 2 + i).map(
-              (y) => DropdownMenuItem<String?>(
-                value: '$y',
-                child: Text('$y'),
-              ),
+        SizedBox(
+          width: 140,
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: colorScheme.outlineVariant),
             ),
-          ],
-          onChanged: (v) {
-            setState(() => _selectedYear = v);
-            _applyFilters();
-          },
+            child: DropdownButton<String?>(
+              value: _selectedYear,
+              hint: Text(
+                'All Years',
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 14,
+                  fontFamily: 'Questrial',
+                ),
+              ),
+              isExpanded: true,
+              underline: const SizedBox.shrink(),
+              borderRadius: BorderRadius.circular(8),
+              items: [
+                DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text(
+                    'All Years',
+                    style: TextStyle(
+                      color: colorScheme.onSurface,
+                      fontSize: 14,
+                      fontFamily: 'Questrial',
+                    ),
+                  ),
+                ),
+                ...List.generate(5, (i) => DateTime.now().year - 2 + i).map(
+                  (y) => DropdownMenuItem<String?>(
+                    value: '$y',
+                    child: Text(
+                      '$y',
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontSize: 14,
+                        fontFamily: 'Questrial',
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              onChanged: (v) {
+                setState(() => _selectedYear = v);
+                _applyFilters();
+              },
+            ),
+          ),
         ),
         const SizedBox(width: 12),
-        DropdownButton<String?>(
-          value: _selectedType,
-          hint: const Text('All Types'),
-          items: [
-            const DropdownMenuItem<String?>(value: null, child: Text('All Types')),
-            ...AppConstants.ministryTypeOptions.map(
-              (t) => DropdownMenuItem<String?>(value: t, child: Text(t)),
+        SizedBox(
+          width: 180,
+          child: Container(
+            height: 44,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: colorScheme.outlineVariant),
             ),
-          ],
-          onChanged: (v) {
-            setState(() => _selectedType = v);
-            _applyFilters();
-          },
+            child: DropdownButton<String?>(
+              value: _selectedType,
+              hint: Text(
+                'All Types',
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 14,
+                  fontFamily: 'Questrial',
+                ),
+              ),
+              isExpanded: true,
+              underline: const SizedBox.shrink(),
+              borderRadius: BorderRadius.circular(8),
+              items: [
+                DropdownMenuItem<String?>(
+                  value: null,
+                  child: Text(
+                    'All Types',
+                    style: TextStyle(
+                      color: colorScheme.onSurface,
+                      fontSize: 14,
+                      fontFamily: 'Questrial',
+                    ),
+                  ),
+                ),
+                ...AppConstants.ministryTypeOptions.map(
+                  (t) => DropdownMenuItem<String?>(
+                    value: t,
+                    child: Text(
+                      t,
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontSize: 14,
+                        fontFamily: 'Questrial',
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              onChanged: (v) {
+                setState(() => _selectedType = v);
+                _applyFilters();
+              },
+            ),
+          ),
         ),
         const SizedBox(width: 12),
         OutlinedButton.icon(
@@ -640,6 +768,81 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
     );
   }
 
+  Future<void> _openEditMinistryEntry(
+    BuildContext context,
+    MinistryEntryWithStudent row,
+  ) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => MinistryEntryFormDialog(entry: row.entry),
+    );
+    if (saved == true && mounted) {
+      ref.read(ministryEntriesProvider.notifier).loadInitial();
+    }
+  }
+
+  Future<void> _confirmDeleteMinistryEntry(
+    BuildContext context,
+    MinistryEntryWithStudent row,
+  ) async {
+    final entry = row.entry;
+    final dateStr = app_date_utils.DateUtils.formatIsoDate(entry.date);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text(
+          'Delete Ministry Entry',
+          style: TextStyle(fontFamily: 'Questrial'),
+        ),
+        content: Text(
+          'Delete this entry for ${row.studentDisplayName} on $dateStr (${entry.ministryType})?',
+          style: const TextStyle(fontFamily: 'Questrial'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    try {
+      final auth = ref.read(authStateProvider).valueOrNull;
+      final userId = auth is Authenticated ? auth.user.id : null;
+      final deviceId = await ref.read(deviceIdProvider.future);
+      await ref.read(ministryEntryRepositoryProvider).delete(
+            entry.id,
+            userRole: auth is Authenticated
+                ? auth.role
+                : UserRole.facilitator,
+            userId: userId,
+            deviceId: deviceId,
+            userDisplayName:
+                auth is Authenticated ? auth.user.displayName : null,
+            screen: 'Ministry Hours',
+          );
+      if (!context.mounted) return;
+      ref.read(ministryEntriesProvider.notifier).loadInitial();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ministry entry deleted')),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to delete: $e')),
+        );
+      }
+    }
+  }
+
   Widget _buildTable(
     BuildContext context,
     ColorScheme colorScheme,
@@ -653,8 +856,19 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
     _dataSource ??= MinistryEntryDataSource(
       entries: entriesState.entries,
       colorScheme: colorScheme,
+      onEdit: (row) => _openEditMinistryEntry(context, row),
+      onDelete: (row) => _confirmDeleteMinistryEntry(context, row),
+      canManage: true,
     );
-    _dataSource!.updateData(entriesState.entries);
+    _dataSource!.updateData(
+      entriesState.entries,
+      colorScheme,
+      (
+        (row) => _openEditMinistryEntry(context, row),
+        (row) => _confirmDeleteMinistryEntry(context, row),
+        true,
+      ),
+    );
 
     if (entriesState.entries.isEmpty) {
       return Center(
@@ -685,8 +899,10 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
             },
             child: SfDataGrid(
               source: _dataSource!,
-              columnWidthMode: ColumnWidthMode.fill,
-              gridLinesVisibility: GridLinesVisibility.horizontal,
+              columnWidthMode: ColumnWidthMode.lastColumnFill,
+              rowHeight: AppTableStyle.dataGridRowHeight,
+              headerRowHeight: AppTableStyle.dataGridHeaderRowHeight,
+              gridLinesVisibility: GridLinesVisibility.both,
               headerGridLinesVisibility: GridLinesVisibility.both,
               columns: [
                 GridColumn(
@@ -730,6 +946,11 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
                   label: _buildHeader('Approved', colorScheme),
                 ),
                 GridColumn(
+                  columnName: 'actions',
+                  width: 168,
+                  label: _buildHeader('Actions', colorScheme),
+                ),
+                GridColumn(
                   columnName: 'notes',
                   width: double.nan,
                   label: _buildHeader('Notes', colorScheme),
@@ -765,18 +986,10 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
   }
 
   Widget _buildHeader(String text, ColorScheme colorScheme) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      alignment: Alignment.centerLeft,
-      child: Text(
-        text,
-        style: TextStyle(
-          color: colorScheme.onSurface,
-          fontWeight: FontWeight.w600,
-          fontSize: 14,
-          fontFamily: 'Questrial',
-        ),
-      ),
+    return AppTableStyle.sfHeaderCell(
+      context,
+      text,
+      compactLineHeight: true,
     );
   }
 }
@@ -794,12 +1007,19 @@ class MinistryHoursSummaryDataSource extends DataGridSource {
   }
 
   List<MinistryHoursSummaryRow> _rows;
-  final ColorScheme _colorScheme;
+  ColorScheme _colorScheme;
   int _requiredHours;
 
-  void updateData(List<MinistryHoursSummaryRow> rows, int requiredHours) {
+  void updateData(
+    List<MinistryHoursSummaryRow> rows,
+    int requiredHours, {
+    ColorScheme? colorScheme,
+  }) {
     _rows = rows;
     _requiredHours = requiredHours;
+    if (colorScheme != null) {
+      _colorScheme = colorScheme;
+    }
     _buildRows();
     notifyListeners();
   }
@@ -829,41 +1049,24 @@ class MinistryHoursSummaryDataSource extends DataGridSource {
 
   @override
   DataGridRowAdapter buildRow(DataGridRow row) {
+    assert(_requiredHours >= 0);
     final cells = row.getCells();
-    final term1Cells = cells.where((c) => c.columnName == 'term1');
-    final term2Cells = cells.where((c) => c.columnName == 'term2');
-    final term1 = term1Cells.isEmpty ? null : term1Cells.first.value as double?;
-    final term2 = term2Cells.isEmpty ? null : term2Cells.first.value as double?;
-    final belowRequirement = (term1 != null && term1 < _requiredHours) ||
-        (term2 != null && term2 < _requiredHours);
-    final rowColor = belowRequirement
-        ? _colorScheme.errorContainer.withValues(alpha: 0.3)
-        : null;
-
     return DataGridRowAdapter(
-      color: rowColor,
+      color: _colorScheme.surface,
       cells: cells.map((cell) {
         Widget child;
         switch (cell.columnName) {
           case 'sn':
             child = Text(
               '${cell.value}',
-              style: TextStyle(
-                color: _colorScheme.onSurface,
-                fontSize: 14,
-                fontFamily: 'Questrial',
-              ),
+              style: AppTableStyle.dataGridBodyTextStyle(_colorScheme),
             );
             break;
           case 'firstName':
           case 'lastName':
             child = Text(
               cell.value?.toString() ?? '',
-              style: TextStyle(
-                color: _colorScheme.onSurface,
-                fontSize: 14,
-                fontFamily: 'Questrial',
-              ),
+              style: AppTableStyle.dataGridBodyTextStyle(_colorScheme),
               overflow: TextOverflow.ellipsis,
             );
             break;
@@ -874,18 +1077,14 @@ class MinistryHoursSummaryDataSource extends DataGridSource {
             final n = cell.value as double;
             child = Text(
               n == n.roundToDouble() ? '${n.round()}' : n.toStringAsFixed(1),
-              style: TextStyle(
-                color: _colorScheme.onSurface,
-                fontSize: 14,
-                fontFamily: 'Questrial',
-              ),
+              style: AppTableStyle.dataGridBodyTextStyle(_colorScheme),
             );
             break;
           default:
             child = const SizedBox();
         }
         return Container(
-          padding: const EdgeInsets.all(8),
+          padding: AppTableStyle.cellPadding,
           alignment: Alignment.centerLeft,
           child: child,
         );
@@ -899,17 +1098,38 @@ class MinistryEntryDataSource extends DataGridSource {
   MinistryEntryDataSource({
     required List<MinistryEntryWithStudent> entries,
     required ColorScheme colorScheme,
+    required void Function(MinistryEntryWithStudent) onEdit,
+    required void Function(MinistryEntryWithStudent) onDelete,
+    required bool canManage,
   })  : _entries = entries,
-        _colorScheme = colorScheme {
+        _colorScheme = colorScheme,
+        _onEdit = onEdit,
+        _onDelete = onDelete,
+        _canManage = canManage {
     _buildRows();
   }
 
   List<MinistryEntryWithStudent> _entries;
-  final ColorScheme _colorScheme;
+  ColorScheme _colorScheme;
+  void Function(MinistryEntryWithStudent) _onEdit;
+  void Function(MinistryEntryWithStudent) _onDelete;
+  bool _canManage;
   List<DataGridRow> _dataGridRows = [];
 
-  void updateData(List<MinistryEntryWithStudent> entries) {
+  void updateData(
+    List<MinistryEntryWithStudent> entries,
+    ColorScheme colorScheme,
+    (
+      void Function(MinistryEntryWithStudent),
+      void Function(MinistryEntryWithStudent),
+      bool,
+    ) callbacks,
+  ) {
     _entries = entries;
+    _colorScheme = colorScheme;
+    _onEdit = callbacks.$1;
+    _onDelete = callbacks.$2;
+    _canManage = callbacks.$3;
     _buildRows();
     notifyListeners();
   }
@@ -931,6 +1151,8 @@ class MinistryEntryDataSource extends DataGridSource {
         DataGridCell<String?>(
             columnName: 'supervisor', value: entry.supervisor ?? 'N/A',),
         DataGridCell<bool>(columnName: 'approved', value: entry.approved),
+        DataGridCell<MinistryEntryWithStudent>(
+            columnName: 'actions', value: row,),
         DataGridCell<String?>(columnName: 'notes', value: entry.notes,),
       ],);
     }).toList();
@@ -942,17 +1164,68 @@ class MinistryEntryDataSource extends DataGridSource {
   @override
   DataGridRowAdapter buildRow(DataGridRow row) {
     return DataGridRowAdapter(
+      color: _colorScheme.surface,
       cells: row.getCells().map((cell) {
+        if (cell.columnName == 'actions') {
+          final ministryRow = cell.value as MinistryEntryWithStudent;
+          return Container(
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_canManage) ...[
+                    TextButton.icon(
+                      onPressed: () => _onEdit(ministryRow),
+                      icon: Icon(
+                        Icons.edit_outlined,
+                        size: 14,
+                        color: _colorScheme.onSurfaceVariant,
+                      ),
+                      label: Text(
+                        'Edit',
+                        style: TextStyle(
+                          color: _colorScheme.onSurfaceVariant,
+                          fontSize: 13,
+                          height: 1.1,
+                          fontFamily: 'Questrial',
+                        ),
+                      ),
+                      style: AppTableStyle.dataGridTextButtonStyle(),
+                    ),
+                    const SizedBox(width: 4),
+                    TextButton.icon(
+                      onPressed: () => _onDelete(ministryRow),
+                      icon: Icon(
+                        Icons.delete_outline,
+                        size: 14,
+                        color: _colorScheme.error,
+                      ),
+                      label: Text(
+                        'Delete',
+                        style: TextStyle(
+                          color: _colorScheme.error,
+                          fontSize: 13,
+                          height: 1.1,
+                          fontFamily: 'Questrial',
+                        ),
+                      ),
+                      style: AppTableStyle.dataGridTextButtonStyle(),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          );
+        }
         Widget child;
         switch (cell.columnName) {
           case 'sn':
             child = Text(
               '${cell.value}',
-              style: TextStyle(
-                color: _colorScheme.onSurface,
-                fontSize: 14,
-                fontFamily: 'Questrial',
-              ),
+              style: AppTableStyle.dataGridBodyTextStyle(_colorScheme),
             );
             break;
           case 'name':
@@ -962,38 +1235,26 @@ class MinistryEntryDataSource extends DataGridSource {
           case 'notes':
             child = Text(
               cell.value?.toString() ?? '',
-              style: TextStyle(
-                color: _colorScheme.onSurface,
-                fontSize: 14,
-                fontFamily: 'Questrial',
-              ),
+              style: AppTableStyle.dataGridBodyTextStyle(_colorScheme),
               overflow: TextOverflow.ellipsis,
             );
             break;
           case 'date':
             child = Text(
               app_date_utils.DateUtils.formatIsoDate(cell.value as DateTime),
-              style: TextStyle(
-                color: _colorScheme.onSurface,
-                fontSize: 14,
-                fontFamily: 'Questrial',
-              ),
+              style: AppTableStyle.dataGridBodyTextStyle(_colorScheme),
             );
             break;
           case 'hours':
             child = Text(
               (cell.value as double).toStringAsFixed(1),
-              style: TextStyle(
-                color: _colorScheme.onSurface,
-                fontSize: 14,
-                fontFamily: 'Questrial',
-              ),
+              style: AppTableStyle.dataGridBodyTextStyle(_colorScheme),
             );
             break;
           case 'approved':
             final approved = cell.value as bool;
             child = Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
                 color: approved
                     ? AppColors.syncedGreen.withValues(alpha: 0.2)
@@ -1007,6 +1268,7 @@ class MinistryEntryDataSource extends DataGridSource {
                       ? AppColors.syncedGreen
                       : _colorScheme.onSurfaceVariant,
                   fontSize: 12,
+                  height: 1.1,
                   fontWeight: FontWeight.w600,
                   fontFamily: 'Questrial',
                 ),
@@ -1017,7 +1279,7 @@ class MinistryEntryDataSource extends DataGridSource {
             child = const SizedBox();
         }
         return Container(
-          padding: const EdgeInsets.all(8),
+          padding: AppTableStyle.cellPadding,
           alignment: Alignment.centerLeft,
           child: child,
         );

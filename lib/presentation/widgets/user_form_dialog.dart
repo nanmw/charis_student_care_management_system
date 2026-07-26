@@ -4,8 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/presentation/providers/auth_provider.dart';
+import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/repository_providers.dart';
+import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 
 /// Dialog to add a new user.
@@ -50,6 +53,8 @@ class _UserFormDialogState extends ConsumerState<UserFormDialog> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     try {
+      final auth = ref.read(authStateProvider).valueOrNull;
+      final deviceId = await ref.read(deviceIdProvider.future);
       await ref.read(userRepositoryProvider).createUser(
             username: _usernameController.text.trim(),
             plainPassword: _passwordController.text,
@@ -59,6 +64,11 @@ class _UserFormDialogState extends ConsumerState<UserFormDialog> {
             allowedMode: _role == UserRole.facilitator && _selectedMode != null && _selectedMode!.trim().isNotEmpty
                 ? _selectedMode!.trim()
                 : null,
+            actorRole: (auth as Authenticated?)?.role ?? UserRole.facilitator,
+            userId: auth is Authenticated ? auth.user.id : null,
+            deviceId: deviceId,
+            userDisplayName: auth is Authenticated ? auth.user.displayName : null,
+            screen: 'Users',
           );
       if (mounted) {
         widget.onSaved();

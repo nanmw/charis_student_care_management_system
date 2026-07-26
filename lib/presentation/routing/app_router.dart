@@ -13,6 +13,7 @@ import '../screens/ministry_hours_screen.dart';
 import '../screens/export_reports_screen.dart';
 import '../screens/mission_locations_screen.dart';
 import '../screens/missions_payment_screen.dart';
+import '../screens/missions_screen.dart';
 import '../screens/settings_screen.dart';
 import '../screens/student_list_screen.dart';
 import '../screens/subjects_screen.dart';
@@ -39,7 +40,21 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           // Roles without financial permission must not access Payments or Missions Payment screens.
           if (auth is Authenticated &&
               !RolePermissions.canManageFinancials(auth.role) &&
-              (state.matchedLocation == '/payments' || state.matchedLocation == '/missions-payment')) {
+              (state.matchedLocation == '/payments' ||
+                  state.matchedLocation == '/missions-payment')) {
+            return '/dashboard';
+          }
+          // Roles without mission-manage permission must not access Missions catalog or locations.
+          if (auth is Authenticated &&
+              !RolePermissions.canManageMissions(auth.role) &&
+              (state.matchedLocation == '/missions' ||
+                  state.matchedLocation == '/mission-locations')) {
+            return '/dashboard';
+          }
+          // Roles without user-manage permission must not access Users.
+          if (auth is Authenticated &&
+              !RolePermissions.canManageUsers(auth.role) &&
+              state.matchedLocation == '/users') {
             return '/dashboard';
           }
           return null;
@@ -85,6 +100,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             path: '/mission-locations',
             builder: (context, state) => const MissionLocationsScreen(),
+          ),
+          GoRoute(
+            path: '/missions',
+            builder: (context, state) => const MissionsScreen(),
           ),
           GoRoute(
             path: '/missions-payment',

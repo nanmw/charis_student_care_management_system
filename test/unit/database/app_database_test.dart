@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:drift/drift.dart' hide isNotNull;
+import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
 import 'package:charis_student_care/core/constants/sync_constants.dart';
@@ -22,7 +23,7 @@ void main() {
     });
 
     test('schema version is correct', () {
-      expect(database.schemaVersion, equals(31));
+      expect(database.schemaVersion, equals(34));
     });
 
     test('tables are created correctly', () async {
@@ -80,11 +81,11 @@ void main() {
     });
 
     test('setting current session updates app_settings', () async {
-      // Set current session via repository and verify it is stored.
+      // Set current session via repository and verify it is stored (single-year code).
       final repo = AcademicSessionRepository(database);
-      await repo.setCurrentSession('2099-2100');
+      await repo.setCurrentSession('2099', userRole: UserRole.adminLevel01);
       final current = await repo.getCurrentSession();
-      expect(current, equals('2099-2100'));
+      expect(current, equals('2099'));
     });
   });
 

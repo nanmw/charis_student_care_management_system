@@ -7,13 +7,12 @@ import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/seed_provider.dart';
-import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/shell/app_footer.dart';
 
 import 'package:charis_student_care/data/database/app_database.dart';
-import 'package:charis_student_care/data/services/change_set_applier.dart';
+import 'package:charis_student_care/data/services/sync_folder_watch_coordinator.dart';
 
 /// App shell: header, sidebar, main content, footer.
 /// Used as ShellRoute child builder; [child] is the current route's content.
@@ -28,6 +27,21 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   bool _startupSyncScheduled = false;
+  late final SyncFolderWatchCoordinator _autoSyncCoordinator;
+
+  @override
+  void initState() {
+    super.initState();
+    _autoSyncCoordinator = SyncFolderWatchCoordinator(
+      onSyncRequested: () => runChangeSetFullSyncForWidget(ref),
+    );
+  }
+
+  @override
+  void dispose() {
+    _autoSyncCoordinator.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -48,6 +62,17 @@ class _AppShellState extends ConsumerState<AppShell> {
 
     final colorScheme = Theme.of(context).colorScheme;
     final auth = ref.watch(authStateProvider).valueOrNull;
+    final config = ref.watch(syncFolderConfigProvider).valueOrNull;
+    final deviceId = ref.watch(deviceIdProvider).valueOrNull;
+    if (deviceId != null && deviceId.isNotEmpty) {
+      _autoSyncCoordinator.configure(
+        syncFolderPath: config?.syncFolderPath,
+        enabled: config?.autoSyncOnRemoteChange ?? true,
+        localDeviceId: deviceId,
+      );
+    } else {
+      _autoSyncCoordinator.stop();
+    }
     final displayName = auth is Authenticated ? auth.user.displayName : 'User';
     final roleLabel = auth is Authenticated ? auth.role.displayName : '';
 
@@ -73,30 +98,20 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   /// Run change-set sync once after the shell is visible (export then import).
   Future<void> _runStartupSync() async {
-    final status = ref.read(changeSetSyncStatusProvider.notifier);
     try {
-      status.setSyncing(true);
-      final syncService = ref.read(changeSetSyncServiceProvider);
-      final db = ref.read(appDatabaseProvider);
-      final applier = ChangeSetApplier(db);
-      await syncService.export();
-      await syncService.import(
-        tryApply: (record) => applier.tryApply(record),
-      );
-      status.setSuccess();
+      await runChangeSetFullSyncForWidget(ref);
     } catch (e) {
-      status.setError(e.toString());
+      // Status is already updated by runChangeSetFullSync.
     }
   }
 
   Widget _buildHeader(BuildContext context, WidgetRef ref, String displayName, String roleLabel) {
-    final colorScheme = Theme.of(context).colorScheme;
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
-    final headerBgColor = isDark ? colorScheme.surfaceContainerHighest : AppColors.charisRedPrimary;
-    final headerTextColor = isDark ? colorScheme.onSurface : AppColors.charisWhite;
+    final headerBgColor = isDark ? AppColors.surfaceDarkElevated : AppColors.charisRedPrimary;
+    final headerTextColor = isDark ? AppColors.textOnDark : AppColors.charisWhite;
     final headerTitleColor = isDark ? AppColors.primaryActionRed : AppColors.charisWhite;
-    final headerRoleColor = isDark ? colorScheme.onSurfaceVariant : AppColors.charisWhite.withValues(alpha: 0.8);
+    final headerRoleColor = isDark ? AppColors.textSecondaryOnDark : AppColors.charisWhite.withValues(alpha: 0.8);
     
     return Container(
       height: 56,
@@ -221,6 +236,8 @@ class _AppShellState extends ConsumerState<AppShell> {
         ? ref.watch(changeSetsForDeviceProvider(deviceId))
         : const AsyncValue.data(<ChangeSet>[]);
     final conflictCountAsync = ref.watch(syncConflictsCountStreamProvider);
+    final themeMode = ref.watch(themeModeProvider);
+    final isDark = themeMode == ThemeMode.dark;
 
     final hasSyncFolder = configAsync.valueOrNull?.syncFolderPath != null &&
         configAsync.valueOrNull!.syncFolderPath!.trim().isNotEmpty;
@@ -238,29 +255,29 @@ class _AppShellState extends ConsumerState<AppShell> {
     Color labelColor;
 
     if (isSyncing) {
-      backgroundColor = Theme.of(context).colorScheme.surfaceContainerHighest;
+      backgroundColor = isDark ? AppColors.surfaceDarkElevated : AppColors.charisLightGray;
       label = 'OneDrive syncing...';
-      labelColor = Theme.of(context).colorScheme.onSurfaceVariant;
+      labelColor = isDark ? AppColors.textSecondaryOnDark : AppColors.charisDarkGray;
     } else if (hasError) {
-      backgroundColor = Theme.of(context).colorScheme.errorContainer;
+      backgroundColor = AppColors.charisRedDark;
       label = 'OneDrive sync failed';
-      labelColor = Theme.of(context).colorScheme.onErrorContainer;
+      labelColor = AppColors.charisWhite;
     } else if (conflictCount > 0) {
-      backgroundColor = Theme.of(context).colorScheme.errorContainer;
+      backgroundColor = AppColors.charisRedDark;
       label = conflictCount == 1 ? '1 conflict' : '$conflictCount conflicts';
-      labelColor = Theme.of(context).colorScheme.onErrorContainer;
+      labelColor = AppColors.charisWhite;
     } else if (hasPending) {
-      backgroundColor = Colors.amber;
+      backgroundColor = isDark ? AppColors.surfaceDarkElevated : AppColors.charisLightGray;
       label = 'Pending';
-      labelColor = Colors.amber.shade900;
+      labelColor = isDark ? AppColors.textSecondaryOnDark : AppColors.charisDarkGray;
     } else if (hasSyncFolder) {
       backgroundColor = AppColors.syncedGreen;
       label = 'OneDrive synced';
       labelColor = AppColors.charisWhite;
     } else {
-      backgroundColor = Theme.of(context).colorScheme.surfaceContainerHighest;
+      backgroundColor = isDark ? AppColors.surfaceDarkElevated : AppColors.charisLightGray;
       label = 'No sync folder';
-      labelColor = Theme.of(context).colorScheme.onSurfaceVariant;
+      labelColor = isDark ? AppColors.textSecondaryOnDark : AppColors.charisDarkGray;
     }
 
     final lastSyncLabel = lastSync != null
@@ -303,10 +320,9 @@ class _AppShellState extends ConsumerState<AppShell> {
   }
 
   Widget _buildSidebar(BuildContext context, WidgetRef ref) {
-    final colorScheme = Theme.of(context).colorScheme;
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
-    final sidebarBgColor = isDark ? colorScheme.surfaceContainerHighest : AppColors.charisRedPrimary;
+    final sidebarBgColor = isDark ? AppColors.surfaceDarkElevated : AppColors.charisRedPrimary;
     
     return Container(
       width: 200,
@@ -324,11 +340,13 @@ class _AppShellState extends ConsumerState<AppShell> {
             _navItem(context, ref, Icons.hourglass_empty_outlined, Icons.hourglass_empty, 'Ministry Hours', '/ministry-hours'),
             _navItem(context, ref, Icons.assignment_outlined, Icons.assignment, 'Tests', '/tests'),
             if (_canAccessPaymentScreens(ref)) ...[
-              _navItem(context, ref, Icons.credit_card_outlined, Icons.credit_card, 'Payments', '/payments'),
+              _navItem(context, ref, Icons.credit_card_outlined, Icons.credit_card, 'Finances', '/payments'),
               _navItem(context, ref, Icons.flight_takeoff_outlined, Icons.flight_takeoff, 'Missions Payment', '/missions-payment'),
             ],
-            if (_canManageMissions(ref))
+            if (_canManageMissions(ref)) ...[
+              _navItem(context, ref, Icons.flight_outlined, Icons.flight, 'Missions', '/missions'),
               _navItem(context, ref, Icons.place_outlined, Icons.place, 'Mission Locations', '/mission-locations'),
+            ],
             if (_canExportReports(ref))
               _navItem(context, ref, Icons.download_outlined, Icons.download, 'Export & Reports', '/reports'),
             _navItem(context, ref, Icons.history_outlined, Icons.history, 'Recent Activities', '/activities'),
@@ -349,13 +367,12 @@ class _AppShellState extends ConsumerState<AppShell> {
     String label,
     String path,
   ) {
-    final colorScheme = Theme.of(context).colorScheme;
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
     final selected = GoRouterState.of(context).matchedLocation == path;
     
     final textColor = isDark
-        ? (selected ? AppColors.primaryActionRed : colorScheme.onSurface)
+        ? (selected ? AppColors.primaryActionRed : AppColors.textOnDark)
         : AppColors.charisWhite;
     final borderColor = isDark
         ? AppColors.primaryActionRed

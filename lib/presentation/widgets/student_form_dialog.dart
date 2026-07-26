@@ -284,7 +284,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.charisMidGray),
+              borderSide: BorderSide(color: colorScheme.outlineVariant),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
@@ -324,7 +324,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.charisMidGray),
+              borderSide: BorderSide(color: colorScheme.outlineVariant),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
@@ -371,7 +371,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.charisMidGray),
+              borderSide: BorderSide(color: colorScheme.outlineVariant),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
@@ -428,7 +428,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
                 enabledBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide: const BorderSide(color: AppColors.charisMidGray),
+                  borderSide: BorderSide(color: colorScheme.outlineVariant),
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -490,7 +490,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.charisMidGray),
+              borderSide: BorderSide(color: colorScheme.outlineVariant),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
@@ -531,7 +531,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.charisMidGray),
+              borderSide: BorderSide(color: colorScheme.outlineVariant),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
@@ -571,7 +571,7 @@ class _StudentFormDialogState extends ConsumerState<StudentFormDialog> {
                     }
                   },
                   activeColor: redColor,
-                  side: const BorderSide(color: AppColors.charisMidGray, width: 1.5),
+                  side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant, width: 1.5),
                   shape:
                       RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
                 ),

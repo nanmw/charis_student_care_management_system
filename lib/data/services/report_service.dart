@@ -26,10 +26,10 @@ class ReportService {
     final pdf = pw.Document();
     final dateRangeStr =
         '${_dateFormat.format(filters.dateStart)} – ${_dateFormat.format(filters.dateEnd)}';
-    final colCount = includePaymentColumns ? 8 : 6;
+    final colCount = includePaymentColumns ? 11 : 9;
     final columnWidths = <int, pw.FlexColumnWidth>{
       for (var i = 0; i < colCount; i++)
-        i: i == 0 ? const pw.FlexColumnWidth(2.5) : const pw.FlexColumnWidth(1.2),
+        i: i == 0 ? const pw.FlexColumnWidth(2.5) : const pw.FlexColumnWidth(1.0),
     };
 
     pdf.addPage(
@@ -77,6 +77,9 @@ class ReportService {
                   _cell('Att. Days'),
                   _cell('Present'),
                   _cell('Att. %'),
+                  _cell('Expected'),
+                  _cell('Met'),
+                  _cell('Shortfall'),
                   _cell('Test Avg'),
                   _cell('Pass/Fail'),
                   if (includePaymentColumns) _cell('Total Paid'),
@@ -89,6 +92,9 @@ class ReportService {
                       _cell('${r.attendanceTotalDays}'),
                       _cell('${r.attendancePresentDays}'),
                       _cell(_pct(r.attendancePercentage)),
+                      _cell('${r.attendanceExpectedDays}'),
+                      _cell(r.attendanceThresholdMet ? 'Yes' : 'No'),
+                      _cell('${r.attendanceShortfall}'),
                       _cell(_pct(r.testAverage)),
                       _cell('${r.testsPassed}/${r.testsFailed}'),
                       if (includePaymentColumns) _cell(CurrencyUtils.formatRand(r.totalPaid)),
@@ -143,6 +149,9 @@ class ReportService {
       'Attendance Days',
       'Present',
       'Attendance %',
+      'Expected Days',
+      'Threshold Met',
+      'Shortfall',
       'Test Average',
       'Tests Passed',
       'Tests Failed',
@@ -191,6 +200,15 @@ class ReportService {
       sheet
           .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.attendancePercentage.toStringAsFixed(1));
+      sheet
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
+          .value = TextCellValue(r.attendanceExpectedDays.toString());
+      sheet
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
+          .value = TextCellValue(r.attendanceThresholdMet ? 'Yes' : 'No');
+      sheet
+          .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
+          .value = TextCellValue(r.attendanceShortfall.toString());
       sheet
           .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
           .value = TextCellValue(r.testAverage.toStringAsFixed(1));
@@ -246,11 +264,11 @@ class ReportService {
                 children: [
                   _cell('Year / Mode'),
                   _cell('Students'),
-                  _cell('Avg Att. %'),
+                  _cell('Att. %'),
                   _cell('Outstanding'),
                   _cell('Failed'),
                   _cell('Passed'),
-                  if (includeBalanceColumn) _cell('Total Balance'),
+                  if (includeBalanceColumn) _cell('Balance due as expected monthly'),
                 ],
               ),
               ...rows.map((r) => pw.TableRow(
@@ -265,7 +283,7 @@ class ReportService {
                       _cell('${r.outstandingTests}'),
                       _cell('${r.failedTests}'),
                       _cell('${r.passedTests}'),
-                      if (includeBalanceColumn) _cell(CurrencyUtils.formatRand(r.totalBalance)),
+                      if (includeBalanceColumn) _cell(CurrencyUtils.formatRand(r.balanceDueExpectedMonthly)),
                     ],
                   ),),
             ],
@@ -291,11 +309,11 @@ class ReportService {
     final headers = [
       'Year / Mode',
       'Students',
-      'Avg Att. %',
+      'Attendance %',
       'Outstanding',
       'Failed',
       'Passed',
-      if (includeBalanceColumn) 'Total Balance',
+      if (includeBalanceColumn) 'Balance due as expected monthly',
     ];
     for (var i = 0; i < headers.length; i++) {
       sheet
@@ -329,7 +347,7 @@ class ReportService {
       if (includeBalanceColumn) {
         sheet
             .cell(CellIndex.indexByColumnRow(columnIndex: col++, rowIndex: rowIndex))
-            .value = TextCellValue(CurrencyUtils.formatRand(r.totalBalance));
+            .value = TextCellValue(CurrencyUtils.formatRand(r.balanceDueExpectedMonthly));
       }
     }
     final encoded = excel.encode();

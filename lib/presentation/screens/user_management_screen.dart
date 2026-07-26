@@ -4,10 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/presentation/providers/auth_provider.dart';
+import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/providers/user_management_providers.dart';
+import 'package:charis_student_care/presentation/theme/app_table_style.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:charis_student_care/presentation/widgets/user_edit_dialog.dart';
 import 'package:charis_student_care/presentation/widgets/user_form_dialog.dart';
@@ -107,44 +111,68 @@ class _UserManagementContent extends ConsumerWidget {
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: DataTable(
-          headingRowColor: WidgetStateProperty.all(colorScheme.surfaceContainerHighest),
+          headingRowColor: AppTableStyle.dataTableHeadingColor(colorScheme),
+          headingTextStyle: AppTableStyle.headerTextStyle(colorScheme),
+          dataTextStyle: AppTableStyle.bodyTextStyle(colorScheme),
+          dividerThickness: 1,
           columns: const [
-            DataColumn(label: Text('Username', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial'))),
-            DataColumn(label: Text('Display name', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial'))),
-            DataColumn(label: Text('Role', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial'))),
-            DataColumn(label: Text('Assigned class(es)', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial'))),
-            DataColumn(label: Text('Active', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial'))),
-            DataColumn(label: Text('Actions', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial'))),
+            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Username', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial')))),
+            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Display name', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial')))),
+            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Role', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial')))),
+            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Assigned class(es)', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial')))),
+            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Active', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial')))),
+            DataColumn(label: Padding(padding: EdgeInsets.symmetric(horizontal: 8, vertical: 6), child: Text('Actions', style: TextStyle(fontWeight: FontWeight.w600, fontFamily: 'Questrial')))),
           ],
           rows: users.map((user) {
             final role = UserRole.fromString(user.role);
             return DataRow(
               cells: [
-                DataCell(Text(user.username, style: const TextStyle(fontFamily: 'Questrial'))),
-                DataCell(Text(user.displayName ?? '—', style: const TextStyle(fontFamily: 'Questrial'))),
-                DataCell(Text(role.displayName, style: const TextStyle(fontFamily: 'Questrial'))),
+                DataCell(Padding(padding: AppTableStyle.cellPadding, child: Text(user.username, style: const TextStyle(fontFamily: 'Questrial')))),
+                DataCell(Padding(padding: AppTableStyle.cellPadding, child: Text(user.displayName ?? '—', style: const TextStyle(fontFamily: 'Questrial')))),
+                DataCell(Padding(padding: AppTableStyle.cellPadding, child: Text(role.displayName, style: const TextStyle(fontFamily: 'Questrial')))),
                 DataCell(
-                  role == UserRole.facilitator
-                      ? _AssignedClassesCell(user: user)
-                      : const Text('—', style: TextStyle(fontFamily: 'Questrial',),),
+                  Padding(
+                    padding: AppTableStyle.cellPadding,
+                    child: role == UserRole.facilitator
+                        ? _AssignedClassesCell(user: user)
+                        : const Text('—', style: TextStyle(fontFamily: 'Questrial',),),
+                  ),
                 ),
-                DataCell(Text(user.isActive ? 'Yes' : 'No', style: const TextStyle(fontFamily: 'Questrial'))),
+                DataCell(Padding(padding: AppTableStyle.cellPadding, child: Text(user.isActive ? 'Yes' : 'No', style: const TextStyle(fontFamily: 'Questrial')))),
                 DataCell(
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      TextButton.icon(
-                        onPressed: () => openEditUser(context, ref, user),
-                        icon: const Icon(Icons.edit_outlined, size: 18),
-                        label: const Text('Edit'),
-                      ),
-                      const SizedBox(width: 8),
-                      TextButton.icon(
-                        onPressed: () => toggleActive(context, ref, user),
-                        icon: Icon(user.isActive ? Icons.block : Icons.check_circle_outline, size: 18),
-                        label: Text(user.isActive ? 'Deactivate' : 'Activate'),
-                      ),
-                    ],
+                  Padding(
+                    padding: AppTableStyle.cellPadding,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextButton.icon(
+                          onPressed: () => openEditUser(context, ref, user),
+                          icon: const Icon(Icons.edit_outlined, size: 14),
+                          label: const Text('Edit'),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.all(6),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          onPressed: () => toggleActive(context, ref, user),
+                          icon: Icon(user.isActive ? Icons.block : Icons.check_circle_outline, size: 14),
+                          label: Text(user.isActive ? 'Deactivate' : 'Activate'),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.all(6),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          onPressed: () => deleteUser(context, ref, user),
+                          icon: const Icon(Icons.delete_outlined, size: 14),
+                          label: const Text('Delete'),
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.all(6),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -245,7 +273,13 @@ Future<void> toggleActive(BuildContext context, WidgetRef ref, User user) async 
     );
     if (confirmed == true && context.mounted) {
       try {
-        await ref.read(userRepositoryProvider).setActive(user.id, !user.isActive);
+        final auth = ref.read(authStateProvider).valueOrNull;
+        if (auth is! Authenticated) return;
+        await ref.read(userRepositoryProvider).setActive(
+              user.id,
+              !user.isActive,
+              actorRole: auth.role,
+            );
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(user.isActive ? 'User deactivated' : 'User activated')),
@@ -260,3 +294,63 @@ Future<void> toggleActive(BuildContext context, WidgetRef ref, User user) async 
       }
     }
   }
+
+Future<void> deleteUser(BuildContext context, WidgetRef ref, User user) async {
+  final auth = ref.read(authStateProvider).valueOrNull;
+  if (auth is Authenticated && auth.user.id == user.id.toString()) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('You cannot delete your own account')),
+    );
+    return;
+  }
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text(
+        'Delete user?',
+        style: TextStyle(fontFamily: 'Questrial'),
+      ),
+      content: Text(
+        '${user.username} will be permanently removed. This cannot be undone.',
+        style: const TextStyle(fontFamily: 'Questrial'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          style: FilledButton.styleFrom(backgroundColor: AppColors.charisRedPrimary),
+          child: const Text('Delete'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed == true && context.mounted) {
+    try {
+      final authForDelete = ref.read(authStateProvider).valueOrNull;
+      if (authForDelete is! Authenticated) return;
+      final deviceId = await ref.read(deviceIdProvider.future);
+      await ref.read(userRepositoryProvider).deleteUser(
+            user.id,
+            actorRole: authForDelete.role,
+            userId: authForDelete.user.id,
+            deviceId: deviceId,
+            userDisplayName: authForDelete.user.displayName,
+            screen: 'Users',
+          );
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('User deleted')),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
+}

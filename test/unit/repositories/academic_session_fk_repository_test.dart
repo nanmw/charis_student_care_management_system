@@ -11,6 +11,10 @@ void main() {
 
   setUp(() async {
     db = AppDatabase.test();
+    // Ensure a session exists for tests (legacy code format; single-year also supported).
+    await db.into(db.academicSessions).insert(
+          AcademicSessionsCompanion.insert(code: '2024-2025'),
+        );
   });
 
   tearDown(() async {
@@ -134,7 +138,8 @@ void main() {
   });
 
   group('AcademicSessionRepository helpers', () {
-    test('yearFromSessionCode returns start year for code', () {
+    test('yearFromSessionCode returns year for single-year or legacy code', () {
+      expect(AcademicSessionRepository.yearFromSessionCode('2026'), equals('2026'));
       expect(AcademicSessionRepository.yearFromSessionCode('2024-2025'), equals('2024'));
       expect(AcademicSessionRepository.yearFromSessionCode('2025-2026'), equals('2025'));
       expect(AcademicSessionRepository.yearFromSessionCode(null), isNull);

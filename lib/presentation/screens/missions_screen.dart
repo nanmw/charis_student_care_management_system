@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
-import 'package:charis_student_care/core/constants/app_constants.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/core/utils/currency_utils.dart';
@@ -13,10 +12,13 @@ import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/mission_providers.dart';
+import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
+import 'package:charis_student_care/presentation/theme/app_table_style.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:charis_student_care/presentation/widgets/mission_form_dialog.dart';
 import 'package:charis_student_care/presentation/widgets/mission_signup_dialog.dart';
+import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
 
 /// Missions Overview screen: mission cards grid + Student Participation table.
 class MissionsScreen extends ConsumerStatefulWidget {
@@ -36,7 +38,7 @@ String _formatMissionDateRange(DateTime start, DateTime end) {
 }
 
 class _MissionsScreenState extends ConsumerState<MissionsScreen> {
-  String? _selectedYear; // null = All Years
+  String? _selectedYear; // null = All sessions
   bool _activeOnly = true;
 
   @override
@@ -217,39 +219,110 @@ class _MissionsScreenState extends ConsumerState<MissionsScreen> {
   }
 
   Widget _buildYearDropdown(ColorScheme colorScheme) {
+    final sessionOptionsAsync = ref.watch(academicSessionOptionsProvider);
+    final currentSessionAsync = ref.watch(currentAcademicSessionProvider);
+
     return Container(
       width: 160,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
         color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.charisMidGray),
+        border: Border.all(color: colorScheme.outlineVariant),
       ),
-      child: DropdownButton<String?>(
-        value: _selectedYear,
-        isExpanded: true,
-        underline: const SizedBox(),
-        hint: const Text(
-          'All Years',
-          style: TextStyle(fontSize: 14, fontFamily: 'Questrial'),
-        ),
-        items: [
-          const DropdownMenuItem<String?>(
-              value: null, child: Text('All Years'),),
-          ...AppConstants.missionYearFilterOptions.map((year) {
-            return DropdownMenuItem<String?>(
-              value: year,
+      child: sessionOptionsAsync.when(
+        data: (options) {
+          final currentSession = currentSessionAsync.valueOrNull;
+          var list = options;
+          if (list.isEmpty) {
+            // Fallback to current calendar year string if no sessions exist yet.
+            final fallback = DateTime.now().year.toString();
+            list = [fallback];
+          }
+
+          String? selected = _selectedYear;
+          if (selected != null && !list.contains(selected)) {
+            selected = null;
+          }
+
+          if (selected == null && currentSession != null && list.contains(currentSession)) {
+            selected = currentSession;
+          }
+
+          // Persist any inferred selection back into state.
+          if (selected != _selectedYear) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) {
+                setState(() => _selectedYear = selected);
+              }
+            });
+          }
+
+          return DropdownButton<String?>(
+            value: selected,
+            isExpanded: true,
+            underline: const SizedBox(),
+            hint: const Text(
+              'All sessions',
+              style: TextStyle(fontSize: 14, fontFamily: 'Questrial'),
+            ),
+            items: [
+              const DropdownMenuItem<String?>(
+                value: null,
+                child: Text('All sessions'),
+              ),
+              ...list.map((session) {
+                return DropdownMenuItem<String?>(
+                  value: session,
+                  child: Text(
+                    session,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontFamily: 'Questrial',
+                    ),
+                  ),
+                );
+              }),
+            ],
+            onChanged: (value) => setState(() => _selectedYear = value),
+          );
+        },
+        loading: () => DropdownButton<String?>(
+          value: _selectedYear,
+          isExpanded: true,
+          underline: const SizedBox(),
+          items: [
+            DropdownMenuItem<String?>(
+              value: _selectedYear,
               child: Text(
-                year,
+                _selectedYear ?? 'Loading...',
                 style: const TextStyle(
                   fontSize: 14,
                   fontFamily: 'Questrial',
                 ),
               ),
-            );
-          }),
-        ],
-        onChanged: (value) => setState(() => _selectedYear = value),
+            ),
+          ],
+          onChanged: null,
+        ),
+        error: (_, __) => DropdownButton<String?>(
+          value: _selectedYear,
+          isExpanded: true,
+          underline: const SizedBox(),
+          items: [
+            DropdownMenuItem<String?>(
+              value: _selectedYear,
+              child: Text(
+                _selectedYear ?? 'Session unavailable',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontFamily: 'Questrial',
+                ),
+              ),
+            ),
+          ],
+          onChanged: null,
+        ),
       ),
     );
   }
@@ -343,80 +416,65 @@ class _MissionsScreenState extends ConsumerState<MissionsScreen> {
     );
     return SizedBox(
       height: 320,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: SfDataGrid(
-          source: dataSource,
-          columnWidthMode: ColumnWidthMode.fill,
-          gridLinesVisibility: GridLinesVisibility.horizontal,
-          headerGridLinesVisibility: GridLinesVisibility.both,
-          columns: [
+      child: SfDataGrid(
+        source: dataSource,
+        columnWidthMode: ColumnWidthMode.fill,
+        gridLinesVisibility: GridLinesVisibility.both,
+        headerGridLinesVisibility: GridLinesVisibility.both,
+        columns: [
             GridColumn(
               columnName: 'sn',
               width: 50,
-              label: _gridHeader('S/N', colorScheme),
+              label: _gridHeader(context, 'S/N'),
             ),
             GridColumn(
               columnName: 'name',
               width: 140,
-              label: _gridHeader('Surname, Names', colorScheme),
+              label: _gridHeader(context, 'Surname, Names'),
             ),
             GridColumn(
               columnName: 'year',
               width: 70,
-              label: _gridHeader('Year', colorScheme),
+              label: _gridHeader(context, 'Year'),
             ),
             GridColumn(
               columnName: 'mission',
               width: 120,
-              label: _gridHeader('Mission', colorScheme),
+              label: _gridHeader(context, 'Mission'),
             ),
             GridColumn(
               columnName: 'role',
               width: 100,
-              label: _gridHeader('Role', colorScheme),
+              label: _gridHeader(context, 'Role'),
             ),
             GridColumn(
               columnName: 'amount',
               width: 90,
-              label: _gridHeader('Amount', colorScheme),
+              label: _gridHeader(context, 'Amount'),
             ),
             GridColumn(
               columnName: 'paid',
               width: 90,
-              label: _gridHeader('Paid', colorScheme),
+              label: _gridHeader(context, 'Paid'),
             ),
             GridColumn(
               columnName: 'balance',
               width: 90,
-              label: _gridHeader('Balance', colorScheme),
+              label: _gridHeader(context, 'Balance'),
             ),
             if (canManage)
               GridColumn(
                 columnName: 'actions',
                 width: 140,
-                label: _gridHeader('Actions', colorScheme),
+                label: _gridHeader(context, 'Actions'),
               ),
           ],
-        ),
       ),
     );
   }
 
-  Container _gridHeader(String text, ColorScheme colorScheme) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      alignment: Alignment.centerLeft,
-      child: Text(
-        text,
-        style: TextStyle(
-          fontWeight: FontWeight.w600,
-          fontSize: 14,
-          fontFamily: 'Questrial',
-          color: colorScheme.onSurface,
-        ),
-      ),
-    );
+  Widget _gridHeader(BuildContext context, String text) {
+    return AppTableStyle.sfHeaderCell(context, text);
   }
 
   void _openCreateMission(BuildContext context) {
@@ -461,7 +519,19 @@ class _MissionsScreenState extends ConsumerState<MissionsScreen> {
 
   Future<void> _removeParticipation(BuildContext context, int id) async {
     try {
-      await ref.read(missionRepositoryProvider).removeParticipation(id);
+      final auth = ref.read(authStateProvider).valueOrNull;
+      final deviceId = await ref.read(deviceIdProvider.future);
+      await ref.read(missionRepositoryProvider).removeParticipation(
+            id,
+            userRole: auth is Authenticated
+                ? auth.role
+                : UserRole.facilitator,
+            userId: auth is Authenticated ? auth.user.id : null,
+            deviceId: deviceId,
+            userDisplayName:
+                auth is Authenticated ? auth.user.displayName : null,
+            screen: 'Missions',
+          );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Participation removed')),
@@ -559,10 +629,23 @@ class _MissionsScreenState extends ConsumerState<MissionsScreen> {
     final amount = double.tryParse(amountStr) ?? 0;
     if (amount <= 0) return;
     try {
+      final auth = ref.read(authStateProvider).valueOrNull;
+      final deviceId = await ref.read(deviceIdProvider.future);
+      final session =
+          ref.read(currentAcademicSessionProvider).valueOrNull ?? _selectedYear;
       await ref.read(missionRepositoryProvider).addMissionPayment(
             participationId: participationId,
             paymentDate: paymentDate,
             amount: amount,
+            userRole: auth is Authenticated
+                ? auth.role
+                : UserRole.facilitator,
+            academicSession: session,
+            userId: auth is Authenticated ? auth.user.id : null,
+            deviceId: deviceId,
+            userDisplayName:
+                auth is Authenticated ? auth.user.displayName : null,
+            screen: 'Missions',
           );
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -819,15 +902,11 @@ class _ParticipationDataSource extends DataGridSource {
       } else {
         widgetCells.add(
           Container(
-            padding: const EdgeInsets.all(8),
+            padding: AppTableStyle.cellPadding,
             alignment: Alignment.centerLeft,
             child: Text(
               cell.value?.toString() ?? '',
-              style: TextStyle(
-                fontSize: 14,
-                fontFamily: 'Questrial',
-                color: _colorScheme.onSurface,
-              ),
+              style: AppTableStyle.bodyTextStyle(_colorScheme),
             ),
           ),
         );

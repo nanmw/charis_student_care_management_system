@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:charis_student_care/core/config/sync_folder_config.dart';
+import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
 
@@ -41,10 +43,18 @@ class PaymentData {
 
 /// Payment repository: watch/upsert payment rows by student and year.
 class PaymentRepository {
-  PaymentRepository(this._db);
+  PaymentRepository(this._db, {void Function()? onLocalChangeSetWritten})
+      : _onLocalChangeSetWritten = onLocalChangeSetWritten;
 
   final AppDatabase _db;
+  final void Function()? _onLocalChangeSetWritten;
   static const _uuid = Uuid();
+
+  Future<String> _effectiveChangeSetDeviceId(String? deviceId) async {
+    final d = deviceId?.trim();
+    if (d != null && d.isNotEmpty && d != 'legacy') return d;
+    return SyncFolderConfig.getOrCreateDeviceId();
+  }
 
   Future<String?> _classNameForId(int? classId) async {
     if (classId == null) return null;
@@ -61,8 +71,12 @@ class PaymentRepository {
     return (_db.select(_db.payments)
           ..where((t) {
             var pred = t.year.equals(year);
-            if (studentIds != null && studentIds.isNotEmpty) {
-              pred = pred & t.studentId.isIn(studentIds);
+            if (studentIds != null) {
+              if (studentIds.isEmpty) {
+                pred = pred & t.studentId.equals(-1);
+              } else {
+                pred = pred & t.studentId.isIn(studentIds);
+              }
             }
             return pred;
           })
@@ -96,9 +110,13 @@ class PaymentRepository {
       } else {
         filtered = [];
       }
-      if (studentIds != null && studentIds.isNotEmpty) {
-        final idSet = studentIds.toSet();
-        filtered = filtered.where((p) => idSet.contains(p.studentId)).toList();
+      if (studentIds != null) {
+        if (studentIds.isEmpty) {
+          filtered = <Payment>[];
+        } else {
+          final idSet = studentIds.toSet();
+          filtered = filtered.where((p) => idSet.contains(p.studentId)).toList();
+        }
       }
       filtered.sort((a, b) => a.studentId.compareTo(b.studentId));
       yield filtered;
@@ -114,6 +132,20 @@ class PaymentRepository {
         readsFrom: const {},
       ).getSingleOrNull();
       return result?.data['id'] as int?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _getSessionCodeById(int? sessionId) async {
+    if (sessionId == null) return null;
+    try {
+      final result = await _db.customSelect(
+        'SELECT code FROM academic_sessions WHERE id = ? LIMIT 1',
+        variables: [Variable.withInt(sessionId)],
+        readsFrom: const {},
+      ).getSingleOrNull();
+      return result?.data['code'] as String?;
     } catch (_) {
       return null;
     }
@@ -169,7 +201,11 @@ class PaymentRepository {
     String? deviceId,
     String? userDisplayName,
     String? screen,
+    required UserRole userRole,
   }) async {
+    if (!RolePermissions.canManageFinancials(userRole)) {
+      throw StateError('Role cannot manage financials');
+    }
     final existing = await getPaymentRow(studentId, year);
     final now = DateTime.now();
     final operation = existing != null ? 'UPDATE' : 'INSERT';
@@ -221,9 +257,11 @@ class PaymentRepository {
       );
       if (userId != null) {
         final studentRow = await (_db.select(_db.students)..where((t) => t.id.equals(studentId))).getSingleOrNull();
+        final sessionCode = await _getSessionCodeById(academicSessionId) ?? year;
         final payload = <String, dynamic>{
           'studentId': studentId,
           'year': year,
+          'academicSession': sessionCode,
           'jan': jan,
           'feb': feb,
           'mar': mar,
@@ -250,7 +288,7 @@ class PaymentRepository {
           payload: payload,
           userId: userId,
           version: 1,
-          deviceId: deviceId ?? 'legacy',
+          deviceId: deviceId,
           userDisplayName: userDisplayName,
           screen: screen,
         );
@@ -260,9 +298,11 @@ class PaymentRepository {
     
     if (userId != null && paymentId != null) {
       final studentRow = await (_db.select(_db.students)..where((t) => t.id.equals(studentId))).getSingleOrNull();
+      final sessionCode = await _getSessionCodeById(academicSessionId) ?? year;
       final payload = <String, dynamic>{
         'studentId': studentId,
         'year': year,
+        'academicSession': sessionCode,
         'jan': jan,
         'feb': feb,
         'mar': mar,
@@ -289,7 +329,7 @@ class PaymentRepository {
         payload: payload,
         userId: userId,
         version: 1,
-        deviceId: deviceId ?? 'legacy',
+        deviceId: deviceId,
         userDisplayName: userDisplayName,
         screen: screen,
       );
@@ -309,7 +349,11 @@ class PaymentRepository {
     String? deviceId,
     String? userDisplayName,
     String? screen,
+    required UserRole userRole,
   }) async {
+    if (!RolePermissions.canManageFinancials(userRole)) {
+      throw StateError('Role cannot manage financials');
+    }
     if (payments.isEmpty) return 0;
 
     final studentIds = payments.keys.toList();
@@ -385,9 +429,11 @@ class PaymentRepository {
         
         if (userId != null) {
           final studentRow = await (_db.select(_db.students)..where((t) => t.id.equals(studentId))).getSingleOrNull();
+          final sessionCode = await _getSessionCodeById(academicSessionId) ?? year;
           final payload = <String, dynamic>{
             'studentId': studentId,
             'year': year,
+            'academicSession': sessionCode,
             'jan': payment.jan,
             'feb': payment.feb,
             'mar': payment.mar,
@@ -414,7 +460,7 @@ class PaymentRepository {
             payload: payload,
             userId: userId,
             version: 1,
-            deviceId: deviceId ?? 'legacy',
+            deviceId: deviceId,
             userDisplayName: userDisplayName,
             screen: screen,
           );
@@ -426,10 +472,9 @@ class PaymentRepository {
     });
   }
 
-  /// Calculates total paid amount for [year] across all payments.
+  /// Calculates session total paid for [year] (Feb–Oct + lump sum; excludes Jan/Nov/Dec).
   Stream<double> watchTotalPaidForYear(String year) {
-    final totalPaidExpr = _db.payments.jan +
-        _db.payments.feb +
+    final totalPaidExpr = _db.payments.feb +
         _db.payments.mar +
         _db.payments.apr +
         _db.payments.may +
@@ -438,8 +483,6 @@ class PaymentRepository {
         _db.payments.aug +
         _db.payments.sep +
         _db.payments.oct +
-        _db.payments.nov +
-        _db.payments.dec +
         _db.payments.lumpSum;
 
     return (_db.selectOnly(_db.payments)
@@ -452,13 +495,12 @@ class PaymentRepository {
             : 0.0,);
   }
 
-  /// Calculates total paid amount for the given academic [sessionCode].
+  /// Calculates session total paid for [sessionCode] (Feb–Oct + lump sum).
   /// Uses academic_session_id when available, otherwise year derived from session.
   Stream<double> watchTotalPaidForSession(String sessionCode) async* {
     final sessionId = await _getSessionIdByCode(sessionCode);
     final legacyYear = AcademicSessionRepository.yearFromSessionCode(sessionCode);
-    final totalPaidExpr = _db.payments.jan +
-        _db.payments.feb +
+    final totalPaidExpr = _db.payments.feb +
         _db.payments.mar +
         _db.payments.apr +
         _db.payments.may +
@@ -467,8 +509,6 @@ class PaymentRepository {
         _db.payments.aug +
         _db.payments.sep +
         _db.payments.oct +
-        _db.payments.nov +
-        _db.payments.dec +
         _db.payments.lumpSum;
     if (sessionId == null && legacyYear == null) {
       yield 0.0;
@@ -497,10 +537,11 @@ class PaymentRepository {
     required Map<String, dynamic> payload,
     required String userId,
     required int version,
-    required String deviceId,
+    String? deviceId,
     String? userDisplayName,
     String? screen,
   }) async {
+    final effectiveDeviceId = await _effectiveChangeSetDeviceId(deviceId);
     final fullPayload = Map<String, dynamic>.from(payload);
     if (userDisplayName != null) fullPayload['userDisplayName'] = userDisplayName;
     if (screen != null) fullPayload['screen'] = screen;
@@ -513,8 +554,9 @@ class PaymentRepository {
             payload: jsonEncode(fullPayload),
             userId: userId,
             version: version,
-            deviceId: deviceId,
+            deviceId: effectiveDeviceId,
           ),
         );
+    _onLocalChangeSetWritten?.call();
   }
 }

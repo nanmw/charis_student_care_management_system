@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -14,9 +16,8 @@ import 'package:charis_student_care/presentation/providers/class_providers.dart'
 import 'package:charis_student_care/presentation/providers/dashboard_providers.dart';
 import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
-import 'package:charis_student_care/presentation/providers/test_providers.dart';
-import 'package:charis_student_care/presentation/providers/settings_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
+import 'package:charis_student_care/presentation/theme/app_table_style.dart';
 import 'package:charis_student_care/presentation/widgets/student_summary_dialog.dart';
 
 /// Status options for Individual tab filter (All, Active, Withdrawn, Transferred, Correspondence).
@@ -33,18 +34,16 @@ Widget _cohortSummaryTableCell(
   ColorScheme colorScheme,
   String text, {
   required bool isHeader,
+  Color? backgroundColor,
 }) {
-  return Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+  return Container(
+    color: backgroundColor,
+    padding: AppTableStyle.cellPadding,
     child: Text(
       text,
-      style: TextStyle(
-        color:
-            isHeader ? colorScheme.onSurface : colorScheme.onSurfaceVariant,
-        fontWeight: isHeader ? FontWeight.w600 : FontWeight.normal,
-        fontSize: 14,
-        fontFamily: 'Questrial',
-      ),
+      style: isHeader
+          ? AppTableStyle.headerTextStyle(colorScheme)
+          : AppTableStyle.bodyTextStyle(colorScheme).copyWith(color: colorScheme.onSurfaceVariant),
     ),
   );
 }
@@ -58,6 +57,9 @@ Widget _buildSummaryTable(
   AsyncValue<List<DashboardCohortSummary>> cohortSummaryAsync,
   void Function(String year, String mode)? onViewCohort, {
   bool canShowBalance = true,
+  int? hoveredRowIndex,
+  void Function(int rowIndex)? onRowHoverEnter,
+  void Function(int rowIndex)? onRowHoverExit,
 }) {
   return cohortSummaryAsync.when(
     data: (summaries) {
@@ -66,7 +68,6 @@ Widget _buildSummaryTable(
           padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 24),
           decoration: BoxDecoration(
             color: colorScheme.surface,
-            borderRadius: BorderRadius.circular(12),
             border: Border.all(color: colorScheme.outlineVariant),
           ),
           child: Center(
@@ -84,10 +85,7 @@ Widget _buildSummaryTable(
       return Container(
         decoration: BoxDecoration(
           color: colorScheme.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: colorScheme.outlineVariant),
         ),
-        clipBehavior: Clip.antiAlias,
         child: Table(
           columnWidths: canShowBalance
               ? const {
@@ -113,6 +111,7 @@ Widget _buildSummaryTable(
                 },
           border: TableBorder(
             horizontalInside: BorderSide(color: colorScheme.outlineVariant),
+            verticalInside: BorderSide(color: colorScheme.outlineVariant),
             left: BorderSide(color: colorScheme.outlineVariant),
             right: BorderSide(color: colorScheme.outlineVariant),
             top: BorderSide(color: colorScheme.outlineVariant),
@@ -126,73 +125,136 @@ Widget _buildSummaryTable(
                 _cohortSummaryTableCell(colorScheme, '#', isHeader: true),
                 _cohortSummaryTableCell(colorScheme, 'Year / Mode', isHeader: true),
                 _cohortSummaryTableCell(colorScheme, 'Students', isHeader: true),
-                _cohortSummaryTableCell(colorScheme, 'Avg Attendance %', isHeader: true),
+                _cohortSummaryTableCell(colorScheme, 'Attendance %', isHeader: true),
                 _cohortSummaryTableCell(colorScheme, 'Outstanding Tests', isHeader: true),
                 _cohortSummaryTableCell(colorScheme, 'Failed Tests', isHeader: true),
                 _cohortSummaryTableCell(colorScheme, 'Passed Tests', isHeader: true),
-                if (canShowBalance) _cohortSummaryTableCell(colorScheme, 'Total Balance', isHeader: true),
+                if (canShowBalance) _cohortSummaryTableCell(colorScheme, 'Balance due as expected monthly', isHeader: true),
                 _cohortSummaryTableCell(colorScheme, 'View', isHeader: true),
               ],
             ),
             ...summaries.asMap().entries.map(
                   (entry) => TableRow(
                     children: [
-                      _cohortSummaryTableCell(
-                        colorScheme,
-                        '${entry.key + 1}',
-                        isHeader: false,
+                      MouseRegion(
+                        onEnter: (_) => onRowHoverEnter?.call(entry.key),
+                        onExit: (_) => onRowHoverExit?.call(entry.key),
+                        child: _cohortSummaryTableCell(
+                          colorScheme,
+                          '${entry.key + 1}',
+                          isHeader: false,
+                          backgroundColor: hoveredRowIndex == entry.key
+                              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                              : null,
+                        ),
                       ),
-                      _cohortSummaryTableCell(
-                        colorScheme,
-                        entry.value.cohortLabel,
-                        isHeader: false,
+                      MouseRegion(
+                        onEnter: (_) => onRowHoverEnter?.call(entry.key),
+                        onExit: (_) => onRowHoverExit?.call(entry.key),
+                        child: _cohortSummaryTableCell(
+                          colorScheme,
+                          entry.value.cohortLabel,
+                          isHeader: false,
+                          backgroundColor: hoveredRowIndex == entry.key
+                              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                              : null,
+                        ),
                       ),
-                      _cohortSummaryTableCell(
-                        colorScheme,
-                        '${entry.value.studentCount}',
-                        isHeader: false,
+                      MouseRegion(
+                        onEnter: (_) => onRowHoverEnter?.call(entry.key),
+                        onExit: (_) => onRowHoverExit?.call(entry.key),
+                        child: _cohortSummaryTableCell(
+                          colorScheme,
+                          '${entry.value.studentCount}',
+                          isHeader: false,
+                          backgroundColor: hoveredRowIndex == entry.key
+                              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                              : null,
+                        ),
                       ),
-                      _cohortSummaryTableCell(
-                        colorScheme,
-                        entry.value.avgAttendancePercent != null
-                            ? '${entry.value.avgAttendancePercent!.toStringAsFixed(1)}%'
-                            : '—',
-                        isHeader: false,
+                      MouseRegion(
+                        onEnter: (_) => onRowHoverEnter?.call(entry.key),
+                        onExit: (_) => onRowHoverExit?.call(entry.key),
+                        child: _cohortSummaryTableCell(
+                          colorScheme,
+                          entry.value.avgAttendancePercent != null
+                              ? '${entry.value.avgAttendancePercent!.toStringAsFixed(1)}%'
+                              : '—',
+                          isHeader: false,
+                          backgroundColor: hoveredRowIndex == entry.key
+                              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                              : null,
+                        ),
                       ),
-                      _cohortSummaryTableCell(
-                        colorScheme,
-                        '${entry.value.outstandingTests}',
-                        isHeader: false,
+                      MouseRegion(
+                        onEnter: (_) => onRowHoverEnter?.call(entry.key),
+                        onExit: (_) => onRowHoverExit?.call(entry.key),
+                        child: _cohortSummaryTableCell(
+                          colorScheme,
+                          '${entry.value.outstandingTests}',
+                          isHeader: false,
+                          backgroundColor: hoveredRowIndex == entry.key
+                              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                              : null,
+                        ),
                       ),
-                      _cohortSummaryTableCell(
-                        colorScheme,
-                        '${entry.value.failedTests}',
-                        isHeader: false,
+                      MouseRegion(
+                        onEnter: (_) => onRowHoverEnter?.call(entry.key),
+                        onExit: (_) => onRowHoverExit?.call(entry.key),
+                        child: _cohortSummaryTableCell(
+                          colorScheme,
+                          '${entry.value.failedTests}',
+                          isHeader: false,
+                          backgroundColor: hoveredRowIndex == entry.key
+                              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                              : null,
+                        ),
                       ),
-                      _cohortSummaryTableCell(
-                        colorScheme,
-                        '${entry.value.passedTests}',
-                        isHeader: false,
+                      MouseRegion(
+                        onEnter: (_) => onRowHoverEnter?.call(entry.key),
+                        onExit: (_) => onRowHoverExit?.call(entry.key),
+                        child: _cohortSummaryTableCell(
+                          colorScheme,
+                          '${entry.value.passedTests}',
+                          isHeader: false,
+                          backgroundColor: hoveredRowIndex == entry.key
+                              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                              : null,
+                        ),
                       ),
                       if (canShowBalance)
-                        _cohortSummaryTableCell(
-                          colorScheme,
-                          CurrencyUtils.formatRand(entry.value.totalBalance),
-                          isHeader: false,
-                        ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                        child: TextButton(
-                          onPressed: entry.value.studentCount == 0
-                              ? null
-                              : () => onViewCohort?.call(entry.value.year, entry.value.mode),
-                          style: TextButton.styleFrom(
-                            foregroundColor: redColor,
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        MouseRegion(
+                          onEnter: (_) => onRowHoverEnter?.call(entry.key),
+                          onExit: (_) => onRowHoverExit?.call(entry.key),
+                          child: _cohortSummaryTableCell(
+                            colorScheme,
+                            CurrencyUtils.formatRand(entry.value.balanceDueExpectedMonthly),
+                            isHeader: false,
+                            backgroundColor: hoveredRowIndex == entry.key
+                                ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                                : null,
                           ),
-                          child: const Text('View'),
+                        ),
+                      MouseRegion(
+                        onEnter: (_) => onRowHoverEnter?.call(entry.key),
+                        onExit: (_) => onRowHoverExit?.call(entry.key),
+                        child: Container(
+                          color: hoveredRowIndex == entry.key
+                              ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                              : null,
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          child: TextButton(
+                            onPressed: entry.value.studentCount == 0
+                                ? null
+                                : () => onViewCohort?.call(entry.value.year, entry.value.mode),
+                            style: TextButton.styleFrom(
+                              foregroundColor: redColor,
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                            child: const Text('View'),
+                          ),
                         ),
                       ),
                     ],
@@ -206,7 +268,6 @@ Widget _buildSummaryTable(
       padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
       decoration: BoxDecoration(
         color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colorScheme.outlineVariant),
       ),
       child: Center(
@@ -217,7 +278,6 @@ Widget _buildSummaryTable(
       padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
       decoration: BoxDecoration(
         color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colorScheme.outlineVariant),
       ),
       child: Center(
@@ -235,20 +295,46 @@ Widget _buildSummaryTable(
 }
 
 /// Dashboard home screen: overview, stat cards, recent activities placeholder, quick links.
-class DashboardScreen extends ConsumerWidget {
+class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends ConsumerState<DashboardScreen> {
+  late final ExpansibleController _keyStatsController;
+
+  @override
+  void initState() {
+    super.initState();
+    _keyStatsController = ExpansibleController();
+  }
+
+  @override
+  void dispose() {
+    _keyStatsController.dispose();
+    super.dispose();
+  }
+
+  void _syncKeyStatsToTab(int index) {
+    if (index == 0) {
+      _keyStatsController.expand();
+    } else {
+      _keyStatsController.collapse();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final themeMode = ref.watch(themeModeProvider);
-    final isDark = themeMode == ThemeMode.dark;
     final redColor =
-        isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
+        themeMode == ThemeMode.dark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final auth = ref.watch(authStateProvider).valueOrNull;
     final displayName = auth is Authenticated ? auth.user.displayName : 'User';
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
-    final outstandingAsync = ref.watch(totalOutstandingCountProvider);
+    final outstandingAsync = ref.watch(dashboardOutstandingTestsProvider);
     final attendanceAsync = ref.watch(averageAttendancePercentageProvider);
     final balanceAsync = ref.watch(totalBalanceDueProvider);
     final cohortSummaryAsync = ref.watch(dashboardCohortSummaryProvider);
@@ -294,7 +380,7 @@ class DashboardScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 24),
-            _buildStatCards(
+            _buildStatCardsSection(
               context,
               colorScheme,
               redColor,
@@ -302,6 +388,7 @@ class DashboardScreen extends ConsumerWidget {
               outstandingAsync,
               attendanceAsync,
               balanceAsync,
+              keyStatsController: _keyStatsController,
               canShowBalance: auth is Authenticated && RolePermissions.canManageFinancials(auth.role),
             ),
             const SizedBox(height: 24),
@@ -320,6 +407,7 @@ class DashboardScreen extends ConsumerWidget {
               redColor: redColor,
               cohortSummaryAsync: cohortSummaryAsync,
               canShowBalance: auth is Authenticated && RolePermissions.canManageFinancials(auth.role),
+              onTabIndexChanged: _syncKeyStatsToTab,
             ),
             const SizedBox(height: 24),
             _buildRecentActivitiesSection(
@@ -342,6 +430,56 @@ class DashboardScreen extends ConsumerWidget {
             _buildQuickLinks(context, colorScheme, redColor),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Collapsible row of overview stat cards (Total Students, Attendance %, Outstanding Tests).
+  Widget _buildStatCardsSection(
+    BuildContext context,
+    ColorScheme colorScheme,
+    Color redColor,
+    AsyncValue<List<dynamic>> studentsAsync,
+    AsyncValue<int> outstandingAsync,
+    AsyncValue<double?> attendanceAsync,
+    AsyncValue<double> balanceAsync, {
+    required ExpansibleController keyStatsController,
+    bool canShowBalance = true,
+  }) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        controller: keyStatsController,
+        initiallyExpanded: true,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        childrenPadding: const EdgeInsets.only(bottom: 8),
+        expandedAlignment: Alignment.centerLeft,
+        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        title: Align(
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(
+            'Key statistics',
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w700,
+              fontSize: 18,
+              fontFamily: 'Questrial',
+            ),
+          ),
+        ),
+        controlAffinity: ListTileControlAffinity.trailing,
+        children: [
+          _buildStatCards(
+            context,
+            colorScheme,
+            redColor,
+            studentsAsync,
+            outstandingAsync,
+            attendanceAsync,
+            balanceAsync,
+            canShowBalance: canShowBalance,
+          ),
+        ],
       ),
     );
   }
@@ -372,11 +510,10 @@ class DashboardScreen extends ConsumerWidget {
       error: (_, __) => null,
     );
     final totalBalance = balanceAsync.when(
-      data: (balance) => balance,
+      data: (amount) => amount,
       loading: () => null,
       error: (_, __) => null,
     );
-
     return Wrap(
       spacing: 16,
       runSpacing: 16,
@@ -390,11 +527,11 @@ class DashboardScreen extends ConsumerWidget {
         ),
         _statCard(
           colorScheme: colorScheme,
-          title: 'Avg Attendance %',
+          title: 'Attendance %',
           value: attendancePercent != null
               ? '${attendancePercent.toStringAsFixed(1)}%'
               : '—',
-          subtitle: 'Last 30 days',
+          subtitle: 'All recorded',
           valueColor: colorScheme.onSurface,
         ),
         _statCard(
@@ -411,8 +548,8 @@ class DashboardScreen extends ConsumerWidget {
             value: totalBalance != null
                 ? CurrencyUtils.formatRand(totalBalance)
                 : '—',
-            subtitle: 'Across all students',
-            valueColor: redColor,
+            subtitle: 'Session outstanding',
+            valueColor: colorScheme.onSurface,
             width: 280,
           ),
       ],
@@ -763,7 +900,7 @@ class DashboardScreen extends ConsumerWidget {
           onPressed: () => context.go('/reports'),
           style: OutlinedButton.styleFrom(
             foregroundColor: colorScheme.onSurfaceVariant,
-            side: BorderSide(color: colorScheme.outline),
+            side: BorderSide(color: colorScheme.outlineVariant),
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
@@ -772,22 +909,32 @@ class DashboardScreen extends ConsumerWidget {
           child: const Text('Generate Report'),
         ),
         const SizedBox(width: 12),
-        OutlinedButton(
-          onPressed: () => context.go('/payments'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: colorScheme.onSurfaceVariant,
-            side: BorderSide(color: colorScheme.outline),
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
+        RoleGuard(
+          canShow: RolePermissions.canManageFinancials,
+          child: OutlinedButton(
+            onPressed: () => context.go('/payments'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: colorScheme.onSurfaceVariant,
+              side: BorderSide(color: colorScheme.outlineVariant),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
             ),
+            child: const Text('Add New Finance Record'),
           ),
-          child: const Text('Add New Payment'),
         ),
       ],
     );
   }
 }
+
+/// Class summary tab viewport height; Individual tab uses +120 (see [_kDashboardIndividualSummaryTabViewHeight]).
+const double _kDashboardClassSummaryTabViewHeight = 380;
+
+/// Individual summary tab: extra vertical space for the student table vs Class tab.
+const double _kDashboardIndividualSummaryTabViewHeight =
+    _kDashboardClassSummaryTabViewHeight + 120;
 
 /// Summary section: TabBar (Individual / Class) and TabBarView with shared [TabController]
 /// and pending cohort state so "View" on Class tab switches to Individual and filters by cohort.
@@ -797,12 +944,14 @@ class _DashboardSummarySection extends StatefulWidget {
     required this.redColor,
     required this.cohortSummaryAsync,
     required this.canShowBalance,
+    this.onTabIndexChanged,
   });
 
   final ColorScheme colorScheme;
   final Color redColor;
   final AsyncValue<List<DashboardCohortSummary>> cohortSummaryAsync;
   final bool canShowBalance;
+  final ValueChanged<int>? onTabIndexChanged;
 
   @override
   State<_DashboardSummarySection> createState() =>
@@ -814,16 +963,31 @@ class _DashboardSummarySectionState extends State<_DashboardSummarySection>
   late final TabController _tabController;
   String? _pendingCohortYear;
   String? _pendingCohortMode;
+  int? _hoveredClassRowIndex;
+  int _classHoverEpoch = 0;
+  /// Drives [TabBarView] height: Individual tab (index 1) is taller than Class (0).
+  bool _summaryShowsIndividualTab = false;
 
   @override
   void initState() {
     super.initState();
     // Class tab is index 0 and is the default view when dashboard loads.
     _tabController = TabController(length: 2, vsync: this, initialIndex: 0);
+    _tabController.addListener(_handleTabChange);
+  }
+
+  void _handleTabChange() {
+    if (!mounted) return;
+    widget.onTabIndexChanged?.call(_tabController.index);
+    final isIndividual = _tabController.index == 1;
+    if (isIndividual != _summaryShowsIndividualTab) {
+      setState(() => _summaryShowsIndividualTab = isIndividual);
+    }
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_handleTabChange);
     _tabController.dispose();
     super.dispose();
   }
@@ -834,6 +998,23 @@ class _DashboardSummarySectionState extends State<_DashboardSummarySection>
       _pendingCohortMode = mode;
     });
     _tabController.animateTo(1); // Individual tab is now at index 1
+  }
+
+  void _onClassRowHoverEnter(int rowIndex) {
+    _classHoverEpoch++;
+    if (_hoveredClassRowIndex == rowIndex) return;
+    setState(() => _hoveredClassRowIndex = rowIndex);
+  }
+
+  void _onClassRowHoverExit(int rowIndex) {
+    final localEpoch = _classHoverEpoch;
+    Future<void>.delayed(const Duration(milliseconds: 20), () {
+      if (!mounted) return;
+      if (_classHoverEpoch != localEpoch) return;
+      if (_hoveredClassRowIndex == rowIndex) {
+        setState(() => _hoveredClassRowIndex = null);
+      }
+    });
   }
 
   @override
@@ -860,7 +1041,9 @@ class _DashboardSummarySectionState extends State<_DashboardSummarySection>
         ),
         const SizedBox(height: 12),
         SizedBox(
-          height: 380,
+          height: _summaryShowsIndividualTab
+              ? _kDashboardIndividualSummaryTabViewHeight
+              : _kDashboardClassSummaryTabViewHeight,
           child: TabBarView(
             controller: _tabController,
             children: [
@@ -872,6 +1055,9 @@ class _DashboardSummarySectionState extends State<_DashboardSummarySection>
                   widget.cohortSummaryAsync,
                   _onViewCohort,
                   canShowBalance: widget.canShowBalance,
+                  hoveredRowIndex: _hoveredClassRowIndex,
+                  onRowHoverEnter: _onClassRowHoverEnter,
+                  onRowHoverExit: _onClassRowHoverExit,
                 ),
               ),
               _DashboardIndividualSummaryTab(
@@ -925,17 +1111,34 @@ class _DashboardIndividualSummaryTabState
     extends ConsumerState<_DashboardIndividualSummaryTab> {
   String _searchQuery = '';
   String? _yearFilter;
-  String? _modeFilter = 'Full-time';
+  String? _modeFilter;
   String? _statusFilter = 'Active';
   bool _appliedInitialCohort = false;
-  bool _appliedDefaultYearFilter = false;
-  bool _defaultYearScheduled = false;
   final ScrollController _horizontalScrollController = ScrollController();
+  int? _hoveredIndividualRowIndex;
+  int _individualHoverEpoch = 0;
 
   @override
   void dispose() {
     _horizontalScrollController.dispose();
     super.dispose();
+  }
+
+  void _onIndividualRowHoverEnter(int rowIndex) {
+    _individualHoverEpoch++;
+    if (_hoveredIndividualRowIndex == rowIndex) return;
+    setState(() => _hoveredIndividualRowIndex = rowIndex);
+  }
+
+  void _onIndividualRowHoverExit(int rowIndex) {
+    final localEpoch = _individualHoverEpoch;
+    Future<void>.delayed(const Duration(milliseconds: 20), () {
+      if (!mounted) return;
+      if (_individualHoverEpoch != localEpoch) return;
+      if (_hoveredIndividualRowIndex == rowIndex) {
+        setState(() => _hoveredIndividualRowIndex = null);
+      }
+    });
   }
 
   @override
@@ -962,34 +1165,6 @@ class _DashboardIndividualSummaryTabState
       });
     }
 
-    final auth = ref.watch(authStateProvider).valueOrNull;
-    final visibleClasses = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull;
-    if (auth is Authenticated &&
-        visibleClasses != null &&
-        !_appliedDefaultYearFilter &&
-        !_defaultYearScheduled &&
-        _yearFilter == null &&
-        widget.initialCohortYear == null) {
-      _defaultYearScheduled = true;
-      final role = auth.role;
-      final scope = ref.read(currentUserFacilitatorScopeProvider).valueOrNull;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        setState(() {
-          _appliedDefaultYearFilter = true;
-          _yearFilter = role == UserRole.facilitator
-              ? (visibleClasses.isNotEmpty ? visibleClasses.first.name : null)
-              : 'Year 1';
-          if (widget.initialCohortMode == null &&
-              role == UserRole.facilitator &&
-              scope?.mode != null &&
-              scope!.mode!.trim().isNotEmpty) {
-            _modeFilter = scope.mode!.trim();
-          }
-        });
-      });
-    }
-
     final modeOptions = ref.watch(modeOptionsForCurrentUserProvider);
     if (modeOptions.length == 1 && _modeFilter != modeOptions[0]) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1000,8 +1175,6 @@ class _DashboardIndividualSummaryTabState
     final summaryAsync =
         ref.watch(dashboardStudentSummaryProvider(_statusFilter));
     final studentsAsync = ref.watch(studentsStreamProvider(_statusFilter));
-    final showMinistryHours =
-        ref.watch(dashboardShowMinistryHoursProvider).valueOrNull ?? false;
 
     return summaryAsync.when(
       data: (summaries) {
@@ -1026,7 +1199,7 @@ class _DashboardIndividualSummaryTabState
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _buildFilterRow(showMinistryHours),
+              _buildFilterRow(),
               const SizedBox(height: 12),
               LayoutBuilder(
                 builder: (context, constraints) {
@@ -1049,7 +1222,7 @@ class _DashboardIndividualSummaryTabState
                           context,
                           filtered,
                           studentMap,
-                          showMinistryHours,
+                          true, // Ministry Hours column always visible
                           widget.canShowBalance,
                         ),
                       ),
@@ -1097,6 +1270,7 @@ class _DashboardIndividualSummaryTabState
     final classes = ref.watch(classesVisibleToCurrentUserProvider).valueOrNull ?? [];
     return DropdownButton<String?>(
       value: _yearFilter,
+      focusColor: Colors.transparent,
       hint: Text(
         'Class',
         style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
@@ -1104,13 +1278,24 @@ class _DashboardIndividualSummaryTabState
       isExpanded: true,
       underline: const SizedBox.shrink(),
       borderRadius: BorderRadius.circular(8),
-      items: classes
-          .map<DropdownMenuItem<String?>>((SchoolClass c) => DropdownMenuItem<String?>(
-                value: c.name,
-                child: Text(c.name,
-                    style: TextStyle(color: colorScheme.onSurface, fontSize: 14),),
-              ),)
-          .toList(),
+      items: [
+        DropdownMenuItem<String?>(
+          value: null,
+          child: Text(
+            'All',
+            style: TextStyle(color: colorScheme.onSurface, fontSize: 14),
+          ),
+        ),
+        ...classes.map<DropdownMenuItem<String?>>(
+          (SchoolClass c) => DropdownMenuItem<String?>(
+            value: c.name,
+            child: Text(
+              c.name,
+              style: TextStyle(color: colorScheme.onSurface, fontSize: 14),
+            ),
+          ),
+        ),
+      ],
       onChanged: (v) => setState(() => _yearFilter = v),
     );
   }
@@ -1125,9 +1310,9 @@ class _DashboardIndividualSummaryTabState
           padding: const EdgeInsets.symmetric(horizontal: 12),
           alignment: Alignment.centerLeft,
           decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest,
+            color: Colors.transparent,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colorScheme.outline),
+            border: Border.all(color: colorScheme.outlineVariant),
           ),
           child: Text(
             modeOptions[0],
@@ -1145,9 +1330,9 @@ class _DashboardIndividualSummaryTabState
         height: 44,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest,
+          color: Colors.transparent,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: colorScheme.outline),
+          border: Border.all(color: colorScheme.outlineVariant),
         ),
         child: DropdownButton<String?>(
           value: _modeFilter,
@@ -1161,27 +1346,37 @@ class _DashboardIndividualSummaryTabState
           isExpanded: true,
           underline: const SizedBox.shrink(),
           borderRadius: BorderRadius.circular(8),
-          items: modeOptions
-              .map(
-                (v) => DropdownMenuItem<String?>(
-                  value: v,
-                  child: Text(
-                    v,
-                    style: TextStyle(
-                      color: colorScheme.onSurface,
-                      fontSize: 14,
-                    ),
+          items: [
+            DropdownMenuItem<String?>(
+              value: null,
+              child: Text(
+                'All',
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontSize: 14,
+                ),
+              ),
+            ),
+            ...modeOptions.map(
+              (v) => DropdownMenuItem<String?>(
+                value: v,
+                child: Text(
+                  v,
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontSize: 14,
                   ),
                 ),
-              )
-              .toList(),
+              ),
+            ),
+          ],
           onChanged: (v) => setState(() => _modeFilter = v),
         ),
       ),
     );
   }
 
-  Widget _buildFilterRow(bool showMinistryHours) {
+  Widget _buildFilterRow() {
     final colorScheme = widget.colorScheme;
     return Row(
       children: [
@@ -1199,7 +1394,7 @@ class _DashboardIndividualSummaryTabState
                 size: 22,
               ),
               filled: true,
-              fillColor: colorScheme.surfaceContainerHighest,
+              fillColor: Colors.transparent,
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
                 borderSide: BorderSide.none,
@@ -1211,25 +1406,15 @@ class _DashboardIndividualSummaryTabState
           ),
         ),
         const SizedBox(width: 12),
-        FilterChip(
-          label: const Text('Show Ministry Hours'),
-          selected: showMinistryHours,
-          onSelected: (selected) {
-            ref.read(dashboardShowMinistryHoursNotifierProvider).set(selected);
-          },
-          selectedColor: widget.redColor.withValues(alpha: 0.2),
-          checkmarkColor: widget.redColor,
-        ),
-        const SizedBox(width: 12),
         SizedBox(
           width: 100,
           child: Container(
             height: 44,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest,
+              color: Colors.transparent,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: colorScheme.outline),
+              border: Border.all(color: colorScheme.outlineVariant),
             ),
             child: _buildClassDropdown(colorScheme),
           ),
@@ -1243,9 +1428,9 @@ class _DashboardIndividualSummaryTabState
             height: 44,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
-              color: colorScheme.surfaceContainerHighest,
+              color: Colors.transparent,
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: colorScheme.outline),
+              border: Border.all(color: colorScheme.outlineVariant),
             ),
             child: DropdownButton<String?>(
               value: _statusFilter,
@@ -1294,7 +1479,6 @@ class _DashboardIndividualSummaryTabState
         padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 24),
         decoration: BoxDecoration(
           color: colorScheme.surface,
-          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: colorScheme.outlineVariant),
         ),
         child: Center(
@@ -1321,7 +1505,7 @@ class _DashboardIndividualSummaryTabState
       col++: const FlexColumnWidth(1),
     };
     if (showFinancialColumns) {
-      columnWidths[col++] = const FlexColumnWidth(1.5); // Total Balance
+      columnWidths[col++] = const FlexColumnWidth(1.5); // Balance due as expected monthly
     }
     if (showMinistryHours) {
       columnWidths[col++] = const FlexColumnWidth(2);
@@ -1334,14 +1518,12 @@ class _DashboardIndividualSummaryTabState
     return Container(
       decoration: BoxDecoration(
         color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outlineVariant),
       ),
-      clipBehavior: Clip.antiAlias,
       child: Table(
         columnWidths: columnWidths,
         border: TableBorder(
           horizontalInside: BorderSide(color: colorScheme.outlineVariant),
+          verticalInside: BorderSide(color: colorScheme.outlineVariant),
           left: BorderSide(color: colorScheme.outlineVariant),
           right: BorderSide(color: colorScheme.outlineVariant),
           top: BorderSide(color: colorScheme.outlineVariant),
@@ -1355,12 +1537,12 @@ class _DashboardIndividualSummaryTabState
               _tableCell(colorScheme, '#', isHeader: true),
               _tableCell(colorScheme, 'Student', isHeader: true),
               _tableCell(colorScheme, 'Year / Mode', isHeader: true),
-              _tableCell(colorScheme, 'Avg Attendance %', isHeader: true),
+              _tableCell(colorScheme, 'Attendance %', isHeader: true),
               _tableCell(colorScheme, 'Outstanding Tests', isHeader: true),
               _tableCell(colorScheme, 'Failed Tests', isHeader: true),
               _tableCell(colorScheme, 'Passed Tests', isHeader: true),
               if (showFinancialColumns)
-                _tableCell(colorScheme, 'Total Balance', isHeader: true),
+                _tableCell(colorScheme, 'Balance due as expected monthly', isHeader: true),
               if (showMinistryHours)
                 _tableCell(colorScheme, 'Ministry Hours', isHeader: true),
               if (showFinancialColumns)
@@ -1374,84 +1556,174 @@ class _DashboardIndividualSummaryTabState
             final student = studentMap[s.studentId];
             return TableRow(
               children: [
-                _tableCell(colorScheme, '${index + 1}', isHeader: false),
-                _tableCell(colorScheme, s.displayName, isHeader: false),
-                _tableCell(colorScheme, s.yearModeLabel, isHeader: false),
-                _tableCell(
-                  colorScheme,
-                  s.avgAttendancePercent != null
-                      ? '${s.avgAttendancePercent!.toStringAsFixed(1)}%'
-                      : '—',
-                  isHeader: false,
-                ),
-                _tableCell(
-                  colorScheme,
-                  '${s.outstandingTests}',
-                  isHeader: false,
-                ),
-                _tableCell(colorScheme, '${s.failedTests}', isHeader: false),
-                _tableCell(colorScheme, '${s.passedTests}', isHeader: false),
-                if (showFinancialColumns)
-                  _tableCell(
+                MouseRegion(
+                  onEnter: (_) => _onIndividualRowHoverEnter(index),
+                  onExit: (_) => _onIndividualRowHoverExit(index),
+                  child: _tableCell(
                     colorScheme,
-                    CurrencyUtils.formatRand(s.totalBalance),
+                    '${index + 1}',
                     isHeader: false,
+                    backgroundColor: _hoveredIndividualRowIndex == index
+                        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                        : null,
+                  ),
+                ),
+                MouseRegion(
+                  onEnter: (_) => _onIndividualRowHoverEnter(index),
+                  onExit: (_) => _onIndividualRowHoverExit(index),
+                  child: _tableCell(
+                    colorScheme,
+                    s.displayName,
+                    isHeader: false,
+                    backgroundColor: _hoveredIndividualRowIndex == index
+                        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                        : null,
+                  ),
+                ),
+                MouseRegion(
+                  onEnter: (_) => _onIndividualRowHoverEnter(index),
+                  onExit: (_) => _onIndividualRowHoverExit(index),
+                  child: _tableCell(
+                    colorScheme,
+                    s.yearModeLabel,
+                    isHeader: false,
+                    backgroundColor: _hoveredIndividualRowIndex == index
+                        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                        : null,
+                  ),
+                ),
+                MouseRegion(
+                  onEnter: (_) => _onIndividualRowHoverEnter(index),
+                  onExit: (_) => _onIndividualRowHoverExit(index),
+                  child: _tableCell(
+                    colorScheme,
+                    s.avgAttendancePercent != null
+                        ? '${s.avgAttendancePercent!.toStringAsFixed(1)}%'
+                        : '—',
+                    isHeader: false,
+                    backgroundColor: _hoveredIndividualRowIndex == index
+                        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                        : null,
+                  ),
+                ),
+                MouseRegion(
+                  onEnter: (_) => _onIndividualRowHoverEnter(index),
+                  onExit: (_) => _onIndividualRowHoverExit(index),
+                  child: _tableCell(
+                    colorScheme,
+                    '${s.outstandingTests}',
+                    isHeader: false,
+                    backgroundColor: _hoveredIndividualRowIndex == index
+                        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                        : null,
+                  ),
+                ),
+                MouseRegion(
+                  onEnter: (_) => _onIndividualRowHoverEnter(index),
+                  onExit: (_) => _onIndividualRowHoverExit(index),
+                  child: _tableCell(
+                    colorScheme,
+                    '${s.failedTests}',
+                    isHeader: false,
+                    backgroundColor: _hoveredIndividualRowIndex == index
+                        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                        : null,
+                  ),
+                ),
+                MouseRegion(
+                  onEnter: (_) => _onIndividualRowHoverEnter(index),
+                  onExit: (_) => _onIndividualRowHoverExit(index),
+                  child: _tableCell(
+                    colorScheme,
+                    '${s.passedTests}',
+                    isHeader: false,
+                    backgroundColor: _hoveredIndividualRowIndex == index
+                        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                        : null,
+                  ),
+                ),
+                if (showFinancialColumns)
+                  MouseRegion(
+                    onEnter: (_) => _onIndividualRowHoverEnter(index),
+                    onExit: (_) => _onIndividualRowHoverExit(index),
+                    child: _tableCell(
+                      colorScheme,
+                      CurrencyUtils.formatRand(s.balanceDueExpectedMonthly),
+                      isHeader: false,
+                      backgroundColor: _hoveredIndividualRowIndex == index
+                          ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                          : null,
+                    ),
                   ),
                 if (showMinistryHours)
-                  _tableCell(
-                    colorScheme,
-                    s.totalMinistryHours > 0
-                        ? s.totalMinistryHours.toStringAsFixed(1)
-                        : '—',
-                    isHeader: false,
+                  MouseRegion(
+                    onEnter: (_) => _onIndividualRowHoverEnter(index),
+                    onExit: (_) => _onIndividualRowHoverExit(index),
+                    child: _tableCell(
+                      colorScheme,
+                      s.totalMinistryHours.toStringAsFixed(1),
+                      isHeader: false,
+                      backgroundColor: _hoveredIndividualRowIndex == index
+                          ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                          : null,
+                    ),
                   ),
                 if (showFinancialColumns)
-                  _tableCell(
-                    colorScheme,
-                    s.missionFund > 0
-                        ? CurrencyUtils.formatRand(s.missionFund)
-                        : '—',
-                    isHeader: false,
+                  MouseRegion(
+                    onEnter: (_) => _onIndividualRowHoverEnter(index),
+                    onExit: (_) => _onIndividualRowHoverExit(index),
+                    child: _tableCell(
+                      colorScheme,
+                      CurrencyUtils.formatRand(s.missionFund),
+                      isHeader: false,
+                      backgroundColor: _hoveredIndividualRowIndex == index
+                          ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                          : null,
+                    ),
                   ),
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                  child: student != null
-                      ? TextButton(
-                          onPressed: () {
-                            StudentSummaryDialog.show(
-                              context: context,
-                              student: student,
-                            );
-                          },
-                          style: TextButton.styleFrom(
-                            foregroundColor: widget.redColor,
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            minimumSize: Size.zero,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          child: const Text('View'),
-                        )
-                      : Tooltip(
-                          message: 'Student not found',
-                          child: TextButton(
-                            onPressed: null,
+                MouseRegion(
+                  onEnter: (_) => _onIndividualRowHoverEnter(index),
+                  onExit: (_) => _onIndividualRowHoverExit(index),
+                  child: Container(
+                    color: _hoveredIndividualRowIndex == index
+                        ? colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+                        : null,
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                    child: student != null
+                        ? TextButton(
+                            onPressed: () {
+                              StudentSummaryDialog.show(
+                                context: context,
+                                student: student,
+                              );
+                            },
                             style: TextButton.styleFrom(
-                              padding:
-                                  const EdgeInsets.symmetric(horizontal: 12),
+                              foregroundColor: widget.redColor,
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
                               minimumSize: Size.zero,
                               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                             ),
-                            child: Text(
-                              'View',
-                              style: TextStyle(
-                                color: colorScheme.onSurfaceVariant
-                                    .withValues(alpha: 0.5),
-                                fontSize: 14,
+                            child: const Text('View'),
+                          )
+                        : Tooltip(
+                            message: 'Student not found',
+                            child: TextButton(
+                              onPressed: null,
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 12),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: Text(
+                                'View',
+                                style: TextStyle(
+                                  color: colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+                                  fontSize: 14,
+                                ),
                               ),
                             ),
                           ),
-                        ),
+                  ),
                 ),
               ],
             );
@@ -1465,18 +1737,16 @@ class _DashboardIndividualSummaryTabState
     ColorScheme colorScheme,
     String text, {
     required bool isHeader,
+    Color? backgroundColor,
   }) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    return Container(
+      color: backgroundColor,
+      padding: AppTableStyle.cellPadding,
       child: Text(
         text,
-        style: TextStyle(
-          color:
-              isHeader ? colorScheme.onSurface : colorScheme.onSurfaceVariant,
-          fontWeight: isHeader ? FontWeight.w600 : FontWeight.normal,
-          fontSize: 14,
-          fontFamily: 'Questrial',
-        ),
+        style: isHeader
+            ? AppTableStyle.headerTextStyle(colorScheme)
+            : AppTableStyle.bodyTextStyle(colorScheme).copyWith(color: colorScheme.onSurfaceVariant),
       ),
     );
   }

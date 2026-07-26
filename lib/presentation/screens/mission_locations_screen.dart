@@ -10,6 +10,7 @@ import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/mission_location_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
+import 'package:charis_student_care/presentation/theme/app_table_style.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:charis_student_care/presentation/widgets/mission_location_form_dialog.dart';
 
@@ -128,101 +129,38 @@ class _MissionLocationsScreenState extends ConsumerState<MissionLocationsScreen>
                     ),
                   ),
                 );
-                return ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: SfDataGrid(
-                    source: _dataSource!,
-                    columnWidthMode: ColumnWidthMode.fill,
-                    gridLinesVisibility: GridLinesVisibility.horizontal,
-                    headerGridLinesVisibility: GridLinesVisibility.both,
-                    columns: [
+                return SfDataGrid(
+                  source: _dataSource!,
+                  columnWidthMode: ColumnWidthMode.fill,
+                  gridLinesVisibility: GridLinesVisibility.both,
+                  headerGridLinesVisibility: GridLinesVisibility.both,
+                  columns: [
                       GridColumn(
                         columnName: 'sn',
                         width: 80,
-                        label: Container(
-                          padding: const EdgeInsets.all(8),
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'S/N',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                              fontFamily: 'Questrial',
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                        ),
+                        label: AppTableStyle.sfHeaderCell(context, 'S/N'),
                       ),
                       GridColumn(
                         columnName: 'name',
                         width: 200,
-                        label: Container(
-                          padding: const EdgeInsets.all(8),
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'Name',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                              fontFamily: 'Questrial',
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                        ),
+                        label: AppTableStyle.sfHeaderCell(context, 'Name'),
                       ),
                       GridColumn(
                         columnName: 'description',
                         width: double.nan,
-                        label: Container(
-                          padding: const EdgeInsets.all(8),
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'Description',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                              fontFamily: 'Questrial',
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                        ),
+                        label: AppTableStyle.sfHeaderCell(context, 'Description'),
                       ),
                       GridColumn(
                         columnName: 'active',
                         width: 100,
-                        label: Container(
-                          padding: const EdgeInsets.all(8),
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'Active',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                              fontFamily: 'Questrial',
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                        ),
+                        label: AppTableStyle.sfHeaderCell(context, 'Active'),
                       ),
                       GridColumn(
                         columnName: 'actions',
                         width: 150,
-                        label: Container(
-                          padding: const EdgeInsets.all(8),
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            'Actions',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                              fontFamily: 'Questrial',
-                              color: colorScheme.onSurface,
-                            ),
-                          ),
-                        ),
+                        label: AppTableStyle.sfHeaderCell(context, 'Actions'),
                       ),
-                    ],
-                  ),
+                  ],
                 );
               },
               loading: () => const Center(child: CircularProgressIndicator()),
@@ -430,7 +368,7 @@ class MissionLocationDataSource extends DataGridSource {
                       onPressed: () => _onEdit(location),
                       icon: Icon(
                         Icons.edit_outlined,
-                        size: 18,
+                        size: 14,
                         color: _colorScheme.onSurfaceVariant,
                       ),
                       label: Text(
@@ -441,10 +379,7 @@ class MissionLocationDataSource extends DataGridSource {
                         ),
                       ),
                       style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
+                        padding: const EdgeInsets.all(6),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(6),
                         ),
@@ -455,7 +390,7 @@ class MissionLocationDataSource extends DataGridSource {
                       onPressed: () => _onDelete(location),
                       icon: Icon(
                         Icons.delete_outline,
-                        size: 18,
+                        size: 14,
                         color: _colorScheme.error,
                       ),
                       label: Text(
@@ -466,10 +401,7 @@ class MissionLocationDataSource extends DataGridSource {
                         ),
                       ),
                       style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 6,
-                        ),
+                        padding: const EdgeInsets.all(6),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(6),
                         ),
@@ -482,15 +414,11 @@ class MissionLocationDataSource extends DataGridSource {
           );
         }
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          padding: AppTableStyle.cellPadding,
           alignment: Alignment.centerLeft,
           child: Text(
             cell.value.toString(),
-            style: TextStyle(
-              color: _colorScheme.onSurface,
-              fontSize: 14,
-              fontFamily: 'Questrial',
-            ),
+            style: AppTableStyle.bodyTextStyle(_colorScheme),
           ),
         );
       }).toList(),

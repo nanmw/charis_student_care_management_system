@@ -42,6 +42,11 @@ class RolePermissions {
     return true; // All roles can enter attendance
   }
 
+  /// Check if role can enter ministry hours
+  static bool canEnterMinistryHours(UserRole role) {
+    return true; // All roles can enter ministry hours
+  }
+
   /// Check if role can enter tests
   static bool canEnterTests(UserRole role) {
     return true; // All roles can enter tests
@@ -71,5 +76,10 @@ class RolePermissions {
   /// All roles can export; data is scoped by facilitator scope (class + mode) when applicable.
   static bool canExportReports(UserRole role) {
     return true;
+  }
+
+  /// Check if role can manage academic sessions (create, edit, set current) on Settings. Admin only.
+  static bool canManageAcademicSession(UserRole role) {
+    return role == UserRole.adminLevel01;
   }
 }

@@ -4,8 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/presentation/providers/auth_provider.dart';
+import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/repository_providers.dart';
+import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 
 /// Dialog to edit an existing user (display name, role, active, optional new password).
@@ -70,6 +73,10 @@ class _UserEditDialogState extends ConsumerState<UserEditDialog> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     try {
+      final auth = ref.read(authStateProvider).valueOrNull;
+      final deviceId = await ref.read(deviceIdProvider.future);
+      final actorRole =
+          (auth as Authenticated?)?.role ?? UserRole.facilitator;
       await ref.read(userRepositoryProvider).updateUser(
             id: widget.user.id,
             displayName: _displayNameController.text.trim().isEmpty ? null : _displayNameController.text.trim(),
@@ -80,13 +87,27 @@ class _UserEditDialogState extends ConsumerState<UserEditDialog> {
             allowedMode: _role == UserRole.facilitator && _selectedMode != null && _selectedMode!.trim().isNotEmpty
                 ? _selectedMode!.trim()
                 : null,
+            actorRole: actorRole,
+            userId: auth is Authenticated ? auth.user.id : null,
+            deviceId: deviceId,
+            userDisplayName: auth is Authenticated ? auth.user.displayName : null,
+            screen: 'Users',
           );
       if (_role == UserRole.facilitator) {
         final classRepo = ref.read(classRepositoryProvider);
         final classes = await ref.read(allClassesFutureProvider.future);
         for (final c in classes) {
           if (c.facilitatorUserId == widget.user.id) {
-            await classRepo.updateFacilitator(c.id, null);
+            await classRepo.updateFacilitator(
+              c.id,
+              null,
+              userRole: actorRole,
+              actorUserId: auth is Authenticated ? auth.user.id : null,
+              deviceId: deviceId,
+              userDisplayName:
+                  auth is Authenticated ? auth.user.displayName : null,
+              screen: 'Users',
+            );
           }
         }
       }

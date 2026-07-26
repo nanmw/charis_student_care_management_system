@@ -12,6 +12,7 @@ import 'tables/attendance.dart';
 import 'tables/tests.dart';
 import 'tables/payments.dart';
 import 'tables/subjects.dart';
+import 'subject_curriculum_order.dart';
 import 'tables/app_settings.dart';
 import 'tables/ministry_entries.dart';
 import 'tables/mission_payment_schedule.dart';
@@ -59,7 +60,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.test() : super(_openTestConnection());
 
   @override
-  int get schemaVersion => 32;
+  int get schemaVersion => 35;
 
   @override
   MigrationStrategy get migration {
@@ -100,155 +101,17 @@ class AppDatabase extends _$AppDatabase {
           "INSERT OR IGNORE INTO classes (name, sort_order) VALUES ('Year 1', 1), ('Year 2', 2), ('Year 3', 3)",
         );
 
-        // Seed first-year subjects (class_id = 1)
-        final firstYearSubjects = [
-          'A Sure Foundation',
-          'Healing',
-          'Life Foundations',
-          'Basics of Righteousness',
-          'Possess The Land',
-          'Prosperity God\'s Way',
-          'Holy Spirit I',
-          'Discipleship Evangelism I',
-          'The Heart of The Gospel',
-          'Principles of Grace & Faith',
-          'Holy Spirit II',
-          'Discipleship Evangelism II',
-          'Fruit of The Spirit',
-          'Marriage & Family',
-          'Romans',
-          'Holy Spirit III',
-          'Relationship with God I',
-          'Old Testament Survey 1',
-          'Discipleship Evangelism III',
-          'New Covenant Prayer',
-          'Galatians',
-          'Introduction To The Bible',
-          'Relationship With God II',
-          'Basic Bible Doctrines',
-          'Establishing A Prosperous Soul',
-          'Old Testament Survey II',
-          'The Fundamentals Of Faith',
-          'Prayer Minister Training',
-          'Finally, My Brethren',
-          'Biblical Ethics and Morals',
-          'Receiving From God I',
-          'Old Testament Survey III',
-          'The Ministry Of Jesus I',
-          'Let Freedom Reign',
-          'Love Of God',
-          'Old Testament Survey IV',
-          'The Ministry Of Jesus II',
-          'Old Testament Survey V',
-          'Operating In God\'s Best',
-          'Foundations Of Evangelism',
-          'Receiving From God II',
-          'Old Testament Survey VI',
-          'Rehearsal',
-          'Graduation',
-        ];
-
-        for (final subjectName in firstYearSubjects) {
-          final escapedName = subjectName.replaceAll("'", "''");
-          await customStatement('''
-            INSERT OR IGNORE INTO subjects (name, class_id) VALUES ('$escapedName', 1)
-          ''');
-        }
-
-        // Seed second-year subjects (class_id = 2)
-        final secondYearSubjects = [
-          'How To Get Along With People',
-          'Laws of The Kingdom',
-          'How To Study The Bible',
-          'Biblical Leadership',
-          'Healing II',
-          'New Testament Survey I',
-          'Living in Balance',
-          'IAG Practical Ministry',
-          'Practical Skills for Godly Relationships',
-          '20/20 Vision',
-          'Bible Covenants',
-          'How to Flow in The Gifts',
-          'Public Speaking',
-          'Lifestyle of Intimacy',
-          'Principles of Godly Leadership',
-          'Answers to Important Questions I',
-          'The Church Defined',
-          'Biblical Basis for Missions',
-          'Introduction to Money Mastery',
-          'Imparting Success to The Next Gen',
-          'Life of Christ',
-          'Walking In The Spirit',
-          'Making of A Minister I',
-          'Excellence In Ministry',
-          'IAG Sacerdotal Duties',
-          'Goal of The Cross',
-          'Answers to Important Question II',
-          'New Testament Survey II',
-          'Advanced Bible Doctrines',
-          'Making of A Minister II',
-          'Wisdom & Maturity',
-          'Church History',
-          'In Christ Realities',
-          'Acts: Power for Supernatural Living',
-          'Foundational Truths for Godly Ministry',
-          'Heart Matters',
-          'Biblical Worldview',
-          'Who is Man',
-          'Weddings',
-          'Funerals',
-          'Rehearsal',
-          'Graduation',
-        ];
-
-        for (final subjectName in secondYearSubjects) {
-          final escapedName = subjectName.replaceAll("'", "''");
-          await customStatement('''
-            INSERT OR IGNORE INTO subjects (name, class_id) VALUES ('$escapedName', 2)
-          ''');
-        }
-
-        // Seed third-year subjects (class_id = 3)
-        final thirdYearSubjects = [
-          'Vision Development Intro',
-          'Advice From an Older Minister',
-          'Organizational Mastery',
-          'Time Management',
-          'Sound Doctrine',
-          'Business Model Generation Canvas',
-          'How to Teach & Preach Effectively',
-          'How to Teach',
-          'Boundaries',
-          'The Evolution of Ministry',
-          'Developing Healthy Relationships',
-          'Change Mastery',
-          'Team Building',
-          'Making Cents',
-          'Business As Missions',
-          'Business Planning',
-          'Anatomy of Revival',
-          'Strategic Planning',
-          'Divine Guidance',
-          'Leadership 101',
-          'Money Mastery',
-          'Missions',
-          'Creatively Communicating The Gospel',
-          'Basic CEO 1',
-          'Effective Counseling',
-          'Conflict Resolution',
-          'Leadership',
-          'Building a Successful Business',
-          'Purpose of Marriage, Spiritual Formation',
-          'How to Disciple',
-          'Rehearsal',
-          'Graduation',
-        ];
-
-        for (final subjectName in thirdYearSubjects) {
-          final escapedName = subjectName.replaceAll("'", "''");
-          await customStatement('''
-            INSERT OR IGNORE INTO subjects (name, class_id) VALUES ('$escapedName', 3)
-          ''');
+        // Seed first/second/third-year subjects with curriculum sort_order
+        for (final entry in SubjectCurriculumOrder.byClassId.entries) {
+          final classId = entry.key;
+          final names = entry.value;
+          for (var i = 0; i < names.length; i++) {
+            final escapedName = names[i].replaceAll("'", "''");
+            await customStatement('''
+              INSERT OR IGNORE INTO subjects (name, class_id, sort_order)
+              VALUES ('$escapedName', $classId, $i)
+            ''');
+          }
         }
 
         // Seed academic sessions (current and previous) if none exist yet.
@@ -1311,12 +1174,196 @@ class AppDatabase extends _$AppDatabase {
               AND (SELECT MIN(id) FROM classes WHERE facilitator_user_id = users.id) IS NOT NULL
           ''');
         }
+
+        if (from < 33) {
+          // Remap legacy YYYY-YYYY session codes to single-year codes (start year).
+          // 1) Ensure single-year session rows exist for every distinct start year.
+          await customStatement('''
+            INSERT OR IGNORE INTO academic_sessions (code, start_date, end_date, is_active)
+            SELECT
+              CAST(substr(code, 1, 4) AS TEXT),
+              start_date,
+              end_date,
+              0
+            FROM academic_sessions
+            WHERE code GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]'
+          ''');
+          // Also ensure years referenced by payment year columns exist.
+          await customStatement('''
+            INSERT OR IGNORE INTO academic_sessions (code)
+            SELECT DISTINCT year FROM payments WHERE year GLOB '[0-9]*'
+          ''');
+          await customStatement('''
+            INSERT OR IGNORE INTO academic_sessions (code)
+            SELECT DISTINCT year FROM ministry_entries WHERE year GLOB '[0-9]*'
+          ''');
+
+          // 2) Re-point FKs from legacy session ids to matching single-year session ids.
+          const tables = [
+            'payments',
+            'tests',
+            'attendance',
+            'students',
+            'ministry_entries',
+            'missions',
+            'mission_payment_schedule',
+            'mission_payments',
+          ];
+          for (final table in tables) {
+            await customStatement('''
+              UPDATE $table
+              SET academic_session_id = (
+                SELECT s2.id
+                FROM academic_sessions legacy
+                JOIN academic_sessions s2
+                  ON s2.code = substr(legacy.code, 1, 4)
+                WHERE legacy.id = $table.academic_session_id
+                  AND legacy.code GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]'
+              )
+              WHERE academic_session_id IS NOT NULL
+                AND EXISTS (
+                  SELECT 1 FROM academic_sessions legacy
+                  WHERE legacy.id = $table.academic_session_id
+                    AND legacy.code GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]'
+                )
+            ''');
+          }
+
+          // 3) Prefer a single-year active session when only a legacy one is active.
+          await customStatement('''
+            UPDATE academic_sessions
+            SET is_active = 1
+            WHERE code = (
+              SELECT substr(code, 1, 4) FROM academic_sessions
+              WHERE is_active = 1
+                AND code GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]'
+              LIMIT 1
+            )
+          ''');
+          await customStatement('''
+            UPDATE academic_sessions
+            SET is_active = 0
+            WHERE code GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]'
+          ''');
+
+          await _ensureInitialAcademicSessions();
+        }
+
+        if (from < 34) {
+          // Rewrite tests.academic_session text from YYYY-YYYY to start year.
+          await customStatement('''
+            UPDATE tests
+            SET academic_session = substr(academic_session, 1, 4)
+            WHERE academic_session GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]'
+          ''');
+          // Rewrite current session setting if still legacy range format.
+          await customStatement('''
+            UPDATE app_settings
+            SET value = substr(value, 1, 4)
+            WHERE key = 'current_academic_session'
+              AND value GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9]'
+          ''');
+        }
+
+        if (from < 35) {
+          await customStatement(
+            'ALTER TABLE subjects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0',
+          );
+          await _backfillSubjectSortOrders();
+        }
       },
     );
   }
 
+  /// Sets subjects.sort_order from curriculum lists; unknown subjects append after.
+  Future<void> _backfillSubjectSortOrders() async {
+    final classRows = await customSelect(
+      "SELECT id, name FROM classes WHERE name IN ('Year 1', 'Year 2', 'Year 3')",
+      readsFrom: {classes},
+    ).get();
+    final classIdByName = {
+      for (final row in classRows) row.read<String>('name'): row.read<int>('id'),
+    };
+    final curriculumByClassId = <int, List<String>>{};
+    final y1Id = classIdByName['Year 1'];
+    final y2Id = classIdByName['Year 2'];
+    final y3Id = classIdByName['Year 3'];
+    if (y1Id != null) curriculumByClassId[y1Id] = SubjectCurriculumOrder.year1;
+    if (y2Id != null) curriculumByClassId[y2Id] = SubjectCurriculumOrder.year2;
+    if (y3Id != null) curriculumByClassId[y3Id] = SubjectCurriculumOrder.year3;
+
+    for (final entry in curriculumByClassId.entries) {
+      final classId = entry.key;
+      final names = entry.value;
+      for (var i = 0; i < names.length; i++) {
+        final escapedName = names[i].replaceAll("'", "''");
+        await customStatement('''
+          UPDATE subjects
+          SET sort_order = $i
+          WHERE class_id = $classId AND name = '$escapedName'
+        ''');
+      }
+      // Custom subjects not in curriculum: append after max, stable by name then id.
+      final extras = await customSelect(
+        '''
+        SELECT id FROM subjects
+        WHERE class_id = ?
+          AND name NOT IN (${names.map((_) => '?').join(', ')})
+        ORDER BY name COLLATE NOCASE, id
+        ''',
+        variables: [
+          Variable.withInt(classId),
+          ...names.map(Variable.withString),
+        ],
+        readsFrom: {subjects},
+      ).get();
+      var next = names.length;
+      for (final row in extras) {
+        final id = row.read<int>('id');
+        await customStatement(
+          'UPDATE subjects SET sort_order = $next WHERE id = $id',
+        );
+        next++;
+      }
+    }
+
+    // Any other class_id not in the curriculum map: order by name then id.
+    final knownIds = curriculumByClassId.keys.toList();
+    final otherClasses = knownIds.isEmpty
+        ? await customSelect(
+            'SELECT DISTINCT class_id FROM subjects',
+            readsFrom: {subjects},
+          ).get()
+        : await customSelect(
+            '''
+            SELECT DISTINCT class_id FROM subjects
+            WHERE class_id NOT IN (${knownIds.map((_) => '?').join(', ')})
+            ''',
+            variables: knownIds.map(Variable.withInt).toList(),
+            readsFrom: {subjects},
+          ).get();
+    for (final classRow in otherClasses) {
+      final classId = classRow.read<int>('class_id');
+      final rows = await customSelect(
+        '''
+        SELECT id FROM subjects
+        WHERE class_id = ?
+        ORDER BY name COLLATE NOCASE, id
+        ''',
+        variables: [Variable.withInt(classId)],
+        readsFrom: {subjects},
+      ).get();
+      for (var i = 0; i < rows.length; i++) {
+        final id = rows[i].read<int>('id');
+        await customStatement(
+          'UPDATE subjects SET sort_order = $i WHERE id = $id',
+        );
+      }
+    }
+  }
+
   /// Ensures there is at least a current and previous academic session row.
-  /// Does nothing if sessions already exist or if the table is unavailable.
+  /// Session = single calendar year Feb–Oct; code e.g. "2026", "2025".
   Future<void> _ensureInitialAcademicSessions() async {
     try {
       final result = await customSelect(
@@ -1327,23 +1374,26 @@ class AppDatabase extends _$AppDatabase {
         return;
       }
     } catch (_) {
-      // Table might not exist yet; in that case, bail out gracefully.
       return;
     }
 
     final now = DateTime.now();
     final year = now.year;
-    final currentCode = now.month >= 7 ? '$year-${year + 1}' : '${year - 1}-$year';
-    final previousCode = now.month >= 7 ? '${year - 1}-$year' : '${year - 2}-${year - 1}';
+    final currentCode = year.toString();
+    final previousCode = (year - 1).toString();
+    // Feb 1 and Oct 31 of each year (Unix seconds at UTC midnight).
+    final currentStart = DateTime.utc(year, 2, 1).millisecondsSinceEpoch ~/ 1000;
+    final currentEnd = DateTime.utc(year, 10, 31).millisecondsSinceEpoch ~/ 1000;
+    final previousStart = DateTime.utc(year - 1, 2, 1).millisecondsSinceEpoch ~/ 1000;
+    final previousEnd = DateTime.utc(year - 1, 10, 31).millisecondsSinceEpoch ~/ 1000;
 
-    // Insert previous session (inactive) and current session (active).
     await customStatement(
-      'INSERT OR IGNORE INTO academic_sessions (code, is_active) VALUES (?, 0)',
-      [previousCode],
+      'INSERT OR IGNORE INTO academic_sessions (code, start_date, end_date, is_active) VALUES (?, ?, ?, 0)',
+      [previousCode, previousStart, previousEnd],
     );
     await customStatement(
-      'INSERT OR IGNORE INTO academic_sessions (code, is_active) VALUES (?, 1)',
-      [currentCode],
+      'INSERT OR IGNORE INTO academic_sessions (code, start_date, end_date, is_active) VALUES (?, ?, ?, 1)',
+      [currentCode, currentStart, currentEnd],
     );
   }
 }

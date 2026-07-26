@@ -5,11 +5,17 @@ import 'package:charis_student_care/data/repositories/mission_repository.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 
 final missionRepositoryProvider = Provider<MissionRepository>((ref) {
   final db = ref.watch(appDatabaseProvider);
   final classRepo = ref.watch(classRepositoryProvider);
-  return MissionRepository(db, classRepo);
+  return MissionRepository(
+    db,
+    classRepo: classRepo,
+    onLocalChangeSetWritten: () =>
+        ref.read(postCrudSyncSchedulerProvider).schedule(),
+  );
 });
 
 /// Parameters for missions stream filter.

@@ -3,10 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:charis_student_care/core/constants/app_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
+import 'package:charis_student_care/domain/attendance/attendance_thresholds.dart';
+import 'package:charis_student_care/domain/finance/session_payment_math.dart';
 import 'package:charis_student_care/presentation/providers/ministry_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/test_providers.dart';
 import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
+import 'package:charis_student_care/presentation/providers/settings_providers.dart';
 
 /// Attendance summary data model
 class AttendanceSummary {
@@ -15,12 +19,18 @@ class AttendanceSummary {
     required this.presentDays,
     required this.percentage,
     required this.recentDates,
+    required this.monthThreshold,
+    required this.termThreshold,
+    required this.yearThreshold,
   });
 
   final int totalDays;
   final int presentDays;
   final double percentage;
   final List<DateTime> recentDates;
+  final AttendanceThresholdResult monthThreshold;
+  final AttendanceThresholdResult termThreshold;
+  final AttendanceThresholdResult yearThreshold;
 }
 
 /// Test summary data model
@@ -57,10 +67,9 @@ class OutstandingTestItem {
   final DateTime dateWhenOutstanding;
 }
 
+/// Fallback when no current session is set (single year, e.g. "2026").
 String _defaultCurrentAcademicSession() {
-  final now = DateTime.now();
-  final year = now.year;
-  return now.month >= 7 ? '$year-${year + 1}' : '${year - 1}-$year';
+  return DateTime.now().year.toString();
 }
 
 /// Payment summary data model
@@ -80,28 +89,79 @@ class PaymentSummary {
 final attendanceSummaryForStudentProvider = StreamProvider.autoDispose
     .family<AttendanceSummary, int>((ref, studentId) {
   final db = ref.watch(appDatabaseProvider);
-  
-  // Watch all attendance records for this student
+  final currentSessionAsync = ref.watch(currentAcademicSessionProvider);
+  final thresholdConfig =
+      ref.watch(attendanceThresholdConfigProvider).valueOrNull ??
+          AttendanceThresholdConfig.defaults;
+
+  if (currentSessionAsync.hasError) {
+    return Stream.error(
+      currentSessionAsync.error!,
+      currentSessionAsync.stackTrace,
+    );
+  }
+  if (!currentSessionAsync.hasValue) {
+    return const Stream.empty();
+  }
+
   final query = db.select(db.attendance)
     ..where((t) => t.studentId.equals(studentId))
     ..orderBy([(t) => OrderingTerm.desc(t.date)]);
-  
+
   return query.watch().map((allAttendance) {
     final totalDays = allAttendance.length;
     final presentDays = allAttendance.where((a) => a.present == 1).length;
     final percentage = totalDays > 0 ? (presentDays / totalDays) * 100 : 0.0;
-    
-    // Get recent dates (last 10)
+
     final recentDates = allAttendance
         .take(10)
         .map((a) => a.date)
         .toList();
-    
+
+    final trimmed = currentSessionAsync.value?.trim();
+    final sessionCode = (trimmed != null && trimmed.isNotEmpty)
+        ? trimmed
+        : _defaultCurrentAcademicSession();
+    final yearStr =
+        AcademicSessionRepository.yearFromSessionCode(sessionCode) ??
+            DateTime.now().year.toString();
+    final sessionYear = int.tryParse(yearStr) ?? DateTime.now().year;
+    final now = DateTime.now();
+
+    final monthRange = monthDateRange(now.year, now.month);
+    final currentTerm = now.month <= 4
+        ? 1
+        : (now.month <= 7 ? 2 : 3);
+    final termRange = termDateRange(sessionYear, currentTerm);
+    final yearRange = sessionYearDateRange(sessionYear);
+
+    final monthPresent =
+        presentDaysInRange(allAttendance, monthRange.$1, monthRange.$2);
+    final termPresent =
+        presentDaysInRange(allAttendance, termRange.$1, termRange.$2);
+    final yearPresent =
+        presentDaysInRange(allAttendance, yearRange.$1, yearRange.$2);
+
     return AttendanceSummary(
       totalDays: totalDays,
       presentDays: presentDays,
       percentage: percentage,
       recentDates: recentDates,
+      monthThreshold: evaluateAttendanceThreshold(
+        period: AttendanceThresholdPeriod.month,
+        presentDays: monthPresent,
+        config: thresholdConfig,
+      ),
+      termThreshold: evaluateAttendanceThreshold(
+        period: AttendanceThresholdPeriod.term,
+        presentDays: termPresent,
+        config: thresholdConfig,
+      ),
+      yearThreshold: evaluateAttendanceThreshold(
+        period: AttendanceThresholdPeriod.year,
+        presentDays: yearPresent,
+        config: thresholdConfig,
+      ),
     );
   });
 });
@@ -119,22 +179,26 @@ final testSummaryForStudentProvider = StreamProvider.autoDispose
   ref.watch(allTestsProvider);
   final currentSessionAsync = ref.watch(currentAcademicSessionProvider);
 
+  if (currentSessionAsync.hasError) {
+    return Stream.error(
+      currentSessionAsync.error!,
+      currentSessionAsync.stackTrace,
+    );
+  }
+  if (!currentSessionAsync.hasValue) {
+    return const Stream.empty();
+  }
+
   return repo.watchTestsForStudent(studentId).map((tests) {
     final totalTests = tests.length;
     final passedTests =
         tests.where((t) => t.score >= AppConstants.passingTestScore).length;
 
     // Resolve current academic session (fallback to default if none set yet)
-    final currentSession = currentSessionAsync.when(
-      data: (value) {
-        final trimmed = value?.trim();
-        return (trimmed != null && trimmed.isNotEmpty)
-            ? trimmed
-            : _defaultCurrentAcademicSession();
-      },
-      loading: () => _defaultCurrentAcademicSession(),
-      error: (_, __) => _defaultCurrentAcademicSession(),
-    );
+    final trimmed = currentSessionAsync.value?.trim();
+    final currentSession = (trimmed != null && trimmed.isNotEmpty)
+        ? trimmed
+        : _defaultCurrentAcademicSession();
 
     // Cohort = active students with same class and mode
     final students =
@@ -226,41 +290,46 @@ final testSummaryForStudentProvider = StreamProvider.autoDispose
   });
 });
 
-/// Provider for payment summary for a specific student
+/// Provider for payment summary for a specific student (current academic session).
 final paymentSummaryForStudentProvider = StreamProvider.autoDispose
     .family<PaymentSummary, int>((ref, studentId) {
   final db = ref.watch(appDatabaseProvider);
-  
-  // Watch all payments for this student
+  final sessionTuition = ref.watch(sessionTuitionAmountProvider);
+  final currentSessionAsync = ref.watch(currentAcademicSessionProvider);
+
+  if (currentSessionAsync.hasError) {
+    return Stream.error(
+      currentSessionAsync.error!,
+      currentSessionAsync.stackTrace,
+    );
+  }
+  if (!currentSessionAsync.hasValue) {
+    return const Stream.empty();
+  }
+
   final query = db.select(db.payments)
     ..where((t) => t.studentId.equals(studentId))
     ..orderBy([(t) => OrderingTerm.desc(t.year)]);
-  
+
   return query.watch().map((payments) {
+    final trimmed = currentSessionAsync.value?.trim();
+    final sessionCode = (trimmed != null && trimmed.isNotEmpty)
+        ? trimmed
+        : _defaultCurrentAcademicSession();
+    final sessionYear =
+        AcademicSessionRepository.yearFromSessionCode(sessionCode);
+
     double totalPaid = 0.0;
     final paymentsByYear = <String, Payment>{};
-    
+
     for (final payment in payments) {
-      final yearTotal = payment.jan +
-          payment.feb +
-          payment.mar +
-          payment.apr +
-          payment.may +
-          payment.jun +
-          payment.jul +
-          payment.aug +
-          payment.sep +
-          payment.oct +
-          payment.nov +
-          payment.dec +
-          payment.lumpSum;
-      
-      totalPaid += yearTotal;
+      if (sessionYear != null && payment.year != sessionYear) continue;
+      totalPaid += sessionPaymentTotal(payment);
       paymentsByYear[payment.year] = payment;
     }
-    
-    final balance = AppConstants.fullTuitionAmount - totalPaid;
-    
+
+    final balance = sessionTuition - totalPaid;
+
     return PaymentSummary(
       totalPaid: totalPaid,
       balance: balance,

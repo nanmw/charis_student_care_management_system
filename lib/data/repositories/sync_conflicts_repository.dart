@@ -15,6 +15,13 @@ class SyncConflictsRepository {
         .watch();
   }
 
+  /// Snapshot of unresolved conflicts, newest first.
+  Future<List<SyncConflict>> listConflicts() {
+    return (_db.select(_db.syncConflicts)
+          ..orderBy([(t) => OrderingTerm.desc(t.detectedAt)]))
+        .get();
+  }
+
   /// Count of unresolved conflicts.
   Future<int> count() async {
     final list = await _db.select(_db.syncConflicts).get();
@@ -57,6 +64,13 @@ class SyncConflictsRepository {
   /// Resolve by keeping local: just delete the conflict row.
   Future<void> resolveKeepLocal(int conflictId) async {
     await (_db.delete(_db.syncConflicts)..where((t) => t.id.equals(conflictId))).go();
+  }
+
+  /// Resolve many by keeping local.
+  Future<int> resolveKeepLocalMany(Iterable<int> conflictIds) async {
+    final ids = conflictIds.toSet();
+    if (ids.isEmpty) return 0;
+    return (_db.delete(_db.syncConflicts)..where((t) => t.id.isIn(ids))).go();
   }
 
   /// Resolve by using incoming: apply the stored payload then delete the conflict.

@@ -33,6 +33,12 @@ class ChangeSetsRepository {
         .watch();
   }
 
+  /// Rewrites `device_id = 'legacy'` to [deviceId] so local edits export with this installation.
+  Future<int> retagLegacyChangeSetsTo(String deviceId) async {
+    return (_db.update(_db.changeSets)..where((t) => t.deviceId.equals('legacy')))
+        .write(ChangeSetsCompanion(deviceId: Value(deviceId)));
+  }
+
   /// Returns true if a change-set with the given [id] exists (for import dedupe).
   Future<bool> hasChangeSet(String id) async {
     final row = await (_db.select(_db.changeSets)

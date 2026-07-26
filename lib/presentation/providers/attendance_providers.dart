@@ -3,25 +3,39 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/attendance_repository.dart';
 import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
+import 'package:charis_student_care/presentation/providers/scope_filter.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
+import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 
 final attendanceRepositoryProvider = Provider<AttendanceRepository>((ref) {
   final db = ref.watch(appDatabaseProvider);
-  return AttendanceRepository(db);
+  return AttendanceRepository(
+    db,
+    onLocalChangeSetWritten: () =>
+        ref.read(postCrudSyncSchedulerProvider).schedule(),
+  );
 });
 
 /// Stream of attendance rows for [date] (date-only). Scoped to facilitator's class when applicable.
 final attendanceForDateProvider = StreamProvider.autoDispose
     .family<List<AttendanceData>, DateTime>((ref, date) {
   final repo = ref.watch(attendanceRepositoryProvider);
+  final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
   final allowedIdsAsync = ref.watch(allowedStudentIdsStreamProvider);
-  return allowedIdsAsync.when(
-    data: (ids) => repo.watchAttendanceForDate(
-      date,
-      studentIds: ids.isEmpty ? null : ids,
+  return scopeAsync.when(
+    data: (scope) => allowedIdsAsync.when(
+      data: (ids) {
+        final filter = studentIdsFilterForScope(scope, ids);
+        return repo.watchAttendanceForDate(
+          date,
+          studentIds: filter,
+        );
+      },
+      loading: () => const Stream.empty(),
+      error: (e, st) => Stream.error(e, st),
     ),
-    loading: () => Stream.value([]),
-    error: (_, __) => Stream.value([]),
+    loading: () => const Stream.empty(),
+    error: (e, st) => Stream.error(e, st),
   );
 });
 

@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:charis_student_care/core/config/sync_folder_config.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/class_repository.dart';
@@ -17,15 +18,59 @@ class StudentWithClass {
   final int? classId;
 }
 
+/// One row for [StudentRepository.importStudentsBatch].
+class StudentBatchImportItem {
+  const StudentBatchImportItem({
+    required this.surname,
+    required this.firstName,
+    this.status,
+    this.classId,
+    this.mode,
+    this.admissionYear,
+    this.contactInfo,
+    this.email,
+    this.handbook = false,
+    this.mediaRelease = false,
+    this.accidentWaiver = false,
+    this.sessionCode,
+    this.applySession = true,
+  });
+
+  final String surname;
+  final String firstName;
+  final String? status;
+  final int? classId;
+  final String? mode;
+  final String? admissionYear;
+  final String? contactInfo;
+  final String? email;
+  final bool handbook;
+  final bool mediaRelease;
+  final bool accidentWaiver;
+  final String? sessionCode;
+  final bool applySession;
+}
+
 /// Student repository: watch, add, update (no delete; use status change).
 /// Enforces role for add/edit; writes change-sets for sync.
 class StudentRepository {
-  StudentRepository(this._db, [ClassRepository? classRepo])
-      : _classRepo = classRepo ?? ClassRepository(_db);
+  StudentRepository(
+    this._db, {
+    ClassRepository? classRepo,
+    void Function()? onLocalChangeSetWritten,
+  })  : _classRepo = classRepo ?? ClassRepository(_db),
+        _onLocalChangeSetWritten = onLocalChangeSetWritten;
 
   final AppDatabase _db;
   final ClassRepository _classRepo;
+  final void Function()? _onLocalChangeSetWritten;
   static const _uuid = Uuid();
+
+  Future<String> _effectiveChangeSetDeviceId(String? deviceId) async {
+    final d = deviceId?.trim();
+    if (d != null && d.isNotEmpty && d != 'legacy') return d;
+    return SyncFolderConfig.getOrCreateDeviceId();
+  }
 
   /// Returns true if any student has the given [surname]. Used for idempotent seed checks.
   Future<bool> hasStudentWithSurname(String surname) async {
@@ -127,6 +172,10 @@ class StudentRepository {
     final sessionId = currentSessionCode != null && currentSessionCode.trim().isNotEmpty
         ? await _getSessionIdByCode(currentSessionCode.trim())
         : null;
+    String? className;
+    if (classId != null) {
+      className = (await _classRepo.getClassById(classId))?.name;
+    }
     final companion = StudentsCompanion.insert(
       surname: surname.trim(),
       firstName: firstName.trim(),
@@ -155,6 +204,7 @@ class StudentRepository {
         'firstName': firstName,
         'studentName': '$surname, $firstName',
         if (classId != null) 'classId': classId,
+        if (className != null && className.isNotEmpty) 'className': className,
         if (mode != null && mode.trim().isNotEmpty) 'mode': mode.trim(),
         if (admissionYear != null && admissionYear.trim().isNotEmpty)
           'admissionYear': admissionYear.trim(),
@@ -164,6 +214,10 @@ class StudentRepository {
         'handbook': handbook ?? false,
         'mediaRelease': mediaRelease ?? false,
         'accidentWaiver': accidentWaiver ?? false,
+        if (currentSessionCode != null &&
+            currentSessionCode.trim().isNotEmpty &&
+            sessionId != null)
+          'academicSession': currentSessionCode.trim(),
         if (userDisplayName != null) 'userDisplayName': userDisplayName,
         if (screen != null) 'screen': screen,
       };
@@ -174,12 +228,90 @@ class StudentRepository {
         payload: payload,
         userId: userId,
         version: 1,
-        deviceId: deviceId ?? 'legacy',
+        deviceId: deviceId,
         userDisplayName: userDisplayName,
         screen: screen,
       );
     }
     return id;
+  }
+
+  /// Returns true when [code] matches an existing academic session.
+  Future<bool> academicSessionExists(String code) async {
+    return (await _getSessionIdByCode(code)) != null;
+  }
+
+  /// Soft duplicate check: same surname + firstName, optionally same admission year.
+  Future<List<Student>> findPotentialDuplicates({
+    required String surname,
+    required String firstName,
+    String? admissionYear,
+  }) async {
+    final rows = await (_db.select(_db.students)
+          ..where(
+            (t) =>
+                t.surname.equals(surname.trim()) &
+                t.firstName.equals(firstName.trim()),
+          ))
+        .get();
+    if (admissionYear == null || admissionYear.trim().isEmpty) {
+      return rows;
+    }
+    final year = admissionYear.trim();
+    return rows
+        .where((s) => s.admissionYear == null || s.admissionYear == year)
+        .toList();
+  }
+
+  /// Imports all [items] in a single transaction. Rolls back on any failure.
+  /// When [StudentBatchImportItem.applySession] is false, session is left unset.
+  Future<int> importStudentsBatch({
+    required List<StudentBatchImportItem> items,
+    required UserRole userRole,
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+  }) async {
+    if (!RolePermissions.canManageStudents(userRole)) {
+      throw StateError('Role cannot add students');
+    }
+    return _db.transaction(() async {
+      var count = 0;
+      for (final item in items) {
+        final id = await addStudent(
+          item.surname,
+          item.firstName,
+          userRole: userRole,
+          userId: userId,
+          deviceId: deviceId,
+          userDisplayName: userDisplayName,
+          screen: screen,
+          classId: item.classId,
+          mode: item.mode,
+          admissionYear: item.admissionYear,
+          contactInfo: item.contactInfo,
+          email: item.email,
+          handbook: item.handbook,
+          mediaRelease: item.mediaRelease,
+          accidentWaiver: item.accidentWaiver,
+          currentSessionCode: item.applySession ? item.sessionCode : null,
+        );
+        if (item.status != null && item.status != 'Active') {
+          await updateStudent(
+            id,
+            status: item.status,
+            userRole: userRole,
+            userId: userId,
+            deviceId: deviceId,
+            userDisplayName: userDisplayName,
+            screen: screen,
+          );
+        }
+        count++;
+      }
+      return count;
+    });
   }
 
   /// Updates student. For name/field edits requires canManageStudents; status change always allowed.
@@ -287,11 +419,16 @@ class StudentRepository {
       final studentName = '$effectiveSurname, $effectiveFirstName';
       final effectiveClassId = classId ?? row.classId;
       final effectiveMode = mode ?? row.mode;
+      String? className;
+      if (effectiveClassId != null) {
+        className = (await _classRepo.getClassById(effectiveClassId))?.name;
+      }
       final payload = <String, dynamic>{
         if (surname != null) 'surname': surname,
         if (firstName != null) 'firstName': firstName,
         'studentName': studentName,
         if (effectiveClassId != null) 'classId': effectiveClassId,
+        if (className != null && className.isNotEmpty) 'className': className,
         if (effectiveMode != null && effectiveMode.isNotEmpty) 'studentMode': effectiveMode,
         if (status != null) 'status': status,
         if (isFullUpdate || (mode != null && mode.trim().isNotEmpty))
@@ -313,6 +450,7 @@ class StudentRepository {
         if (handbook != null) 'handbook': handbook,
         if (mediaRelease != null) 'mediaRelease': mediaRelease,
         if (accidentWaiver != null) 'accidentWaiver': accidentWaiver,
+        'baseVersion': row.version,
         'version': newVersion,
         if (userDisplayName != null) 'userDisplayName': userDisplayName,
         if (screen != null) 'screen': screen,
@@ -323,7 +461,7 @@ class StudentRepository {
         operation: operation,
         payload: payload,
         userId: userId,
-        deviceId: deviceId ?? 'legacy',
+        deviceId: deviceId,
         version: newVersion,
         userDisplayName: userDisplayName,
         screen: screen,
@@ -345,6 +483,10 @@ class StudentRepository {
       throw StateError('Role cannot promote students');
     }
     if (studentIds.isEmpty) return;
+    final targetClass =
+        await (_db.select(_db.classes)..where((t) => t.id.equals(targetClassId)))
+            .getSingleOrNull();
+    final className = targetClass?.name;
     for (final id in studentIds) {
       final row = await (_db.select(_db.students)..where((t) => t.id.equals(id)))
           .getSingleOrNull();
@@ -360,6 +502,8 @@ class StudentRepository {
       if (userId != null) {
         final payload = <String, dynamic>{
           'classId': targetClassId,
+          if (className != null && className.isNotEmpty) 'className': className,
+          'baseVersion': row.version,
           'version': newVersion,
           'studentName': '${row.surname}, ${row.firstName}',
           if (row.mode != null && row.mode!.isNotEmpty) 'studentMode': row.mode,
@@ -372,7 +516,7 @@ class StudentRepository {
           operation: 'UPDATE',
           payload: payload,
           userId: userId,
-          deviceId: deviceId ?? 'legacy',
+          deviceId: deviceId,
           version: newVersion,
           userDisplayName: userDisplayName,
           screen: screen,
@@ -426,6 +570,7 @@ class StudentRepository {
           final studentName = '${student.surname}, ${student.firstName}';
           final payload = <String, dynamic>{
             'handbook': true,
+            'baseVersion': student.version,
             'version': newVersion,
             'studentName': studentName,
             if (student.classId != null) 'classId': student.classId,
@@ -440,7 +585,7 @@ class StudentRepository {
             payload: payload,
             userId: userId,
             version: newVersion,
-            deviceId: deviceId ?? 'legacy',
+            deviceId: deviceId,
             userDisplayName: userDisplayName,
             screen: screen,
           );
@@ -473,10 +618,11 @@ class StudentRepository {
     required Map<String, dynamic> payload,
     required String userId,
     required int version,
-    required String deviceId,
+    String? deviceId,
     String? userDisplayName,
     String? screen,
   }) async {
+    final effectiveDeviceId = await _effectiveChangeSetDeviceId(deviceId);
     final fullPayload = Map<String, dynamic>.from(payload);
     if (userDisplayName != null) fullPayload['userDisplayName'] = userDisplayName;
     if (screen != null) fullPayload['screen'] = screen;
@@ -489,8 +635,9 @@ class StudentRepository {
             payload: jsonEncode(fullPayload),
             userId: userId,
             version: version,
-            deviceId: deviceId,
+            deviceId: effectiveDeviceId,
           ),
         );
+    _onLocalChangeSetWritten?.call();
   }
 }

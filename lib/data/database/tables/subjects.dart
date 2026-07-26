@@ -14,6 +14,9 @@ class Subjects extends Table {
   /// Class (year level) – references classes.id
   IntColumn get classId => integer().references(Classes, #id)();
 
+  /// Display / report column order within the class (curriculum sequence).
+  IntColumn get sortOrder => integer().withDefault(const Constant(0))();
+
   @override
   Set<Column> get primaryKey => {id};
 

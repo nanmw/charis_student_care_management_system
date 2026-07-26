@@ -1,7 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:drift/drift.dart';
+import 'package:uuid/uuid.dart';
 
+import 'package:charis_student_care/core/config/sync_folder_config.dart';
+import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 
 /// DTO for a ministry entry with student display name (Surname, FirstName).
@@ -100,9 +104,34 @@ class MinistryEntryFilters {
 
 /// Repository for ministry hours entries: paginated list, summary stats, CRUD.
 class MinistryEntryRepository {
-  MinistryEntryRepository(this._db);
+  MinistryEntryRepository(
+    this._db, {
+    void Function()? onLocalChangeSetWritten,
+  }) : _onLocalChangeSetWritten = onLocalChangeSetWritten;
 
   final AppDatabase _db;
+  final void Function()? _onLocalChangeSetWritten;
+  static const _uuid = Uuid();
+
+  Future<String> _effectiveChangeSetDeviceId(String? deviceId) async {
+    final d = deviceId?.trim();
+    if (d != null && d.isNotEmpty && d != 'legacy') return d;
+    return SyncFolderConfig.getOrCreateDeviceId();
+  }
+
+  Future<String?> _sessionCodeById(int? sessionId) async {
+    if (sessionId == null) return null;
+    try {
+      final result = await _db.customSelect(
+        'SELECT code FROM academic_sessions WHERE id = ? LIMIT 1',
+        variables: [Variable.withInt(sessionId)],
+        readsFrom: const {},
+      ).getSingleOrNull();
+      return result?.data['code'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// Builds WHERE clause (excluding join) and variables for filters.
   (String, List<Variable>) _buildWhereAndVars(MinistryEntryFilters filters) {
@@ -131,11 +160,15 @@ class MinistryEntryRepository {
       conditions.add('m.date <= ?');
       variables.add(Variable.withDateTime(filters.dateTo!));
     }
-    if (filters.classIds != null && filters.classIds!.isNotEmpty) {
-      final placeholders = List.filled(filters.classIds!.length, '?').join(',');
-      conditions.add('m.class_id IN ($placeholders)');
-      for (final id in filters.classIds!) {
-        variables.add(Variable.withInt(id));
+    if (filters.classIds != null) {
+      if (filters.classIds!.isEmpty) {
+        conditions.add('1 = 0');
+      } else {
+        final placeholders = List.filled(filters.classIds!.length, '?').join(',');
+        conditions.add('m.class_id IN ($placeholders)');
+        for (final id in filters.classIds!) {
+          variables.add(Variable.withInt(id));
+        }
       }
     }
 
@@ -305,13 +338,19 @@ class MinistryEntryRepository {
     return row.read<int>('c');
   }
 
-  /// Summary stats for dashboard cards. When [classIds] is non-null and non-empty, only entries in those classes.
+  /// Summary stats for dashboard cards.
+  /// When [classIds] is null: unscoped (admin).
+  /// When [classIds] is empty: deny-all (facilitator with no classes).
+  /// When non-empty: filter to those classes.
   Future<MinistrySummaryStats> getMinistrySummaryStats({
     List<int>? classIds,
   }) async {
     final String whereClause;
     final List<Variable> whereVars;
-    if (classIds != null && classIds.isNotEmpty) {
+    if (classIds != null && classIds.isEmpty) {
+      whereClause = '1 = 0';
+      whereVars = [];
+    } else if (classIds != null && classIds.isNotEmpty) {
       final placeholders = List.filled(classIds.length, '?').join(',');
       whereClause = 'class_id IN ($placeholders)';
       whereVars = classIds.map((id) => Variable.withInt(id)).toList();
@@ -398,19 +437,160 @@ class MinistryEntryRepository {
   }
 
   /// Insert a new ministry entry. Returns the new row id.
-  Future<int> insert(MinistryEntriesCompanion companion) async {
-    return await _db.into(_db.ministryEntries).insert(companion);
+  /// When [userId] is provided, writes a change-set for sync.
+  Future<int> insert(
+    MinistryEntriesCompanion companion, {
+    required UserRole userRole,
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+  }) async {
+    if (!RolePermissions.canEnterMinistryHours(userRole)) {
+      throw StateError('Role cannot enter ministry hours');
+    }
+    final id = await _db.into(_db.ministryEntries).insert(companion);
+    if (userId != null) {
+      final row = await (_db.select(_db.ministryEntries)
+            ..where((t) => t.id.equals(id)))
+          .getSingleOrNull();
+      if (row != null) {
+        await _insertChangeSet(
+          table: 'ministry_entries',
+          recordId: id.toString(),
+          operation: 'INSERT',
+          payload: await _payloadFromEntry(row),
+          userId: userId,
+          version: 1,
+          deviceId: deviceId,
+          userDisplayName: userDisplayName,
+          screen: screen,
+        );
+      }
+    }
+    return id;
   }
 
   /// Update an existing ministry entry by id.
-  Future<void> update(int id, MinistryEntriesCompanion companion) async {
+  Future<void> update(
+    int id,
+    MinistryEntriesCompanion companion, {
+    required UserRole userRole,
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+  }) async {
+    if (!RolePermissions.canEnterMinistryHours(userRole)) {
+      throw StateError('Role cannot enter ministry hours');
+    }
     await (_db.update(_db.ministryEntries)..where((t) => t.id.equals(id)))
         .write(companion);
+    if (userId != null) {
+      final row = await (_db.select(_db.ministryEntries)
+            ..where((t) => t.id.equals(id)))
+          .getSingleOrNull();
+      if (row != null) {
+        await _insertChangeSet(
+          table: 'ministry_entries',
+          recordId: id.toString(),
+          operation: 'UPDATE',
+          payload: await _payloadFromEntry(row),
+          userId: userId,
+          version: 1,
+          deviceId: deviceId,
+          userDisplayName: userDisplayName,
+          screen: screen,
+        );
+      }
+    }
   }
 
   /// Delete a ministry entry by id.
-  Future<void> delete(int id) async {
-    await (_db.delete(_db.ministryEntries)..where((t) => t.id.equals(id)))
-        .go();
+  Future<void> delete(
+    int id, {
+    required UserRole userRole,
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+  }) async {
+    if (!RolePermissions.canEnterMinistryHours(userRole)) {
+      throw StateError('Role cannot enter ministry hours');
+    }
+    final row = await (_db.select(_db.ministryEntries)
+          ..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+    await (_db.delete(_db.ministryEntries)..where((t) => t.id.equals(id))).go();
+    if (userId != null && row != null) {
+      await _insertChangeSet(
+        table: 'ministry_entries',
+        recordId: id.toString(),
+        operation: 'DELETE',
+        payload: await _payloadFromEntry(row),
+        userId: userId,
+        version: 1,
+        deviceId: deviceId,
+        userDisplayName: userDisplayName,
+        screen: screen,
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> _payloadFromEntry(MinistryEntry row) async {
+    final sessionCode = await _sessionCodeById(row.academicSessionId);
+    String? className;
+    if (row.classId != null) {
+      final c = await (_db.select(_db.classes)
+            ..where((t) => t.id.equals(row.classId!)))
+          .getSingleOrNull();
+      className = c?.name;
+    }
+    return {
+      'studentId': row.studentId,
+      'year': row.year,
+      'term': row.term,
+      if (className != null && className.isNotEmpty) 'className': className,
+      if (row.studyMode != null) 'studyMode': row.studyMode,
+      'ministryType': row.ministryType,
+      'date': row.date.toIso8601String(),
+      'hours': row.hours,
+      if (row.supervisor != null) 'supervisor': row.supervisor,
+      'approved': row.approved,
+      if (row.notes != null) 'notes': row.notes,
+      if (sessionCode != null) 'academicSession': sessionCode,
+    };
+  }
+
+  Future<void> _insertChangeSet({
+    required String table,
+    required String recordId,
+    required String operation,
+    required Map<String, dynamic> payload,
+    required String userId,
+    required int version,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+  }) async {
+    final effectiveDeviceId = await _effectiveChangeSetDeviceId(deviceId);
+    final fullPayload = Map<String, dynamic>.from(payload);
+    if (userDisplayName != null) {
+      fullPayload['userDisplayName'] = userDisplayName;
+    }
+    if (screen != null) fullPayload['screen'] = screen;
+    await _db.into(_db.changeSets).insert(
+          ChangeSetsCompanion.insert(
+            id: _uuid.v4(),
+            table: table,
+            recordId: recordId,
+            operation: operation,
+            payload: jsonEncode(fullPayload),
+            userId: userId,
+            version: version,
+            deviceId: effectiveDeviceId,
+          ),
+        );
+    _onLocalChangeSetWritten?.call();
   }
 }

@@ -10,7 +10,9 @@ import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/subject_providers.dart';
+import 'package:charis_student_care/data/repositories/subject_repository.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
+import 'package:charis_student_care/presentation/theme/app_table_style.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:charis_student_care/presentation/widgets/subject_form_dialog.dart';
 
@@ -133,24 +135,30 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
                   _displayedCount = total;
                 }
                 final displayedSubjects = subjects.sublist(0, _displayedCount.clamp(0, total));
+                final canManage = RolePermissions.canManageSubjects(
+                  (ref.read(authStateProvider).valueOrNull as Authenticated?)?.role ??
+                      UserRole.facilitator,
+                );
                 _dataSource ??= SubjectDataSource(
                   subjects: displayedSubjects,
+                  totalCount: total,
                   colorScheme: colorScheme,
                   onEdit: (s) => _openEditSubject(context, s),
                   onDelete: (s) => _deleteSubject(context, s),
-                  canManage: RolePermissions.canManageSubjects(
-                    (ref.read(authStateProvider).valueOrNull as Authenticated?)?.role ?? UserRole.facilitator,
-                  ),
+                  onMoveUp: (s) => _moveSubject(context, s, SubjectMoveDirection.up),
+                  onMoveDown: (s) => _moveSubject(context, s, SubjectMoveDirection.down),
+                  canManage: canManage,
                 );
                 _dataSource!.updateData(
                   displayedSubjects,
+                  total,
                   colorScheme,
                   (
                     (s) => _openEditSubject(context, s),
                     (s) => _deleteSubject(context, s),
-                    RolePermissions.canManageSubjects(
-                      (ref.read(authStateProvider).valueOrNull as Authenticated?)?.role ?? UserRole.facilitator,
-                    ),
+                    (s) => _moveSubject(context, s, SubjectMoveDirection.up),
+                    (s) => _moveSubject(context, s, SubjectMoveDirection.down),
+                    canManage,
                   ),
                 );
                 return NotificationListener<ScrollNotification>(
@@ -166,68 +174,43 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
                     return false;
                   },
                   child: RepaintBoundary(
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: SfDataGrid(
-                        source: _dataSource!,
-                        columnWidthMode: ColumnWidthMode.fill,
-                        gridLinesVisibility: GridLinesVisibility.horizontal,
-                        headerGridLinesVisibility: GridLinesVisibility.both,
-                        columns: [
+                    child: SfDataGrid(
+                      source: _dataSource!,
+                      columnWidthMode: ColumnWidthMode.fill,
+                      rowHeight: AppTableStyle.dataGridRowHeight,
+                      headerRowHeight: AppTableStyle.dataGridHeaderRowHeight,
+                      gridLinesVisibility: GridLinesVisibility.both,
+                      headerGridLinesVisibility: GridLinesVisibility.both,
+                      columns: [
                         GridColumn(
                           columnName: 'sn',
                           width: 80,
-                          label: Container(
-                            padding: const EdgeInsets.all(8),
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              'S/N',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 14,
-                                fontFamily: 'Questrial',
-                                color: colorScheme.onSurface,
-                              ),
-                            ),
+                          label: AppTableStyle.sfHeaderCell(
+                            context,
+                            'S/N',
+                            compactLineHeight: true,
                           ),
                         ),
                         GridColumn(
                           columnName: 'name',
                           width: double.nan,
-                          label: Container(
-                            padding: const EdgeInsets.all(8),
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              'Subject Name',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 14,
-                                fontFamily: 'Questrial',
-                                color: colorScheme.onSurface,
-                              ),
-                            ),
+                          label: AppTableStyle.sfHeaderCell(
+                            context,
+                            'Subject Name',
+                            compactLineHeight: true,
                           ),
                         ),
                         GridColumn(
                           columnName: 'actions',
-                          width: 150,
-                          label: Container(
-                            padding: const EdgeInsets.all(8),
-                            alignment: Alignment.centerLeft,
-                            child: Text(
-                              'Actions',
-                              style: TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 14,
-                                fontFamily: 'Questrial',
-                                color: colorScheme.onSurface,
-                              ),
-                            ),
+                          width: 260,
+                          label: AppTableStyle.sfHeaderCell(
+                            context,
+                            'Actions',
+                            compactLineHeight: true,
                           ),
                         ),
                       ],
                     ),
-                  ),
                   ),
                 );
               },
@@ -257,9 +240,9 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
       width: 200,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
+        color: Colors.transparent,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.charisMidGray),
+        border: Border.all(color: colorScheme.outlineVariant),
       ),
       child: DropdownButton<int>(
         value: value,
@@ -305,6 +288,37 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
       subject: subject,
       onSaved: () {},
     );
+  }
+
+  Future<void> _moveSubject(
+    BuildContext context,
+    Subject subject,
+    SubjectMoveDirection direction,
+  ) async {
+    final auth = ref.read(authStateProvider).valueOrNull;
+    if (auth is! Authenticated) return;
+    if (!RolePermissions.canManageSubjects(auth.role)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You do not have permission to reorder subjects')),
+      );
+      return;
+    }
+    try {
+      await ref.read(subjectRepositoryProvider).moveSubject(
+            subject.id,
+            direction,
+            userRole: auth.role,
+            userId: auth.user.id,
+            userDisplayName: auth.user.displayName,
+            screen: 'Subjects',
+          );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error reordering subject: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _deleteSubject(BuildContext context, Subject subject) async {
@@ -369,36 +383,55 @@ class _SubjectsScreenState extends ConsumerState<SubjectsScreen> {
 class SubjectDataSource extends DataGridSource {
   SubjectDataSource({
     required List<Subject> subjects,
+    required int totalCount,
     required ColorScheme colorScheme,
     required void Function(Subject) onEdit,
     required void Function(Subject) onDelete,
+    required void Function(Subject) onMoveUp,
+    required void Function(Subject) onMoveDown,
     required bool canManage,
   })  : _subjects = subjects,
+        _totalCount = totalCount,
         _colorScheme = colorScheme,
         _onEdit = onEdit,
         _onDelete = onDelete,
+        _onMoveUp = onMoveUp,
+        _onMoveDown = onMoveDown,
         _canManage = canManage {
     _buildRows();
   }
 
   List<Subject> _subjects;
+  int _totalCount;
   ColorScheme _colorScheme;
   void Function(Subject) _onEdit;
   void Function(Subject) _onDelete;
+  void Function(Subject) _onMoveUp;
+  void Function(Subject) _onMoveDown;
   bool _canManage;
 
   List<DataGridRow> _dataGridRows = [];
 
   void updateData(
     List<Subject> subjects,
+    int totalCount,
     ColorScheme colorScheme,
-    (void Function(Subject), void Function(Subject), bool) callbacks,
+    (
+      void Function(Subject),
+      void Function(Subject),
+      void Function(Subject),
+      void Function(Subject),
+      bool
+    ) callbacks,
   ) {
     _subjects = subjects;
+    _totalCount = totalCount;
     _colorScheme = colorScheme;
     _onEdit = callbacks.$1;
     _onDelete = callbacks.$2;
-    _canManage = callbacks.$3;
+    _onMoveUp = callbacks.$3;
+    _onMoveDown = callbacks.$4;
+    _canManage = callbacks.$5;
     _buildRows();
     notifyListeners();
   }
@@ -410,7 +443,10 @@ class SubjectDataSource extends DataGridSource {
         .map((e) => DataGridRow(cells: [
               DataGridCell<int>(columnName: 'sn', value: e.key + 1),
               DataGridCell<String>(columnName: 'name', value: e.value.name),
-              DataGridCell<Subject>(columnName: 'actions', value: e.value),
+              DataGridCell<(Subject, int)>(
+                columnName: 'actions',
+                value: (e.value, e.key),
+              ),
             ],),)
         .toList();
   }
@@ -421,7 +457,12 @@ class SubjectDataSource extends DataGridSource {
   @override
   DataGridRowAdapter? buildRow(DataGridRow row) {
     final cells = row.getCells();
-    final subject = cells.firstWhere((c) => c.columnName == 'actions').value as Subject;
+    final actionCell =
+        cells.firstWhere((c) => c.columnName == 'actions').value as (Subject, int);
+    final subject = actionCell.$1;
+    final index = actionCell.$2;
+    final canMoveUp = index > 0;
+    final canMoveDown = index < _totalCount - 1;
     return DataGridRowAdapter(
       color: _colorScheme.surface,
       cells: cells.map<Widget>((cell) {
@@ -435,24 +476,62 @@ class SubjectDataSource extends DataGridSource {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   if (_canManage) ...[
+                    IconButton(
+                      tooltip: 'Move up',
+                      onPressed: canMoveUp ? () => _onMoveUp(subject) : null,
+                      icon: Icon(
+                        Icons.arrow_upward,
+                        size: 16,
+                        color: canMoveUp
+                            ? _colorScheme.onSurfaceVariant
+                            : _colorScheme.outlineVariant,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      padding: EdgeInsets.zero,
+                    ),
+                    IconButton(
+                      tooltip: 'Move down',
+                      onPressed: canMoveDown ? () => _onMoveDown(subject) : null,
+                      icon: Icon(
+                        Icons.arrow_downward,
+                        size: 16,
+                        color: canMoveDown
+                            ? _colorScheme.onSurfaceVariant
+                            : _colorScheme.outlineVariant,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                      padding: EdgeInsets.zero,
+                    ),
                     TextButton.icon(
                       onPressed: () => _onEdit(subject),
-                      icon: Icon(Icons.edit_outlined, size: 18, color: _colorScheme.onSurfaceVariant),
-                      label: Text('Edit', style: TextStyle(color: _colorScheme.onSurfaceVariant, fontSize: 13)),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                      icon: Icon(Icons.edit_outlined, size: 14, color: _colorScheme.onSurfaceVariant),
+                      label: Text(
+                        'Edit',
+                        style: TextStyle(
+                          color: _colorScheme.onSurfaceVariant,
+                          fontSize: 13,
+                          height: 1.1,
+                          fontFamily: 'Questrial',
+                        ),
                       ),
+                      style: AppTableStyle.dataGridTextButtonStyle(),
                     ),
                     const SizedBox(width: 4),
                     TextButton.icon(
                       onPressed: () => _onDelete(subject),
-                      icon: Icon(Icons.delete_outline, size: 18, color: _colorScheme.error),
-                      label: Text('Delete', style: TextStyle(color: _colorScheme.error, fontSize: 13)),
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                      icon: Icon(Icons.delete_outline, size: 14, color: _colorScheme.error),
+                      label: Text(
+                        'Delete',
+                        style: TextStyle(
+                          color: _colorScheme.error,
+                          fontSize: 13,
+                          height: 1.1,
+                          fontFamily: 'Questrial',
+                        ),
                       ),
+                      style: AppTableStyle.dataGridTextButtonStyle(),
                     ),
                   ],
                 ],
@@ -461,15 +540,11 @@ class SubjectDataSource extends DataGridSource {
           );
         }
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          padding: AppTableStyle.cellPadding,
           alignment: Alignment.centerLeft,
           child: Text(
             cell.value.toString(),
-            style: TextStyle(
-              color: _colorScheme.onSurface,
-              fontSize: 14,
-              fontFamily: 'Questrial',
-            ),
+            style: AppTableStyle.dataGridBodyTextStyle(_colorScheme),
           ),
         );
       }).toList(),

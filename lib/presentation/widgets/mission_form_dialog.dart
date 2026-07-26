@@ -7,6 +7,7 @@ import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/mission_providers.dart';
+import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 
 /// Modal for Create / Edit mission (title, location, dates, slots, description, active, year).
@@ -90,7 +91,7 @@ class _MissionFormDialogState extends ConsumerState<MissionFormDialog> {
     );
     _startDate = m?.startDate ?? DateTime.now();
     _endDate = m?.endDate ?? DateTime.now().add(const Duration(days: 7));
-    _year = m?.year ?? AppConstants.missionYearFilterOptions.first;
+    _year = m?.year;
     _mode = m?.mode ?? AppConstants.missionModeOptions.first;
     _isActive = m?.isActive ?? true;
   }
@@ -318,7 +319,7 @@ class _MissionFormDialogState extends ConsumerState<MissionFormDialog> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.charisMidGray),
+              borderSide: BorderSide(color: colorScheme.outlineVariant),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
@@ -376,7 +377,7 @@ class _MissionFormDialogState extends ConsumerState<MissionFormDialog> {
                   OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: AppColors.charisMidGray),
+                borderSide: BorderSide(color: colorScheme.outlineVariant),
               ),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -420,7 +421,7 @@ class _MissionFormDialogState extends ConsumerState<MissionFormDialog> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.charisMidGray),
+              borderSide: BorderSide(color: colorScheme.outlineVariant),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
@@ -449,11 +450,14 @@ class _MissionFormDialogState extends ConsumerState<MissionFormDialog> {
     ColorScheme colorScheme,
     bool isDark,
   ) {
+    final sessionOptionsAsync = ref.watch(academicSessionOptionsProvider);
+    final currentSessionAsync = ref.watch(currentAcademicSessionProvider);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Year',
+          'Academic session',
           style: TextStyle(
             color: isDark ? AppColors.textOnDark : AppColors.charisBlack,
             fontWeight: FontWeight.w600,
@@ -462,30 +466,104 @@ class _MissionFormDialogState extends ConsumerState<MissionFormDialog> {
           ),
         ),
         const SizedBox(height: 6),
-        DropdownButtonFormField<String>(
-          initialValue: _year,
-          decoration: InputDecoration(
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.charisMidGray),
+        sessionOptionsAsync.when(
+          data: (options) {
+            final currentSession = currentSessionAsync.valueOrNull;
+            var list = options;
+            if (list.isEmpty) {
+              // Fallback to current calendar year string if no sessions exist yet.
+              final fallback = DateTime.now().year.toString();
+              list = [fallback];
+            }
+
+            String? selected = _year;
+            if (selected != null && !list.contains(selected)) {
+              selected = null;
+            }
+            if (selected == null) {
+              if (currentSession != null && list.contains(currentSession)) {
+                selected = currentSession;
+              } else {
+                selected = list.first;
+              }
+            }
+
+            if (selected != _year) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) {
+                  setState(() => _year = selected);
+                }
+              });
+            }
+
+            return DropdownButtonFormField<String>(
+              initialValue: selected,
+              decoration: InputDecoration(
+                border:
+                    OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: colorScheme.outlineVariant),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide(color: redColor, width: 2),
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+                filled: true,
+                fillColor:
+                    isDark ? AppColors.surfaceDark : AppColors.charisWhite,
+              ),
+              items: list
+                  .map(
+                    (s) => DropdownMenuItem<String>(
+                      value: s,
+                      child: Text(s),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (v) => setState(() => _year = v),
+              style: TextStyle(
+                color:
+                    isDark ? AppColors.textOnDark : AppColors.charisBlack,
+                fontSize: 14,
+              ),
+            );
+          },
+          loading: () => DropdownButtonFormField<String>(
+            initialValue: _year,
+            decoration: InputDecoration(
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              isDense: true,
             ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: redColor, width: 2),
-            ),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            filled: true,
-            fillColor: isDark ? AppColors.surfaceDark : AppColors.charisWhite,
+            items: [
+              DropdownMenuItem(
+                value: _year,
+                child: Text(_year ?? 'Loading...'),
+              ),
+            ],
+            onChanged: null,
           ),
-          items: AppConstants.missionYearFilterOptions
-              .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-              .toList(),
-          onChanged: (v) => setState(() => _year = v),
-          style: TextStyle(
-            color: isDark ? AppColors.textOnDark : AppColors.charisBlack,
-            fontSize: 14,
+          error: (_, __) => DropdownButtonFormField<String>(
+            initialValue: _year,
+            decoration: InputDecoration(
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+              contentPadding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              isDense: true,
+            ),
+            items: [
+              DropdownMenuItem(
+                value: _year,
+                child: Text(_year ?? 'Session unavailable'),
+              ),
+            ],
+            onChanged: null,
           ),
         ),
       ],

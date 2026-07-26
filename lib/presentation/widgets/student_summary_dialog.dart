@@ -16,12 +16,15 @@ import 'package:charis_student_care/presentation/widgets/common/role_guard.dart'
 import 'package:charis_student_care/core/utils/currency_utils.dart';
 import 'package:charis_student_care/core/utils/date_utils.dart'
     as app_date_utils;
+import 'package:charis_student_care/core/utils/file_export_utils.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/domain/finance/session_payment_math.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/ministry_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_summary_providers.dart';
+import 'package:charis_student_care/presentation/providers/settings_providers.dart';
 import 'package:charis_student_care/presentation/providers/subject_providers.dart';
 import 'package:charis_student_care/presentation/providers/test_providers.dart';
 import 'package:charis_student_care/presentation/widgets/searchable_dropdown.dart';
@@ -116,9 +119,12 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text('Export failed: $e'),
+                content: Text(
+                  FileExportUtils.userFacingSaveError(e, itemLabel: 'report'),
+                ),
                 backgroundColor: Theme.of(context).colorScheme.error,
                 behavior: SnackBarBehavior.floating,
+                duration: const Duration(seconds: 8),
               ),
             );
           }
@@ -126,11 +132,17 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
       }
     } catch (e) {
       if (mounted) {
+        final message = e is FileSystemException ||
+                e.toString().toLowerCase().contains('pathaccess') ||
+                e.toString().toLowerCase().contains('errno =')
+            ? FileExportUtils.userFacingSaveError(e, itemLabel: 'report')
+            : 'Export failed. Please try again.';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Export failed: $e'),
+            content: Text(message),
             backgroundColor: Theme.of(context).colorScheme.error,
             behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 8),
           ),
         );
       }
@@ -218,7 +230,7 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                 Tab(text: 'Student'),
                 Tab(text: 'Attendance'),
                 Tab(text: 'Tests'),
-                Tab(text: 'Payments'),
+                Tab(text: 'Finances'),
                 Tab(text: 'Ministry'),
               ],
             ),
@@ -262,7 +274,7 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                           label: const Text('Download PDF'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: colorScheme.onSurfaceVariant,
-                            side: BorderSide(color: colorScheme.outline),
+                            side: BorderSide(color: colorScheme.outlineVariant),
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 16, vertical: 12,),
                             shape: RoundedRectangleBorder(
@@ -279,7 +291,7 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                           label: const Text('Download Excel'),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: colorScheme.onSurfaceVariant,
-                            side: BorderSide(color: colorScheme.outline),
+                            side: BorderSide(color: colorScheme.outlineVariant),
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 16, vertical: 12,),
                             shape: RoundedRectangleBorder(
@@ -296,7 +308,7 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                     onPressed: () => Navigator.of(context).pop(),
                     style: OutlinedButton.styleFrom(
                       foregroundColor: colorScheme.onSurfaceVariant,
-                      side: BorderSide(color: colorScheme.outline),
+                      side: BorderSide(color: colorScheme.outlineVariant),
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8),
@@ -368,6 +380,37 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                 '${summary.percentage.toStringAsFixed(1)}%',
                 colorScheme,
                 highlight: true,
+              ),
+              const SizedBox(height: 24),
+              Text(
+                'Expected days (thresholds)',
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 16,
+                  fontFamily: 'Questrial',
+                ),
+              ),
+              const SizedBox(height: 12),
+              _statCard(
+                'This month',
+                '${summary.monthThreshold.presentDays} / ${summary.monthThreshold.expectedDays}'
+                '${summary.monthThreshold.met ? ' (met)' : ' (short ${summary.monthThreshold.shortfall})'}',
+                colorScheme,
+              ),
+              const SizedBox(height: 16),
+              _statCard(
+                'This term',
+                '${summary.termThreshold.presentDays} / ${summary.termThreshold.expectedDays}'
+                '${summary.termThreshold.met ? ' (met)' : ' (short ${summary.termThreshold.shortfall})'}',
+                colorScheme,
+              ),
+              const SizedBox(height: 16),
+              _statCard(
+                'This session',
+                '${summary.yearThreshold.presentDays} / ${summary.yearThreshold.expectedDays}'
+                '${summary.yearThreshold.met ? ' (met)' : ' (short ${summary.yearThreshold.shortfall})'}',
+                colorScheme,
               ),
               if (summary.recentDates.isNotEmpty) ...[
                 const SizedBox(height: 24),
@@ -920,6 +963,7 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
     }
     final paymentsAsync =
         ref.watch(paymentSummaryForStudentProvider(widget.student.id));
+    final sessionTuition = ref.watch(sessionTuitionAmountProvider);
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -943,7 +987,7 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
               const SizedBox(height: 16),
               _statCard(
                 'Tuition Amount',
-                CurrencyUtils.formatRand(AppConstants.fullTuitionAmount),
+                CurrencyUtils.formatRand(sessionTuition),
                 colorScheme,
               ),
               if (summary.paymentsByYear.isNotEmpty) ...[
@@ -960,19 +1004,7 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                 const SizedBox(height: 12),
                 ...summary.paymentsByYear.entries.map((entry) {
                   final payment = entry.value;
-                  final yearTotal = payment.jan +
-                      payment.feb +
-                      payment.mar +
-                      payment.apr +
-                      payment.may +
-                      payment.jun +
-                      payment.jul +
-                      payment.aug +
-                      payment.sep +
-                      payment.oct +
-                      payment.nov +
-                      payment.dec +
-                      payment.lumpSum;
+                  final yearTotal = sessionPaymentTotal(payment);
 
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 12),
@@ -1475,8 +1507,8 @@ class _StudentSummaryDialogState extends ConsumerState<StudentSummaryDialog>
                     final subject = subjectMap[subjectId];
                     return Text(
                       subject?.name ?? 'Unknown',
-                      style: const TextStyle(
-                        color: AppColors.charisBlack,
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
                         fontSize: 14,
                         fontFamily: 'Questrial',
                       ),

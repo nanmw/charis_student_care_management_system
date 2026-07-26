@@ -50,6 +50,7 @@ dependencies:
 
   # Utilities
   uuid: ^4.3.3 # For change-set IDs
+  crypto: ^3.0.3
   json_patch: ^3.0.0 # JSON patch operations
   equatable: ^2.0.5 # Value equality
   freezed_annotation: ^2.4.1 # Immutable models (optional)

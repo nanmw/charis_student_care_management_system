@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 
 import 'package:charis_student_care/core/constants/app_constants.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
@@ -20,9 +21,12 @@ import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/facilitator_scope_provider.dart';
+import 'package:charis_student_care/presentation/providers/dashboard_providers.dart';
 import 'package:charis_student_care/presentation/providers/payment_providers.dart';
+import 'package:charis_student_care/presentation/providers/settings_providers.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
+import 'package:charis_student_care/presentation/theme/app_table_style.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 
 /// Month column labels (Jan–Oct for display).
@@ -79,24 +83,36 @@ class _PaymentCellState extends State<_PaymentCell> {
           decoration: InputDecoration(
             hintText: '0',
             hintStyle: TextStyle(
-                color: widget.colorScheme.onSurfaceVariant, fontSize: 13,),
+              color: widget.colorScheme.onSurfaceVariant,
+              fontSize: 13,
+            ),
             border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            disabledBorder: InputBorder.none,
+            errorBorder: InputBorder.none,
+            focusedErrorBorder: InputBorder.none,
             filled: true,
-            fillColor: widget.isDark ? AppColors.surfaceDark : AppColors.charisWhite,
+            fillColor:
+                widget.isDark ? AppColors.surfaceDark : AppColors.charisWhite,
             contentPadding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             isDense: true,
           ),
           style: TextStyle(color: widget.colorScheme.onSurface, fontSize: 13),
           onChanged: (v) {
-            final n = double.tryParse(v);
-            if (n != null && n >= 0) {
-              // Debounce updates to reduce rebuild frequency
-              _debounceTimer?.cancel();
-              _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+            _debounceTimer?.cancel();
+            _debounceTimer = Timer(const Duration(milliseconds: 300), () {
+              final trimmed = v.trim();
+              if (trimmed.isEmpty) {
+                widget.onChanged(0);
+                return;
+              }
+              final n = double.tryParse(trimmed);
+              if (n != null && n >= 0) {
                 widget.onChanged(n);
-              });
-            }
+              }
+            });
           },
         ),
       ),
@@ -149,15 +165,31 @@ class _LumpSumToggleSwitch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // M3 Switch nominal layout ~68×48 (incl. default horizontal padding).
+    // Tight width + height so [FittedBox] lays out to this box; [BoxFit.contain]
+    // scales the switch inside it. [Clip.hardEdge] clips ink/splash overflow.
+    const double targetHeight = 24;
+    const double nominalWidth = 68;
+    const double nominalHeight = 48;
+    const double width = nominalWidth * targetHeight / nominalHeight;
+
     return RepaintBoundary(
       child: SizedBox(
-        width: 76,
-        child: Switch(
-          value: value,
-          onChanged: isEnabled ? onChanged : null,
-          activeThumbColor: redColor,
-          inactiveThumbColor: colorScheme.outlineVariant,
-          inactiveTrackColor: colorScheme.outlineVariant.withValues(alpha: 0.3),
+        width: width,
+        height: targetHeight,
+        child: FittedBox(
+          fit: BoxFit.contain,
+          alignment: Alignment.center,
+          clipBehavior: Clip.hardEdge,
+          child: Switch(
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            value: value,
+            onChanged: isEnabled ? onChanged : null,
+            activeThumbColor: redColor,
+            inactiveThumbColor: colorScheme.outlineVariant,
+            inactiveTrackColor:
+                colorScheme.outlineVariant.withValues(alpha: 0.3),
+          ),
         ),
       ),
     );
@@ -178,6 +210,10 @@ class _PaymentRowEdit {
     this.sep = 0,
     this.oct = 0,
     this.lumpSum = 0,
+    this.sessionTuitionAmount = defaultMonthlyTuitionFee * sessionFinanceMonthCount,
+    this.lumpSumTuitionAmount =
+        (defaultMonthlyTuitionFee * sessionFinanceMonthCount) *
+            ((100.0 - defaultLumpSumDiscountPercent) / 100.0),
   });
 
   double jan;
@@ -191,6 +227,8 @@ class _PaymentRowEdit {
   double sep;
   double oct;
   double lumpSum;
+  double sessionTuitionAmount;
+  double lumpSumTuitionAmount;
 
   // Cached formatted currency strings
   String? _cachedTotalPaidFormatted;
@@ -205,10 +243,10 @@ class _PaymentRowEdit {
   bool get isLumpSumEnabled => lumpSum > 0;
 
   /// Returns the tuition amount to use for balance calculation
-  /// Uses discount amount (18,000) if lump sum is enabled, otherwise full amount (19,800)
+  /// Uses discount amount when lump sum is enabled, otherwise full session amount.
   double get _tuitionAmount => isLumpSumEnabled
-      ? AppConstants.lumpSumDiscountAmount
-      : AppConstants.fullTuitionAmount;
+      ? lumpSumTuitionAmount
+      : sessionTuitionAmount;
 
   double get balance => _tuitionAmount - totalPaid;
 
@@ -237,6 +275,15 @@ class _PaymentRowEdit {
     _lastTotalPaid = null;
     _lastBalance = null;
   }
+
+  void applyTuitionSettings({
+    required double sessionTuition,
+    required double lumpSumTuition,
+  }) {
+    sessionTuitionAmount = sessionTuition;
+    lumpSumTuitionAmount = lumpSumTuition;
+    invalidateCache();
+  }
 }
 
 class PaymentsScreen extends ConsumerStatefulWidget {
@@ -246,11 +293,9 @@ class PaymentsScreen extends ConsumerStatefulWidget {
   ConsumerState<PaymentsScreen> createState() => _PaymentsScreenState();
 }
 
-/// Default academic session code (e.g. 2024-2025) when none is set.
+/// Fallback session when none is set (single year, e.g. 2026).
 String _defaultPaymentSession() {
-  final now = DateTime.now();
-  final y = now.year;
-  return now.month >= 7 ? '$y-${y + 1}' : '${y - 1}-$y';
+  return DateTime.now().year.toString();
 }
 
 class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
@@ -280,6 +325,11 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   int _displayedCount = 25; // Initial batch size
   bool _isLoadingMore = false;
   final ScrollController _scrollController = ScrollController();
+  bool _refillSetStateScheduled = false;
+  double _sessionTuitionAmount = defaultMonthlyTuitionFee * sessionFinanceMonthCount;
+  double _lumpSumTuitionAmount =
+      (defaultMonthlyTuitionFee * sessionFinanceMonthCount) *
+          ((100.0 - defaultLumpSumDiscountPercent) / 100.0);
 
   // Helper to get current session's edits map (ensures it exists)
   Map<int, _PaymentRowEdit> get _currentSessionEdits {
@@ -325,9 +375,23 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     });
   }
 
+  void _scheduleSetStateAfterBuild() {
+    if (_refillSetStateScheduled) return;
+    _refillSetStateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _refillSetStateScheduled = false;
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
   // Debounced update method
-  void _debouncedUpdate(String key, void Function() update,
-      {Duration delay = const Duration(milliseconds: 300),}) {
+  void _debouncedUpdate(
+    String key,
+    void Function() update, {
+    Duration delay = const Duration(milliseconds: 300),
+  }) {
     _debounceTimers[key]?.cancel();
     _debounceTimers[key] = Timer(delay, () {
       update();
@@ -335,22 +399,748 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     });
   }
 
+  Widget _buildFinancialDashboardSection(
+    BuildContext context,
+    ColorScheme colorScheme,
+    Color redColor,
+    bool isDark,
+  ) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        initiallyExpanded: false,
+        tilePadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        childrenPadding: const EdgeInsets.only(bottom: 8),
+        expandedAlignment: Alignment.topLeft,
+        expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+        title: Text(
+          'Financial Dashboard',
+          style: TextStyle(
+            color: colorScheme.onSurface,
+            fontWeight: FontWeight.w700,
+            fontSize: 18,
+            fontFamily: 'Questrial',
+          ),
+        ),
+        controlAffinity: ListTileControlAffinity.trailing,
+        children: [
+          _buildTimeScopeAndMonthSelector(colorScheme),
+          const SizedBox(height: 16),
+          _buildBalanceDueThisMonthRow(
+            context,
+            colorScheme,
+            redColor,
+            isDark,
+          ),
+          const SizedBox(height: 16),
+          _buildFinanceBlock(context, colorScheme, redColor),
+          const SizedBox(height: 16),
+          _buildAgedArrearsSection(context, colorScheme, redColor, isDark),
+          const SizedBox(height: 16),
+          _buildTrendSection(colorScheme, redColor),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTimeScopeAndMonthSelector(ColorScheme colorScheme) {
+    final focus = ref.watch(dashboardFocusPeriodProvider);
+    final selectedMonth = ref.watch(dashboardSelectedMonthProvider);
+    final selectableMonths = ref.watch(dashboardSelectableMonthsProvider);
+
+    String monthLabel((int, int) ym) {
+      final (y, m) = ym;
+      final d = DateTime(y, m);
+      return DateFormat.yMMM().format(d);
+    }
+
+    return Wrap(
+      spacing: 16,
+      runSpacing: 12,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        SegmentedButton<DashboardFocusPeriod>(
+          segments: const [
+            ButtonSegment(
+              value: DashboardFocusPeriod.thisMonth,
+              label: Text('This Month'),
+            ),
+            ButtonSegment(
+              value: DashboardFocusPeriod.thisTerm,
+              label: Text('This Term'),
+            ),
+            ButtonSegment(
+              value: DashboardFocusPeriod.thisYear,
+              label: Text('This Year'),
+            ),
+          ],
+          selected: {focus},
+          onSelectionChanged: (Set<DashboardFocusPeriod> selected) {
+            ref.read(dashboardFocusPeriodProvider.notifier).state =
+                selected.first;
+          },
+          style: ButtonStyle(
+            visualDensity: VisualDensity.compact,
+            padding: WidgetStateProperty.all(
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+          ),
+        ),
+        if (focus == DashboardFocusPeriod.thisMonth) ...[
+          DropdownButton<(int, int)?>(
+            value: selectedMonth,
+            hint: Text(
+              'Month',
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontFamily: 'Questrial',
+              ),
+            ),
+            items: [
+              const DropdownMenuItem<(int, int)?>(
+                value: null,
+                child: Text(
+                  'Current month',
+                  style: TextStyle(fontFamily: 'Questrial'),
+                ),
+              ),
+              ...selectableMonths.map(
+                (ym) => DropdownMenuItem<(int, int)?>(
+                  value: ym,
+                  child: Text(
+                    monthLabel(ym),
+                    style: const TextStyle(fontFamily: 'Questrial'),
+                  ),
+                ),
+              ),
+            ],
+            onChanged: (v) {
+              ref.read(dashboardSelectedMonthProvider.notifier).state = v;
+            },
+            underline: const SizedBox.shrink(),
+          ),
+        ],
+      ],
+    );
+  }
+
+  void _showCohortBreakdownDialog(BuildContext context, String title) {
+    final list = ref.read(dashboardCohortSummaryProvider).valueOrNull ?? [];
+    final sorted = List<DashboardCohortSummary>.from(list)
+      ..sort(
+        (a, b) =>
+            b.balanceDueExpectedMonthly.compareTo(a.balanceDueExpectedMonthly),
+      );
+    final colorScheme = Theme.of(context).colorScheme;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title, style: const TextStyle(fontFamily: 'Questrial')),
+        content: SizedBox(
+          width: 320,
+          child: sorted.isEmpty
+              ? Text(
+                  'No cohort data.',
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontFamily: 'Questrial',
+                  ),
+                )
+              : SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: sorted
+                        .map(
+                          (c) => Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 6),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    c.cohortLabel,
+                                    style: const TextStyle(
+                                      fontFamily: 'Questrial',
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  CurrencyUtils.formatRand(
+                                    c.balanceDueExpectedMonthly,
+                                  ),
+                                  style: TextStyle(
+                                    fontFamily: 'Questrial',
+                                    fontWeight: FontWeight.w600,
+                                    color: colorScheme.onSurface,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child:
+                const Text('Close', style: TextStyle(fontFamily: 'Questrial')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBalanceDueThisMonthRow(
+    BuildContext context,
+    ColorScheme colorScheme,
+    Color redColor,
+    bool isDark,
+  ) {
+    final financeAsync = ref.watch(dashboardMonthlyFinanceProvider);
+    return financeAsync.when(
+      data: (finance) {
+        String deltaText = '';
+        if (finance.deltaPercentVsPreviousMonth != null) {
+          final d = finance.deltaPercentVsPreviousMonth!;
+          deltaText = d >= 0
+              ? ' +${d.toStringAsFixed(1)}% vs last month'
+              : ' ${d.toStringAsFixed(1)}% vs last month';
+        }
+        return Wrap(
+          spacing: 16,
+          runSpacing: 16,
+          crossAxisAlignment: WrapCrossAlignment.start,
+          children: [
+            Tooltip(
+              message:
+                  'Amount still owed for the selected month (expected fees minus payments received that month). Click for breakdown by class.',
+              child: InkWell(
+                onTap: () => _showCohortBreakdownDialog(
+                  context,
+                  'Balance due by class',
+                ),
+                borderRadius: BorderRadius.circular(12),
+                child: _statCard(
+                  colorScheme: colorScheme,
+                  title: 'Balance Due – This Month',
+                  value: CurrencyUtils.formatRand(finance.balanceDueThisMonth),
+                  subtitle: deltaText.isEmpty
+                      ? 'Remaining due for this month'
+                      : 'Remaining due for this month$deltaText',
+                  valueColor: redColor,
+                  width: 280,
+                ),
+              ),
+            ),
+            Tooltip(
+              message:
+                  'Percentage of expected fees for the selected month that have been paid.',
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? AppColors.surfaceDarkElevated
+                      : AppColors.charisLightGray,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: colorScheme.outlineVariant),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '% of Fees Collected This Month',
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12,
+                        fontFamily: 'Questrial',
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${finance.collectionRatePercent.toStringAsFixed(1)}%',
+                      style: TextStyle(
+                        color: colorScheme.onSurface,
+                        fontWeight: FontWeight.w700,
+                        fontSize: 20,
+                        fontFamily: 'Questrial',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+      loading: () => _statCard(
+        colorScheme: colorScheme,
+        title: 'Balance Due – This Month',
+        value: '—',
+        subtitle: 'Loading…',
+        valueColor: redColor,
+        width: 280,
+      ),
+      error: (_, __) => _statCard(
+        colorScheme: colorScheme,
+        title: 'Balance Due – This Month',
+        value: '—',
+        subtitle: 'Unable to load',
+        valueColor: redColor,
+        width: 280,
+      ),
+    );
+  }
+
+  Widget _buildFinanceBlock(
+    BuildContext context,
+    ColorScheme colorScheme,
+    Color redColor,
+  ) {
+    final financeAsync = ref.watch(dashboardMonthlyFinanceProvider);
+    return financeAsync.when(
+      data: (finance) => Wrap(
+        spacing: 16,
+        runSpacing: 16,
+        children: [
+          Tooltip(
+            message:
+                'Expected fees for the selected month plus any balance brought forward from earlier in the session.',
+            child: InkWell(
+              onTap: () =>
+                  _showCohortBreakdownDialog(context, 'Balance due by class'),
+              borderRadius: BorderRadius.circular(12),
+              child: _statCard(
+                colorScheme: colorScheme,
+                title:
+                    'Total Expected for ${finance.monthName} + balance brought forward',
+                value: CurrencyUtils.formatRand(finance.expectedPlusBf),
+                subtitle: 'Expected fees and B/F for selected period',
+                valueColor: colorScheme.onSurface,
+                width: 320,
+              ),
+            ),
+          ),
+          Tooltip(
+            message: 'Total payments received in the selected month.',
+            child: InkWell(
+              onTap: () =>
+                  _showCohortBreakdownDialog(context, 'Balance due by class'),
+              borderRadius: BorderRadius.circular(12),
+              child: _statCard(
+                colorScheme: colorScheme,
+                title: 'Total Paid',
+                value: CurrencyUtils.formatRand(finance.paidThisMonth),
+                subtitle: 'Finances received for selected period',
+                valueColor: colorScheme.onSurface,
+                width: 280,
+              ),
+            ),
+          ),
+          Tooltip(
+            message:
+                'Total outstanding balance across all students for the session.',
+            child: InkWell(
+              onTap: () =>
+                  _showCohortBreakdownDialog(context, 'Balance due by class'),
+              borderRadius: BorderRadius.circular(12),
+              child: _statCard(
+                colorScheme: colorScheme,
+                title: 'Total Balance Due',
+                value: CurrencyUtils.formatRand(finance.balanceDue),
+                subtitle: 'Remaining balance across all students',
+                valueColor: redColor,
+                width: 280,
+              ),
+            ),
+          ),
+        ],
+      ),
+      loading: () => Wrap(
+        spacing: 16,
+        runSpacing: 16,
+        children: [
+          _statCard(
+            colorScheme: colorScheme,
+            title: 'Total Expected for — + balance brought forward',
+            value: '—',
+            subtitle: 'Loading…',
+            valueColor: colorScheme.onSurface,
+            width: 320,
+          ),
+          _statCard(
+            colorScheme: colorScheme,
+            title: 'Total Paid',
+            value: '—',
+            subtitle: 'Loading…',
+            valueColor: colorScheme.onSurface,
+            width: 280,
+          ),
+          _statCard(
+            colorScheme: colorScheme,
+            title: 'Total Balance Due',
+            value: '—',
+            subtitle: 'Loading…',
+            valueColor: redColor,
+            width: 280,
+          ),
+        ],
+      ),
+      error: (_, __) => Wrap(
+        spacing: 16,
+        runSpacing: 16,
+        children: [
+          _statCard(
+            colorScheme: colorScheme,
+            title: 'Total Expected for — + balance brought forward',
+            value: '—',
+            subtitle: 'Unable to load',
+            valueColor: colorScheme.onSurface,
+            width: 320,
+          ),
+          _statCard(
+            colorScheme: colorScheme,
+            title: 'Total Paid',
+            value: '—',
+            subtitle: 'Unable to load',
+            valueColor: colorScheme.onSurface,
+            width: 280,
+          ),
+          _statCard(
+            colorScheme: colorScheme,
+            title: 'Total Balance Due',
+            value: '—',
+            subtitle: 'Unable to load',
+            valueColor: redColor,
+            width: 280,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAgedArrearsSection(
+    BuildContext context,
+    ColorScheme colorScheme,
+    Color redColor,
+    bool isDark,
+  ) {
+    final arrearsAsync = ref.watch(dashboardAgedArrearsProvider);
+    final financeAsync = ref.watch(dashboardMonthlyFinanceProvider);
+    return arrearsAsync.when(
+      data: (arrears) {
+        final total = arrears.total;
+        final totalBalanceDue = financeAsync.valueOrNull?.balanceDue ?? 0.0;
+        final pct90Plus = totalBalanceDue > 0 && arrears.bucket90Plus > 0
+            ? arrears.bucket90Plus / totalBalanceDue
+            : 0.0;
+        final showRisk =
+            pct90Plus >= AppConstants.dashboardArrears90PercentAlertThreshold;
+        final maxVal = total > 0 ? total : 1.0;
+        final buckets = [
+          (arrears.bucket0to30, AppConstants.dashboardArrearsBucketLabels[0]),
+          (arrears.bucket31to60, AppConstants.dashboardArrearsBucketLabels[1]),
+          (arrears.bucket61to90, AppConstants.dashboardArrearsBucketLabels[2]),
+          (arrears.bucket90Plus, AppConstants.dashboardArrearsBucketLabels[3]),
+        ];
+        return Tooltip(
+          message:
+              'Balance due by age: current month (0–30 days), previous month (31–60), and older (61–90, 90+). Click for breakdown by class.',
+          child: InkWell(
+            onTap: () =>
+                _showCohortBreakdownDialog(context, 'Balance due by class'),
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: colorScheme.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: showRisk
+                      ? redColor.withValues(alpha: 0.5)
+                      : AppColors.charisMidGray,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Overdue Breakdown – This Month',
+                    style: TextStyle(
+                      color: colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      fontFamily: 'Questrial',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ...buckets.map((e) {
+                    final (val, label) = e;
+                    final width =
+                        maxVal > 0 ? (val / maxVal).clamp(0.0, 1.0) : 0.0;
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 80,
+                            child: Text(
+                              label,
+                              style: TextStyle(
+                                color: colorScheme.onSurfaceVariant,
+                                fontSize: 12,
+                                fontFamily: 'Questrial',
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  flex: 100,
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: LinearProgressIndicator(
+                                      value: width,
+                                      minHeight: 20,
+                                      backgroundColor: isDark
+                                          ? AppColors.surfaceDarkElevated
+                                          : AppColors.charisLightGray,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                        redColor,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                SizedBox(
+                                  width: 70,
+                                  child: Text(
+                                    CurrencyUtils.formatRand(val),
+                                    style: TextStyle(
+                                      color: colorScheme.onSurface,
+                                      fontSize: 12,
+                                      fontFamily: 'Questrial',
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+      loading: () => Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Text(
+          'Loading overdue breakdown…',
+          style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
+        ),
+      ),
+      error: (_, __) => Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Text(
+          'Unable to load overdue breakdown.',
+          style: TextStyle(color: colorScheme.error, fontSize: 14),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTrendSection(ColorScheme colorScheme, Color redColor) {
+    final trendAsync = ref.watch(dashboardMonthlyBalanceTrendProvider);
+    return trendAsync.when(
+      data: (trend) {
+        final maxVal = trend.isEmpty
+            ? 1.0
+            : trend.map((p) => p.balanceDue).reduce((a, b) => a > b ? a : b);
+        final scale = maxVal > 0 ? maxVal : 1.0;
+        return Tooltip(
+          message:
+              'Monthly balance due for each of the last 12 months in the session.',
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: colorScheme.outlineVariant),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Trend – Monthly Balance Due (Last 12 Months)',
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    fontFamily: 'Questrial',
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 80,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: List.generate(trend.length, (i) {
+                      final point = trend[i];
+                      final v = point.balanceDue;
+                      final monthLabel = DateFormat('MMM yyyy').format(
+                        DateTime(point.year, point.month),
+                      );
+                      final h = scale > 0 ? (v / scale).clamp(0.0, 1.0) : 0.0;
+                      return Expanded(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          child: Tooltip(
+                            message:
+                                '${CurrencyUtils.formatRand(v)} • $monthLabel',
+                            child: Container(
+                              height: h * 70 + 4,
+                              decoration: BoxDecoration(
+                                color: redColor.withValues(alpha: 0.7),
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+      loading: () => Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Text(
+          'Loading trend…',
+          style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
+        ),
+      ),
+      error: (_, __) => Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Text(
+          'Unable to load trend.',
+          style: TextStyle(color: colorScheme.error, fontSize: 14),
+        ),
+      ),
+    );
+  }
+
+  Widget _statCard({
+    required ColorScheme colorScheme,
+    required String title,
+    required String value,
+    required String subtitle,
+    required Color valueColor,
+    double width = 200,
+  }) {
+    return Container(
+      width: width,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colorScheme.outlineVariant),
+        boxShadow: [
+          BoxShadow(
+            color: colorScheme.shadow.withValues(alpha: 0.06),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+              fontFamily: 'Questrial',
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor,
+              fontWeight: FontWeight.w700,
+              fontSize: 28,
+              fontFamily: 'Questrial',
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 12,
+              fontFamily: 'Questrial',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
-    final redColor = isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
+    final redColor =
+        isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
     final paymentsAsync =
         ref.watch(paymentsForSessionStreamProvider(_paymentSession));
+    final sessionTuition = ref.watch(sessionTuitionAmountProvider);
+    final lumpSumTuition = ref.watch(discountedLumpSumTuitionAmountProvider);
+    _sessionTuitionAmount = sessionTuition;
+    _lumpSumTuitionAmount = lumpSumTuition;
     final classes = ref.watch(allClassesFutureProvider).valueOrNull ?? [];
     if (classes.isNotEmpty && !_defaultClassScheduled && _classFilter == null) {
       _defaultClassScheduled = true;
       final year1 = classes.where((SchoolClass c) => c.name == 'Year 1');
       final firstClass = classes.first;
-      final defaultClassId =
-          year1.isEmpty ? firstClass.id : year1.first.id;
+      final defaultClassId = year1.isEmpty ? firstClass.id : year1.first.id;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
@@ -372,7 +1162,7 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       canShow: (role) => RolePermissions.canManageFinancials(role),
       placeholder: Center(
         child: Text(
-          'You do not have permission to view or manage payments.',
+          'You do not have permission to view or manage finances.',
           style: TextStyle(
             color: colorScheme.onSurfaceVariant,
             fontSize: 14,
@@ -380,238 +1170,314 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
           ),
         ),
       ),
-      child: Container(
-        color: colorScheme.surface,
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final tableSectionHeight =
+              (constraints.maxHeight * 0.7).clamp(420.0, 900.0).toDouble();
+          return Container(
+            color: colorScheme.surface,
+            padding: const EdgeInsets.all(24),
+            child: SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints:
+                    BoxConstraints(minHeight: constraints.maxHeight - 48),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      'Student Payment Records',
-                      style: TextStyle(
-                        color: colorScheme.onSurface,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 24,
-                        fontFamily: 'Questrial',
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Manage Payments',
-                      style: TextStyle(
-                        color: colorScheme.onSurfaceVariant,
-                        fontSize: 14,
-                        fontFamily: 'Questrial',
-                      ),
-                    ),
-                  ],
-                ),
-                Row(
-                  children: [
-                    RoleGuard(
-                      canShow: RolePermissions.canExportReports,
-                      child: OutlinedButton.icon(
-                        onPressed: () => context.go('/reports?type=payments'),
-                        icon: const Icon(Icons.summarize_outlined, size: 20),
-                        label: const Text('Report'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: colorScheme.onSurfaceVariant,
-                          side: BorderSide(color: colorScheme.outline),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 20, vertical: 12,),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Student Finance Records',
+                              style: TextStyle(
+                                color: colorScheme.onSurface,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 24,
+                                fontFamily: 'Questrial',
+                              ),
                             ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Manage Finances',
+                              style: TextStyle(
+                                color: colorScheme.onSurfaceVariant,
+                                fontSize: 14,
+                                fontFamily: 'Questrial',
+                              ),
+                            ),
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            RoleGuard(
+                              canShow: RolePermissions.canExportReports,
+                              child: OutlinedButton.icon(
+                                onPressed: () =>
+                                    context.go('/reports?type=payments'),
+                                icon: const Icon(
+                                  Icons.summarize_outlined,
+                                  size: 20,
+                                ),
+                                label: const Text('Report'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: colorScheme.onSurfaceVariant,
+                                  side: BorderSide(
+                                    color: colorScheme.outlineVariant,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 20,
+                                    vertical: 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            OutlinedButton.icon(
+                              onPressed: () => _exportCsv(context),
+                              icon: const Icon(Icons.download, size: 20),
+                              label: const Text('Export CSV'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: colorScheme.onSurfaceVariant,
+                                side: BorderSide(
+                                  color: colorScheme.outlineVariant,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            ElevatedButton.icon(
+                              onPressed: _save,
+                              icon: const Icon(
+                                Icons.save,
+                                size: 20,
+                                color: AppColors.charisWhite,
+                              ),
+                              label: const Text(
+                                'Save',
+                                style: TextStyle(
+                                  color: AppColors.charisWhite,
+                                  fontFamily: 'Questrial',
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: redColor,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 24,
+                                  vertical: 12,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    _buildFinancialDashboardSection(
+                      context,
+                      colorScheme,
+                      redColor,
+                      isDark,
+                    ),
+                    const SizedBox(height: 16),
+                    _buildFiltersRow(colorScheme, redColor),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      height: tableSectionHeight,
+                      child: studentsAsync.when(
+                        data: (allStudents) {
+                          // Memoize filtered/sorted list
+                          final filterKey =
+                              '$_selectedMode|$_classFilter|$_searchQuery';
+                          if (_cachedFilteredStudents == null ||
+                              _lastFilterKey != filterKey) {
+                            // Optimized: combine filters into single pass to reduce allocations
+                            final searchQueryLower = _searchQuery.toLowerCase();
+                            final filtered = allStudents.where((s) {
+                              // Mode filter
+                              if (s.mode != _selectedMode) return false;
+                              // Class filter
+                              if (_classFilter != null &&
+                                  s.classId != _classFilter) {
+                                return false;
+                              }
+                              // Search filter
+                              if (searchQueryLower.isNotEmpty) {
+                                if (!s.surname
+                                        .toLowerCase()
+                                        .contains(searchQueryLower) &&
+                                    !s.firstName
+                                        .toLowerCase()
+                                        .contains(searchQueryLower) &&
+                                    !(s.email
+                                            ?.toLowerCase()
+                                            .contains(searchQueryLower) ??
+                                        false)) {
+                                  return false;
+                                }
+                              }
+                              return true;
+                            }).toList();
+                            _cachedFilteredStudents =
+                                sortStudentsAlphabetically(filtered);
+                            _lastFilterKey = filterKey;
+                          }
+                          final allFilteredStudents = _cachedFilteredStudents!;
+
+                          // Apply infinite scroll - reset displayed count if filters changed
+                          final total = allFilteredStudents.length;
+                          if (_displayedCount > total) {
+                            _displayedCount = total;
+                          }
+                          final displayedStudents = total == 0
+                              ? <Student>[]
+                              : allFilteredStudents.sublist(
+                                  0,
+                                  _displayedCount.clamp(0, total),
+                                );
+
+                          // Wait for payments to load before initializing edits
+                          return paymentsAsync.when(
+                            data: (paymentRows) {
+                              // Initialize edits for ALL filtered students, but controllers only for displayed students
+                              _refillEditsIfNeeded(
+                                allFilteredStudents,
+                                paymentRows,
+                                pageStudents: displayedStudents,
+                              );
+
+                              return Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Text(
+                                    'Student Payment Details',
+                                    style: TextStyle(
+                                      color: colorScheme.onSurface,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 18,
+                                      fontFamily: 'Questrial',
+                                    ),
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Expanded(
+                                    child: allFilteredStudents.isEmpty
+                                        ? Center(
+                                            child: Text(
+                                              'No students match the selected filters.',
+                                              style: TextStyle(
+                                                color: colorScheme
+                                                    .onSurfaceVariant,
+                                                fontSize: 14,
+                                                fontFamily: 'Questrial',
+                                              ),
+                                            ),
+                                          )
+                                        : NotificationListener<
+                                            ScrollNotification>(
+                                            onNotification: (notification) {
+                                              if (notification
+                                                  is ScrollUpdateNotification) {
+                                                final metrics =
+                                                    notification.metrics;
+                                                if (metrics.pixels >=
+                                                        metrics.maxScrollExtent *
+                                                            0.8 &&
+                                                    _displayedCount < total &&
+                                                    !_isLoadingMore) {
+                                                  _loadMore();
+                                                }
+                                              }
+                                              return false;
+                                            },
+                                            child: _buildTable(
+                                              context,
+                                              colorScheme,
+                                              redColor,
+                                              isDark,
+                                              displayedStudents,
+                                            ),
+                                          ),
+                                  ),
+                                ],
+                              );
+                            },
+                            loading: () => Center(
+                              child: CircularProgressIndicator(
+                                color: colorScheme.onSurface,
+                              ),
+                            ),
+                            error: (err, _) => Center(
+                              child: Text(
+                                'Error loading payments: $err',
+                                style: TextStyle(color: colorScheme.onSurface),
+                              ),
+                            ),
+                          );
+                        },
+                        loading: () => Center(
+                          child: CircularProgressIndicator(
+                            color: colorScheme.onSurface,
+                          ),
+                        ),
+                        error: (err, _) => Center(
+                          child: Text(
+                            'Error: $err',
+                            style: TextStyle(color: colorScheme.onSurface),
+                          ),
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
-                    OutlinedButton.icon(
-                      onPressed: () => _exportCsv(context),
-                      icon: const Icon(Icons.download, size: 20),
-                      label: const Text('Export CSV'),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: colorScheme.onSurfaceVariant,
-                        side: BorderSide(color: colorScheme.outline),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 12,),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    ElevatedButton.icon(
-                      onPressed: _save,
-                      icon: const Icon(Icons.save,
-                          size: 20, color: AppColors.charisWhite,),
-                      label: const Text('Save',
-                          style: TextStyle(
-                              color: AppColors.charisWhite,
-                              fontFamily: 'Questrial',
-                              fontWeight: FontWeight.w600,),),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: redColor,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 24, vertical: 12,),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),),
-                      ),
-                    ),
                   ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            _buildFiltersRow(colorScheme, redColor),
-            const SizedBox(height: 24),
-            Expanded(
-              child: studentsAsync.when(
-                data: (allStudents) {
-                  // Memoize filtered/sorted list
-                  final filterKey =
-                      '$_selectedMode|$_classFilter|$_searchQuery';
-                  if (_cachedFilteredStudents == null ||
-                      _lastFilterKey != filterKey) {
-                    // Optimized: combine filters into single pass to reduce allocations
-                    final searchQueryLower = _searchQuery.toLowerCase();
-                    final filtered = allStudents.where((s) {
-                      // Mode filter
-                      if (s.mode != _selectedMode) return false;
-                      // Class filter
-                      if (_classFilter != null && s.classId != _classFilter) {
-                        return false;
-                      }
-                      // Search filter
-                      if (searchQueryLower.isNotEmpty) {
-                        if (!s.surname
-                                .toLowerCase()
-                                .contains(searchQueryLower) &&
-                            !s.firstName
-                                .toLowerCase()
-                                .contains(searchQueryLower) &&
-                            !(s.email
-                                    ?.toLowerCase()
-                                    .contains(searchQueryLower) ??
-                                false)) {
-                          return false;
-                        }
-                      }
-                      return true;
-                    }).toList();
-                    _cachedFilteredStudents =
-                        sortStudentsAlphabetically(filtered);
-                    _lastFilterKey = filterKey;
-                  }
-                  final allFilteredStudents = _cachedFilteredStudents!;
-
-                  // Apply infinite scroll - reset displayed count if filters changed
-                  final total = allFilteredStudents.length;
-                  if (_displayedCount > total) {
-                    _displayedCount = total;
-                  }
-                  final displayedStudents = total == 0
-                      ? <Student>[]
-                      : allFilteredStudents.sublist(0, _displayedCount.clamp(0, total));
-
-                  // Wait for payments to load before initializing edits
-                  return paymentsAsync.when(
-                    data: (paymentRows) {
-                      // Initialize edits for ALL filtered students, but controllers only for displayed students
-                      _refillEditsIfNeeded(allFilteredStudents, paymentRows,
-                          pageStudents: displayedStudents,);
-
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            'Student Payment Details',
-                            style: TextStyle(
-                              color: colorScheme.onSurface,
-                              fontWeight: FontWeight.w700,
-                              fontSize: 18,
-                              fontFamily: 'Questrial',
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Expanded(
-                            child: allFilteredStudents.isEmpty
-                                ? Center(
-                                    child: Text(
-                                      'No students match the selected filters.',
-                                      style: TextStyle(
-                                        color: colorScheme.onSurfaceVariant,
-                                        fontSize: 14,
-                                        fontFamily: 'Questrial',
-                                      ),
-                                    ),
-                                  )
-                                : NotificationListener<ScrollNotification>(
-                                    onNotification: (notification) {
-                                      if (notification is ScrollUpdateNotification) {
-                                        final metrics = notification.metrics;
-                                        if (metrics.pixels >= metrics.maxScrollExtent * 0.8 &&
-                                            _displayedCount < total &&
-                                            !_isLoadingMore) {
-                                          _loadMore();
-                                        }
-                                      }
-                                      return false;
-                                    },
-                                    child: _buildTable(
-                                        context, colorScheme, redColor, isDark, displayedStudents,),
-                                  ),
-                          ),
-                        ],
-                      );
-                    },
-                    loading: () => Center(
-                        child: CircularProgressIndicator(
-                            color: colorScheme.onSurface,),),
-                    error: (err, _) => Center(
-                      child: Text('Error loading payments: $err',
-                          style: TextStyle(color: colorScheme.onSurface),),
-                    ),
-                  );
-                },
-                loading: () => Center(
-                    child: CircularProgressIndicator(
-                        color: colorScheme.onSurface,),),
-                error: (err, _) => Center(
-                  child: Text('Error: $err',
-                      style: TextStyle(color: colorScheme.onSurface),),
                 ),
               ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
 
-  void _refillEditsIfNeeded(List<Student> students, List<Payment> paymentRows,
-      {List<Student>? pageStudents,}) {
+  void _refillEditsIfNeeded(
+    List<Student> students,
+    List<Payment> paymentRows, {
+    List<Student>? pageStudents,
+  }) {
     // Optimized hash calculation using Object.hashAll instead of string concatenation
     final paymentHash = paymentRows.isEmpty
         ? 0
-        : Object.hashAll(paymentRows.map((p) => Object.hash(
-            p.studentId,
-            p.jan,
-            p.feb,
-            p.mar,
-            p.apr,
-            p.may,
-            p.jun,
-            p.jul,
-            p.aug,
-            p.sep,
-            p.oct,
-            p.lumpSum,),),);
+        : Object.hashAll(
+            paymentRows.map(
+              (p) => Object.hash(
+                p.studentId,
+                p.jan,
+                p.feb,
+                p.mar,
+                p.apr,
+                p.may,
+                p.jun,
+                p.jul,
+                p.aug,
+                p.sep,
+                p.oct,
+                p.lumpSum,
+              ),
+            ),
+          );
 
     // Cache payment map if hash hasn't changed
     Map<int, Payment> paymentMap;
@@ -677,6 +1543,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
             sep: p?.sep ?? 0,
             oct: p?.oct ?? 0,
             lumpSum: p?.lumpSum ?? 0,
+            sessionTuitionAmount: _sessionTuitionAmount,
+            lumpSumTuitionAmount: _lumpSumTuitionAmount,
           );
           hasChanges = true;
         } else {
@@ -721,6 +1589,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
               sep: p.sep,
               oct: p.oct,
               lumpSum: p.lumpSum,
+              sessionTuitionAmount: _sessionTuitionAmount,
+              lumpSumTuitionAmount: _lumpSumTuitionAmount,
             );
             edits[s.id] = updatedEdit;
             // Invalidate cache to force recalculation
@@ -734,7 +1604,15 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     // ALWAYS initialize controllers for current page students, even if skipping edit refill
     // This ensures controllers exist when _buildTable accesses them
     for (final s in studentsForControllers) {
-      final edit = edits[s.id] ?? _PaymentRowEdit();
+      final edit = edits[s.id] ??
+          _PaymentRowEdit(
+            sessionTuitionAmount: _sessionTuitionAmount,
+            lumpSumTuitionAmount: _lumpSumTuitionAmount,
+          );
+      edit.applyTuitionSettings(
+        sessionTuition: _sessionTuitionAmount,
+        lumpSumTuition: _lumpSumTuitionAmount,
+      );
 
       // Initialize controllers if needed and update text only if changed
       for (var i = 0; i < _monthLabels.length; i++) {
@@ -767,9 +1645,9 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       // The switch state is derived directly from edit.lumpSum value
     }
 
-    // Only call setState if changes were actually made
+    // This method can run during build; defer rebuild safely.
     if (hasChanges && mounted) {
-      setState(() {});
+      _scheduleSetStateAfterBuild();
     }
   }
 
@@ -777,27 +1655,36 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Text('Student Mode:',
-            style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 14,
-                fontFamily: 'Questrial',),),
+        Text(
+          'Student Mode:',
+          style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 14,
+            fontFamily: 'Questrial',
+          ),
+        ),
         const SizedBox(width: 8),
         _buildModeToggle(colorScheme, redColor),
         const SizedBox(width: 24),
-        Text('Class:',
-            style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 14,
-                fontFamily: 'Questrial',),),
+        Text(
+          'Class:',
+          style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 14,
+            fontFamily: 'Questrial',
+          ),
+        ),
         const SizedBox(width: 8),
         _buildClassDropdown(colorScheme),
         const SizedBox(width: 24),
-        Text('Session:',
-            style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
-                fontSize: 14,
-                fontFamily: 'Questrial',),),
+        Text(
+          'Session:',
+          style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 14,
+            fontFamily: 'Questrial',
+          ),
+        ),
         const SizedBox(width: 8),
         _buildPaymentSessionField(colorScheme),
         const SizedBox(width: 24),
@@ -818,13 +1705,17 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
               hintText: 'Search students...',
               hintStyle:
                   TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
-              prefixIcon: Icon(Icons.search,
-                  color: colorScheme.onSurfaceVariant, size: 22,),
+              prefixIcon: Icon(
+                Icons.search,
+                color: colorScheme.onSurfaceVariant,
+                size: 22,
+              ),
               filled: true,
-              fillColor: colorScheme.surfaceContainerHighest,
+              fillColor: Colors.transparent,
               border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,),
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: colorScheme.outlineVariant),
+              ),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             ),
@@ -870,8 +1761,12 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         });
       },
       children: modeOptions
-          .map((l) => Text(l,
-              style: const TextStyle(fontFamily: 'Questrial', fontSize: 14),),)
+          .map(
+            (l) => Text(
+              l,
+              style: const TextStyle(fontFamily: 'Questrial', fontSize: 14),
+            ),
+          )
           .toList(),
     );
   }
@@ -884,21 +1779,36 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         height: 44,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest,
+          color: Colors.transparent,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: colorScheme.outline),
+          border: Border.all(color: colorScheme.outlineVariant),
         ),
         child: DropdownButton<int?>(
           value: _classFilter,
-          hint: Text('All',
-              style:
-                  TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),),
+          hint: Text(
+            'All',
+            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
+          ),
           isExpanded: true,
           underline: const SizedBox.shrink(),
           borderRadius: BorderRadius.circular(8),
           items: [
-            const DropdownMenuItem<int?>(value: null, child: Text('All', style: TextStyle(fontSize: 14))),
-            ...classes.map<DropdownMenuItem<int?>>((SchoolClass c) => DropdownMenuItem<int?>(value: c.id, child: Text(c.name, style: TextStyle(color: colorScheme.onSurface, fontSize: 14)))),
+            const DropdownMenuItem<int?>(
+              value: null,
+              child: Text('All', style: TextStyle(fontSize: 14)),
+            ),
+            ...classes.map<DropdownMenuItem<int?>>(
+              (SchoolClass c) => DropdownMenuItem<int?>(
+                value: c.id,
+                child: Text(
+                  c.name,
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            ),
           ],
           onChanged: (v) {
             setState(() {
@@ -913,6 +1823,46 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   }
 
   Widget _buildPaymentSessionField(ColorScheme colorScheme) {
+    final auth = ref.watch(authStateProvider).valueOrNull;
+    final canManageSession = auth is Authenticated &&
+        RolePermissions.canManageAcademicSession(auth.role);
+
+    // Non-admins always work in the current academic session; show it read-only.
+    if (!canManageSession) {
+      final currentSessionAsync = ref.watch(currentAcademicSessionProvider);
+      final currentSession = currentSessionAsync.valueOrNull;
+      final effective = currentSession ?? _paymentSession;
+
+      if (effective != _paymentSession) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() => _paymentSession = effective);
+          }
+        });
+      }
+
+      return SizedBox(
+        width: 120,
+        child: Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: colorScheme.outlineVariant),
+          ),
+          alignment: Alignment.centerLeft,
+          child: Text(
+            effective,
+            style: TextStyle(
+              color: colorScheme.onSurface,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      );
+    }
+
     final sessionOptionsAsync = ref.watch(academicSessionOptionsProvider);
     return SizedBox(
       width: 120,
@@ -920,14 +1870,16 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         height: 44,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest,
+          color: Colors.transparent,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: colorScheme.outline),
+          border: Border.all(color: colorScheme.outlineVariant),
         ),
         child: sessionOptionsAsync.when(
           data: (options) {
-            final list = options.isNotEmpty ? options : [_defaultPaymentSession()];
-            final value = list.contains(_paymentSession) ? _paymentSession : list.first;
+            final list =
+                options.isNotEmpty ? options : [_defaultPaymentSession()];
+            final value =
+                list.contains(_paymentSession) ? _paymentSession : list.first;
             if (!list.contains(_paymentSession)) {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (mounted) setState(() => _paymentSession = list.first);
@@ -939,12 +1891,18 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
               underline: const SizedBox.shrink(),
               borderRadius: BorderRadius.circular(8),
               items: list
-                  .map((s) => DropdownMenuItem<String>(
-                        value: s,
-                        child: Text(s,
-                            style: TextStyle(
-                                color: colorScheme.onSurface, fontSize: 14,),),
-                      ),)
+                  .map(
+                    (s) => DropdownMenuItem<String>(
+                      value: s,
+                      child: Text(
+                        s,
+                        style: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  )
                   .toList(),
               onChanged: (v) {
                 if (v != null) {
@@ -961,14 +1919,24 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
             value: _paymentSession,
             isExpanded: true,
             underline: const SizedBox.shrink(),
-            items: [DropdownMenuItem(value: _paymentSession, child: Text(_paymentSession))],
+            items: [
+              DropdownMenuItem(
+                value: _paymentSession,
+                child: Text(_paymentSession),
+              ),
+            ],
             onChanged: null,
           ),
           error: (_, __) => DropdownButton<String>(
             value: _paymentSession,
             isExpanded: true,
             underline: const SizedBox.shrink(),
-            items: [DropdownMenuItem(value: _paymentSession, child: Text(_paymentSession))],
+            items: [
+              DropdownMenuItem(
+                value: _paymentSession,
+                child: Text(_paymentSession),
+              ),
+            ],
             onChanged: null,
           ),
         ),
@@ -976,10 +1944,9 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
     );
   }
 
-  /// Helper method to check if student has any monthly payments
-  bool _hasMonthlyPayments(_PaymentRowEdit edit) {
-    return edit.jan > 0 ||
-        edit.feb > 0 ||
+  /// Helper: Feb–Oct monthly payments (session months). Jan does not count.
+  bool _hasSessionMonthlyPayments(_PaymentRowEdit edit) {
+    return edit.feb > 0 ||
         edit.mar > 0 ||
         edit.apr > 0 ||
         edit.may > 0 ||
@@ -990,8 +1957,17 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
         edit.oct > 0;
   }
 
+  bool _hasLumpAndSessionMonthlyConflict(_PaymentRowEdit edit) {
+    return edit.lumpSum > 0 && _hasSessionMonthlyPayments(edit);
+  }
+
   Widget _buildTable(
-      BuildContext context, ColorScheme colorScheme, Color redColor, bool isDark, List<Student> students,) {
+    BuildContext context,
+    ColorScheme colorScheme,
+    Color redColor,
+    bool isDark,
+    List<Student> students,
+  ) {
     final edits = _currentSessionEdits;
 
     return LayoutBuilder(
@@ -1006,18 +1982,23 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                 columnWidths: {
                   0: const FixedColumnWidth(44),
                   1: const FixedColumnWidth(160),
-                  ...Map.fromEntries(List.generate(_monthLabels.length,
-                      (i) => MapEntry(i + 2, const FixedColumnWidth(90)),),),
+                  ...Map.fromEntries(
+                    List.generate(
+                      _monthLabels.length,
+                      (i) => MapEntry(i + 2, const FixedColumnWidth(90)),
+                    ),
+                  ),
                   _monthLabels.length + 2: const FixedColumnWidth(80),
                   _monthLabels.length + 3: const FixedColumnWidth(100),
                   _monthLabels.length + 4: const FixedColumnWidth(110),
                 },
-                border: TableBorder.all(color: colorScheme.outlineVariant),
+                border: AppTableStyle.materialTableBorder(colorScheme),
                 children: [
                   // Table header row - using const where possible
                   TableRow(
                     decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHighest,),
+                      color: colorScheme.surfaceContainerHighest,
+                    ),
                     children: [
                       _tableHeader(context, '#'),
                       _tableHeader(context, 'Student Name'),
@@ -1030,7 +2011,11 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                   ...students.asMap().entries.map((e) {
                     final index = e.key;
                     final student = e.value;
-                    final edit = edits[student.id] ?? _PaymentRowEdit();
+                    final edit = edits[student.id] ??
+                        _PaymentRowEdit(
+                          sessionTuitionAmount: _sessionTuitionAmount,
+                          lumpSumTuitionAmount: _lumpSumTuitionAmount,
+                        );
                     Color rowColor = index.isEven
                         ? colorScheme.surface
                         : colorScheme.surfaceContainerLow
@@ -1039,27 +2024,33 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                       decoration: BoxDecoration(color: rowColor),
                       children: [
                         _cell(
-                            context,
-                            colorScheme,
-                            RepaintBoundary(
-                              child: Text(
-                                  '${index + 1}',
-                                  style: TextStyle(
-                                      color: colorScheme.onSurface,
-                                      fontSize: 14,
-                                      fontFamily: 'Questrial',),),
-                            ),),
+                          context,
+                          colorScheme,
+                          RepaintBoundary(
+                            child: Text(
+                              '${index + 1}',
+                              style: TextStyle(
+                                color: colorScheme.onSurface,
+                                fontSize: 14,
+                                fontFamily: 'Questrial',
+                              ),
+                            ),
+                          ),
+                        ),
                         _cell(
-                            context,
-                            colorScheme,
-                            RepaintBoundary(
-                              child: Text(
-                                  '${student.surname} ${student.firstName}',
-                                  style: TextStyle(
-                                      color: colorScheme.onSurface,
-                                      fontSize: 14,
-                                      fontFamily: 'Questrial',),),
-                            ),),
+                          context,
+                          colorScheme,
+                          RepaintBoundary(
+                            child: Text(
+                              '${student.surname} ${student.firstName}',
+                              style: TextStyle(
+                                color: colorScheme.onSurface,
+                                fontSize: 14,
+                                fontFamily: 'Questrial',
+                              ),
+                            ),
+                          ),
+                        ),
                         ..._monthLabels.asMap().entries.map((entry) {
                           final i = entry.key;
                           final field = entry.value.toLowerCase();
@@ -1070,97 +2061,108 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
                               _controllers[ctrlKey] ??= TextEditingController();
 
                           return _cell(
-                              context,
-                              colorScheme,
-                              _PaymentCell(
-                                controller: controller,
-                                colorScheme: colorScheme,
-                                isDark: isDark,
-                                onChanged: (n) {
-                                  if (mounted) {
-                                    setState(() {
-                                      final e = edits[student.id] ??=
-                                          _PaymentRowEdit();
-                                      e.invalidateCache();
-                                      switch (i) {
-                                        case 0:
-                                          e.jan = n;
-                                          break;
-                                        case 1:
-                                          e.feb = n;
-                                          break;
-                                        case 2:
-                                          e.mar = n;
-                                          break;
-                                        case 3:
-                                          e.apr = n;
-                                          break;
-                                        case 4:
-                                          e.may = n;
-                                          break;
-                                        case 5:
-                                          e.jun = n;
-                                          break;
-                                        case 6:
-                                          e.jul = n;
-                                          break;
-                                        case 7:
-                                          e.aug = n;
-                                          break;
-                                        case 8:
-                                          e.sep = n;
-                                          break;
-                                        case 9:
-                                          e.oct = n;
-                                          break;
-                                      }
-                                      // If monthly payment is entered and lump sum is enabled, clear lump sum
-                                      if (n > 0 && e.lumpSum > 0) {
-                                        e.lumpSum = 0;
-                                      }
-                                    });
-                                  }
-                                },
-                              ),);
-                        }),
-                        _cell(
                             context,
                             colorScheme,
-                            _LumpSumToggleSwitch(
-                              redColor: redColor,
-                              value: edit.lumpSum > 0,
-                              isEnabled: !_hasMonthlyPayments(edit),
+                            _PaymentCell(
+                              controller: controller,
                               colorScheme: colorScheme,
-                              onChanged: (value) {
+                              isDark: isDark,
+                              onChanged: (n) {
                                 if (mounted) {
                                   setState(() {
                                     final e =
-                                        edits[student.id] ??= _PaymentRowEdit();
+                                        edits[student.id] ??= _PaymentRowEdit(
+                                          sessionTuitionAmount: _sessionTuitionAmount,
+                                          lumpSumTuitionAmount: _lumpSumTuitionAmount,
+                                        );
                                     e.invalidateCache();
-                                    e.lumpSum = value
-                                        ? AppConstants.lumpSumDiscountAmount
-                                        : 0.0;
+                                    switch (i) {
+                                      case 0:
+                                        e.jan = n;
+                                        break;
+                                      case 1:
+                                        e.feb = n;
+                                        break;
+                                      case 2:
+                                        e.mar = n;
+                                        break;
+                                      case 3:
+                                        e.apr = n;
+                                        break;
+                                      case 4:
+                                        e.may = n;
+                                        break;
+                                      case 5:
+                                        e.jun = n;
+                                        break;
+                                      case 6:
+                                        e.jul = n;
+                                        break;
+                                      case 7:
+                                        e.aug = n;
+                                        break;
+                                      case 8:
+                                        e.sep = n;
+                                        break;
+                                      case 9:
+                                        e.oct = n;
+                                        break;
+                                    }
+                                    // If Feb–Oct payment is entered and lump sum is enabled, clear lump sum.
+                                    // Jan may coexist with lump sum.
+                                    if (i >= 1 && n > 0 && e.lumpSum > 0) {
+                                      e.lumpSum = 0;
+                                    }
                                   });
                                 }
                               },
-                            ),),
+                            ),
+                          );
+                        }),
                         _cell(
-                            context,
-                            colorScheme,
-                            _PaymentDisplayCell(
-                              text: edit.totalPaidFormatted,
-                              colorScheme: colorScheme,
-                            ),),
+                          context,
+                          colorScheme,
+                          _LumpSumToggleSwitch(
+                            redColor: redColor,
+                            value: edit.lumpSum > 0,
+                            isEnabled: !_hasSessionMonthlyPayments(edit),
+                            colorScheme: colorScheme,
+                            onChanged: (value) {
+                              if (mounted) {
+                                setState(() {
+                                  final e =
+                                      edits[student.id] ??= _PaymentRowEdit(
+                                        sessionTuitionAmount: _sessionTuitionAmount,
+                                        lumpSumTuitionAmount: _lumpSumTuitionAmount,
+                                      );
+                                  e.invalidateCache();
+                                  e.lumpSum = value
+                                      ? _lumpSumTuitionAmount
+                                      : 0.0;
+                                });
+                              }
+                            },
+                          ),
+                        ),
                         _cell(
-                            context,
-                            colorScheme,
-                            _PaymentDisplayCell(
-                              text: edit.balanceFormatted,
-                              colorScheme: colorScheme,
-                              textColor: edit.balance > 0
-                                  ? colorScheme.error
-                                  : colorScheme.onSurface,
-                            ),),
+                          context,
+                          colorScheme,
+                          _PaymentDisplayCell(
+                            text: edit.totalPaidFormatted,
+                            colorScheme: colorScheme,
+                          ),
+                        ),
+                        _cell(
+                          context,
+                          colorScheme,
+                          _PaymentDisplayCell(
+                            text: edit.balanceFormatted,
+                            colorScheme: colorScheme,
+                            textColor: edit.balance > 0
+                                ? colorScheme.error
+                                : colorScheme.onSurface,
+                          ),
+                        ),
                       ],
                     );
                   }),
@@ -1174,31 +2176,15 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
   }
 
   Widget _tableHeader(BuildContext context, String text) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: Text(
-          text,
-          style: TextStyle(
-            color: colorScheme.onSurface,
-            fontWeight: FontWeight.w600,
-            fontSize: 14,
-            fontFamily: 'Questrial',
-          ),
-        ),
-      ),
-    );
+    return AppTableStyle.sfHeaderCell(context, text);
   }
 
   Widget _cell(BuildContext context, ColorScheme colorScheme, Widget child) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding: AppTableStyle.cellPadding,
       child: child,
     );
   }
-
 
   Future<void> _save() async {
     try {
@@ -1209,7 +2195,24 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       if (edits.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('No payments to save.')),);
+            const SnackBar(content: Text('No payments to save.')),
+          );
+        }
+        return;
+      }
+
+      final conflicting = edits.entries
+          .where((e) => _hasLumpAndSessionMonthlyConflict(e.value))
+          .toList();
+      if (conflicting.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Cannot save: lump sum cannot be combined with Feb–Oct monthly amounts. Clear one or the other.',
+              ),
+            ),
+          );
         }
         return;
       }
@@ -1276,7 +2279,8 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       if (paymentDataMap.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('No changes to save.')),);
+            const SnackBar(content: Text('No changes to save.')),
+          );
         }
         return;
       }
@@ -1284,25 +2288,33 @@ class _PaymentsScreenState extends ConsumerState<PaymentsScreen> {
       // Get userId for change set logging
       final auth = ref.read(authStateProvider).valueOrNull;
       final userId = auth is Authenticated ? auth.user.id : null;
-      final userDisplayName = auth is Authenticated ? auth.user.displayName : null;
+      final userDisplayName =
+          auth is Authenticated ? auth.user.displayName : null;
 
       // Use batch upsert for much better performance
       final sessionRepo = ref.read(academicSessionRepositoryProvider);
-      final year = AcademicSessionRepository.yearFromSessionCode(_paymentSession);
-      final academicSessionId = await sessionRepo.getSessionIdByCode(_paymentSession);
+      final year =
+          AcademicSessionRepository.yearFromSessionCode(_paymentSession);
+      final academicSessionId =
+          await sessionRepo.getSessionIdByCode(_paymentSession);
       final savedCount = await repo.batchUpsertPayments(
         year: year ?? _paymentSession.split('-').first,
         payments: paymentDataMap,
         academicSessionId: academicSessionId,
         userId: userId,
         userDisplayName: userDisplayName,
-        screen: 'Payments',
+        screen: 'Finances',
+        userRole: auth is Authenticated
+            ? auth.role
+            : UserRole.facilitator,
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content:
-                Text('Successfully saved $savedCount payment record(s).'),),);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Successfully saved $savedCount payment record(s).'),
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {

@@ -3,18 +3,33 @@ import 'dart:convert';
 import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
+import 'package:charis_student_care/core/config/sync_folder_config.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 
 /// Test repository: watch tests per student, add/update with change-set logging.
 /// Outstanding = count where score < 70. All roles can enter tests.
 class TestRepository {
-  TestRepository(this._db);
+  TestRepository(this._db, {void Function()? onLocalChangeSetWritten})
+      : _onLocalChangeSetWritten = onLocalChangeSetWritten;
 
   final AppDatabase _db;
+  final void Function()? _onLocalChangeSetWritten;
   static const _uuid = Uuid();
 
+  Future<String> _effectiveChangeSetDeviceId(String? deviceId) async {
+    final d = deviceId?.trim();
+    if (d != null && d.isNotEmpty && d != 'legacy') return d;
+    return SyncFolderConfig.getOrCreateDeviceId();
+  }
+
   static const int _passThreshold = 70;
+
+  /// Result of saving a test via upsert flow.
+  /// - created: new row inserted
+  /// - updated: existing row updated
+  static const String saveActionCreated = 'created';
+  static const String saveActionUpdated = 'updated';
 
   Future<String?> _classNameForId(int? classId) async {
     if (classId == null) return null;
@@ -222,12 +237,64 @@ class TestRepository {
         payload: payload,
         userId: userId,
         version: 1,
-        deviceId: deviceId ?? 'legacy',
+        deviceId: deviceId,
         userDisplayName: userDisplayName,
         screen: screen,
       );
     }
     return id;
+  }
+
+  /// Saves a test for (student, subject, academic session) by updating existing
+  /// row when present; otherwise creates a new row.
+  ///
+  /// Returns [saveActionUpdated] when an existing row was updated,
+  /// [saveActionCreated] when a new row was inserted.
+  Future<String> saveOrUpdateTestForStudentSubjectSession(
+    int studentId,
+    int score, {
+    String? label,
+    required int subjectId,
+    String? academicSession,
+    required UserRole userRole,
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+  }) async {
+    final existing = await findTestForStudentSubjectSession(
+      studentId,
+      subjectId,
+      academicSession,
+    );
+    if (existing != null) {
+      await updateTest(
+        existing.id,
+        score: score,
+        label: label,
+        subjectId: subjectId,
+        academicSession: academicSession,
+        userRole: userRole,
+        userId: userId,
+        deviceId: deviceId,
+        userDisplayName: userDisplayName,
+        screen: screen,
+      );
+      return saveActionUpdated;
+    }
+    await addTest(
+      studentId,
+      score,
+      label: label,
+      subjectId: subjectId,
+      academicSession: academicSession,
+      userRole: userRole,
+      userId: userId,
+      deviceId: deviceId,
+      userDisplayName: userDisplayName,
+      screen: screen,
+    );
+    return saveActionCreated;
   }
 
   /// Updates a test. Requires canEnterTests; [userId], [userDisplayName], [screen] for change-set.
@@ -287,7 +354,7 @@ class TestRepository {
         payload: payload,
         userId: userId,
         version: 1,
-        deviceId: deviceId ?? 'legacy',
+        deviceId: deviceId,
         userDisplayName: userDisplayName,
         screen: screen,
       );
@@ -331,7 +398,7 @@ class TestRepository {
         payload: payload,
         userId: userId,
         version: 1,
-        deviceId: deviceId ?? 'legacy',
+        deviceId: deviceId,
         userDisplayName: userDisplayName,
         screen: screen,
       );
@@ -372,7 +439,7 @@ class TestRepository {
         payload: payload,
         userId: userId,
         version: 1,
-        deviceId: deviceId ?? 'legacy',
+        deviceId: deviceId,
         userDisplayName: userDisplayName,
         screen: screen,
       );
@@ -441,7 +508,7 @@ class TestRepository {
             payload: payload,
             userId: userId,
             version: 1,
-            deviceId: deviceId ?? 'legacy',
+            deviceId: deviceId,
             userDisplayName: userDisplayName,
             screen: screen,
           );
@@ -474,7 +541,7 @@ class TestRepository {
             payload: payload,
             userId: userId,
             version: 1,
-            deviceId: deviceId ?? 'legacy',
+            deviceId: deviceId,
             userDisplayName: userDisplayName,
             screen: screen,
           );
@@ -504,10 +571,11 @@ class TestRepository {
     required Map<String, dynamic> payload,
     required String userId,
     required int version,
-    required String deviceId,
+    String? deviceId,
     String? userDisplayName,
     String? screen,
   }) async {
+    final effectiveDeviceId = await _effectiveChangeSetDeviceId(deviceId);
     final fullPayload = Map<String, dynamic>.from(payload);
     if (userDisplayName != null) fullPayload['userDisplayName'] = userDisplayName;
     if (screen != null) fullPayload['screen'] = screen;
@@ -520,8 +588,9 @@ class TestRepository {
         payload: jsonEncode(fullPayload),
         userId: userId,
         version: version,
-        deviceId: deviceId,
+        deviceId: effectiveDeviceId,
       ),
     );
+    _onLocalChangeSetWritten?.call();
   }
 }

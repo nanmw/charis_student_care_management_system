@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/presentation/providers/auth_provider.dart';
+import 'package:charis_student_care/presentation/providers/auth_state.dart';
 import 'package:charis_student_care/presentation/providers/mission_providers.dart';
+import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/widgets/searchable_dropdown.dart';
 
@@ -266,7 +270,7 @@ class _MissionSignupDialogState extends ConsumerState<MissionSignupDialog> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.charisMidGray),
+              borderSide: BorderSide(color: colorScheme.outlineVariant),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
@@ -310,7 +314,7 @@ class _MissionSignupDialogState extends ConsumerState<MissionSignupDialog> {
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: AppColors.charisMidGray),
+              borderSide: BorderSide(color: colorScheme.outlineVariant),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
@@ -386,11 +390,21 @@ class _MissionSignupDialogState extends ConsumerState<MissionSignupDialog> {
     }
     final role = _selectedRole?.trim() ?? missionRoleOptions.first;
     try {
+      final auth = ref.read(authStateProvider).valueOrNull;
+      final deviceId = await ref.read(deviceIdProvider.future);
       await ref.read(missionRepositoryProvider).addParticipation(
             missionId: widget.mission.id,
             studentId: _selectedStudent!.id,
             role: role.isEmpty ? missionRoleOptions.first : role,
             amount: amount,
+            userRole: auth is Authenticated
+                ? auth.role
+                : UserRole.facilitator,
+            userId: auth is Authenticated ? auth.user.id : null,
+            deviceId: deviceId,
+            userDisplayName:
+                auth is Authenticated ? auth.user.displayName : null,
+            screen: 'Missions',
           );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
