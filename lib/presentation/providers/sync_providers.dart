@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:charis_student_care/core/config/sync_folder_config.dart';
+import 'package:charis_student_care/core/utils/io_retry.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/change_sets_repository.dart';
 import 'package:charis_student_care/data/repositories/sync_conflicts_repository.dart';
@@ -182,7 +183,7 @@ Future<int> _runChangeSetFullSyncCore({
       }
       return applied;
     } catch (e) {
-      status.setError(e.toString());
+      status.setError(userFacingSyncError(e));
       rethrow;
     }
   });
@@ -201,12 +202,19 @@ class PostCrudSyncScheduler {
 
   final Ref _ref;
   static const _debounceDuration = Duration(milliseconds: 750);
+  static const _transientRetryDelay = Duration(seconds: 5);
 
   Timer? _debounce;
+  Timer? _transientRetry;
   bool _running = false;
   bool _pendingRun = false;
+  /// One delayed follow-up per CRUD-triggered failure burst (not an infinite loop).
+  bool _transientRetryUsed = false;
 
   void schedule() {
+    _transientRetryUsed = false;
+    _transientRetry?.cancel();
+    _transientRetry = null;
     _debounce?.cancel();
     _debounce = Timer(_debounceDuration, () {
       unawaited(_runSingleFlight());
@@ -216,6 +224,17 @@ class PostCrudSyncScheduler {
   void dispose() {
     _debounce?.cancel();
     _debounce = null;
+    _transientRetry?.cancel();
+    _transientRetry = null;
+  }
+
+  void _scheduleTransientRetry() {
+    if (_transientRetryUsed) return;
+    _transientRetryUsed = true;
+    _transientRetry?.cancel();
+    _transientRetry = Timer(_transientRetryDelay, () {
+      unawaited(_runSingleFlight());
+    });
   }
 
   Future<void> _runSingleFlight() async {
@@ -224,17 +243,23 @@ class PostCrudSyncScheduler {
       return;
     }
     _running = true;
+    Object? lastError;
     try {
       do {
         _pendingRun = false;
+        lastError = null;
         try {
           await runChangeSetFullSync(_ref);
-        } catch (_) {
+        } catch (e) {
+          lastError = e;
           // Status already updated; avoid crashing scheduler (matches folder watcher).
         }
       } while (_pendingRun);
     } finally {
       _running = false;
+    }
+    if (lastError != null && isTransientIoError(lastError)) {
+      _scheduleTransientRetry();
     }
   }
 }

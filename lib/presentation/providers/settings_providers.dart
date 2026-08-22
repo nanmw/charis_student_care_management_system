@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:charis_student_care/core/constants/app_constants.dart';
+import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/app_settings_repository.dart';
 import 'package:charis_student_care/domain/attendance/attendance_thresholds.dart';
 import 'package:charis_student_care/presentation/providers/student_providers.dart';
@@ -83,30 +84,59 @@ int _parseExpectedDays(String? value, int fallback) {
   return parsed;
 }
 
-/// Reactive attendance expected-day thresholds (settings or AppConstants defaults).
-final attendanceThresholdConfigProvider =
-    StreamProvider.autoDispose<AttendanceThresholdConfig>((ref) {
-  final repo = ref.watch(settingsRepositoryProvider);
-  return repo
-      .watch(AppSettingsRepository.keyAttendanceExpectedDaysMonth)
-      .asyncMap((monthVal) async {
-    final termVal =
-        await repo.get(AppSettingsRepository.keyAttendanceExpectedDaysTerm);
-    final yearVal =
-        await repo.get(AppSettingsRepository.keyAttendanceExpectedDaysYear);
-    return AttendanceThresholdConfig(
+const _attendanceThresholdSettingKeys = [
+  AppSettingsRepository.keyAttendanceExpectedDaysMonth,
+  AppSettingsRepository.keyAttendanceExpectedDaysTerm,
+  AppSettingsRepository.keyAttendanceExpectedDaysYear,
+  AppSettingsRepository.keyAttendanceExpectedDaysHybridMonth,
+  AppSettingsRepository.keyAttendanceExpectedDaysHybridTerm,
+  AppSettingsRepository.keyAttendanceExpectedDaysHybridYear,
+];
+
+AttendanceThresholdsByMode _thresholdsFromSettingRows(
+  Iterable<AppSetting> rows,
+) {
+  final map = <String, String?>{
+    for (final row in rows) row.key: row.value,
+  };
+  return AttendanceThresholdsByMode(
+    fullTime: AttendanceThresholdConfig(
       month: _parseExpectedDays(
-        monthVal,
+        map[AppSettingsRepository.keyAttendanceExpectedDaysMonth],
         AppConstants.attendanceExpectedDaysPerMonth,
       ),
       term: _parseExpectedDays(
-        termVal,
+        map[AppSettingsRepository.keyAttendanceExpectedDaysTerm],
         AppConstants.attendanceExpectedDaysPerTerm,
       ),
       year: _parseExpectedDays(
-        yearVal,
+        map[AppSettingsRepository.keyAttendanceExpectedDaysYear],
         AppConstants.attendanceExpectedDaysPerYear,
       ),
-    );
-  });
+    ),
+    hybrid: AttendanceThresholdConfig(
+      month: _parseExpectedDays(
+        map[AppSettingsRepository.keyAttendanceExpectedDaysHybridMonth],
+        AppConstants.attendanceExpectedDaysHybridPerMonth,
+      ),
+      term: _parseExpectedDays(
+        map[AppSettingsRepository.keyAttendanceExpectedDaysHybridTerm],
+        AppConstants.attendanceExpectedDaysHybridPerTerm,
+      ),
+      year: _parseExpectedDays(
+        map[AppSettingsRepository.keyAttendanceExpectedDaysHybridYear],
+        AppConstants.attendanceExpectedDaysHybridPerYear,
+      ),
+    ),
+  );
+}
+
+/// Reactive Full-time and Hybrid attendance expected-day thresholds.
+final attendanceThresholdsByModeProvider =
+    StreamProvider.autoDispose<AttendanceThresholdsByMode>((ref) {
+  final db = ref.watch(appDatabaseProvider);
+  return (db.select(db.appSettings)
+        ..where((t) => t.key.isIn(_attendanceThresholdSettingKeys)))
+      .watch()
+      .map(_thresholdsFromSettingRows);
 });

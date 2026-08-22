@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'package:charis_student_care/core/config/sync_folder_config.dart';
+import 'package:charis_student_care/core/utils/io_retry.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/change_sets_repository.dart';
 import 'package:charis_student_care/data/repositories/sync_conflicts_repository.dart';
@@ -139,6 +140,9 @@ class ChangeSetSyncService {
 
   /// Writes [content] to [file] when [hashCacheFile] hash differs. Avoids reading
   /// from the sync folder (e.g. OneDrive) to detect unchanged exports.
+  ///
+  /// Uses a sibling `.tmp` file then replace so readers never see a partial JSON
+  /// file. Retries on brief OneDrive / OS file locks.
   static Future<bool> writeExportIfChanged(
     File file,
     String content, {
@@ -149,7 +153,14 @@ class ChangeSetSyncService {
       final cached = (await hashCacheFile.readAsString()).trim();
       if (cached == hash) return false;
     }
-    await file.writeAsString(content, flush: true);
+    await retryOnTransientIo(() async {
+      final temp = File('${file.path}.tmp');
+      await temp.writeAsString(content, flush: true);
+      if (await file.exists()) {
+        await file.delete();
+      }
+      await temp.rename(file.path);
+    });
     await hashCacheFile.writeAsString(hash);
     return true;
   }
@@ -218,7 +229,7 @@ class ChangeSetSyncService {
   /// Read and parse a device JSON file. Returns empty list on parse error.
   Future<List<ChangeSetRecord>> _readDeviceFile(File file) async {
     try {
-      final content = await file.readAsString();
+      final content = await retryOnTransientIo(() => file.readAsString());
       final decoded = jsonDecode(content);
       if (decoded is! List) return [];
       return decoded

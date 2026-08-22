@@ -66,14 +66,25 @@ class AppConstants {
   /// When 90+ days bucket exceeds this fraction (0.0–1.0) of total balance due, show risk cue.
   static const double dashboardArrears90PercentAlertThreshold = 0.25;
 
-  // --- Attendance expected-day thresholds (placeholders; tune with client) ---
+  // --- Attendance expected-day thresholds (Full-time) ---
 
-  /// Expected present days in a calendar month (placeholder).
+  /// Expected present days in a calendar month (Full-time).
   static const int attendanceExpectedDaysPerMonth = 16;
 
-  /// Expected present days in one academic term (placeholder).
+  /// Expected present days in one academic term (Full-time).
   static const int attendanceExpectedDaysPerTerm = 48;
 
-  /// Expected present days in a full academic session / year (placeholder).
+  /// Expected present days in a full academic session / year (Full-time).
   static const int attendanceExpectedDaysPerYear = 144;
+
+  // --- Attendance expected-day thresholds (Hybrid) ---
+
+  /// Expected present days in a calendar month (Hybrid).
+  static const int attendanceExpectedDaysHybridPerMonth = 2;
+
+  /// Expected present days in one academic term (Hybrid).
+  static const int attendanceExpectedDaysHybridPerTerm = 6;
+
+  /// Expected present days in a full academic session / year (Hybrid; 3 × term).
+  static const int attendanceExpectedDaysHybridPerYear = 18;
 }

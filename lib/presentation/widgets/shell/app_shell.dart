@@ -284,7 +284,7 @@ class _AppShellState extends ConsumerState<AppShell> {
         ? ' · ${lastSync.hour.toString().padLeft(2, '0')}:${lastSync.minute.toString().padLeft(2, '0')}'
         : '';
 
-    return Container(
+    final pill = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: backgroundColor,
@@ -317,6 +317,16 @@ class _AppShellState extends ConsumerState<AppShell> {
         ],
       ),
     );
+
+    final errorMessage = syncStatus.lastError?.trim();
+    if (hasError && errorMessage != null && errorMessage.isNotEmpty) {
+      return Tooltip(
+        message: errorMessage,
+        waitDuration: const Duration(milliseconds: 400),
+        child: pill,
+      );
+    }
+    return pill;
   }
 
   Widget _buildSidebar(BuildContext context, WidgetRef ref) {

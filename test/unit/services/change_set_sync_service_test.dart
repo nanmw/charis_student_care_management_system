@@ -84,6 +84,39 @@ void main() {
       expect(wrote, isTrue);
       expect(await file.readAsString(), '[\n  {"id": "b"}\n]');
     });
+
+    test('leaves no sibling .tmp after successful write', () async {
+      final file = File('${tempDir.path}/device_test.json');
+      final temp = File('${file.path}.tmp');
+
+      final wrote = await ChangeSetSyncService.writeExportIfChanged(
+        file,
+        '[{"id":"c"}]',
+        hashCacheFile: await hashCacheFile(),
+      );
+
+      expect(wrote, isTrue);
+      expect(await file.exists(), isTrue);
+      expect(await temp.exists(), isFalse);
+      expect(await file.readAsString(), '[{"id":"c"}]');
+    });
+
+    test('replaces existing file atomically', () async {
+      final file = File('${tempDir.path}/device_test.json');
+      await file.writeAsString('old');
+      final cache = await hashCacheFile();
+      await cache.writeAsString(ChangeSetSyncService.exportContentHash('old'));
+
+      final wrote = await ChangeSetSyncService.writeExportIfChanged(
+        file,
+        'new-content',
+        hashCacheFile: cache,
+      );
+
+      expect(wrote, isTrue);
+      expect(await file.readAsString(), 'new-content');
+      expect(await File('${file.path}.tmp').exists(), isFalse);
+    });
   });
 
   group('ChangeSetSyncService.export', () {

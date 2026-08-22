@@ -36,6 +36,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _attendanceMonthController = TextEditingController();
   final _attendanceTermController = TextEditingController();
   final _attendanceYearController = TextEditingController();
+  final _hybridAttendanceMonthController = TextEditingController();
+  final _hybridAttendanceTermController = TextEditingController();
+  final _hybridAttendanceYearController = TextEditingController();
   bool _isSaving = false;
   bool _isResolvingAll = false;
   bool _tuitionFieldsInitialized = false;
@@ -49,6 +52,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _attendanceMonthController.dispose();
     _attendanceTermController.dispose();
     _attendanceYearController.dispose();
+    _hybridAttendanceMonthController.dispose();
+    _hybridAttendanceTermController.dispose();
+    _hybridAttendanceYearController.dispose();
     super.dispose();
   }
 
@@ -64,7 +70,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final monthlyTuitionAsync = ref.watch(monthlyTuitionFeeProvider);
     final discountPercentAsync = ref.watch(lumpSumDiscountPercentProvider);
     final attendanceThresholdsAsync =
-        ref.watch(attendanceThresholdConfigProvider);
+        ref.watch(attendanceThresholdsByModeProvider);
 
     ref.listen<AsyncValue<SyncFolderConfig>>(syncFolderConfigProvider, (prev, next) {
       next.whenData((config) {
@@ -289,14 +295,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     BuildContext context,
     ColorScheme colorScheme,
     Color redColor,
-    AsyncValue<AttendanceThresholdConfig> thresholdsAsync,
+    AsyncValue<AttendanceThresholdsByMode> thresholdsAsync,
   ) {
     if (!_attendanceFieldsInitialized) {
-      final config =
-          thresholdsAsync.valueOrNull ?? AttendanceThresholdConfig.defaults;
-      _attendanceMonthController.text = config.month.toString();
-      _attendanceTermController.text = config.term.toString();
-      _attendanceYearController.text = config.year.toString();
+      final byMode =
+          thresholdsAsync.valueOrNull ?? AttendanceThresholdsByMode.defaults;
+      _attendanceMonthController.text = byMode.fullTime.month.toString();
+      _attendanceTermController.text = byMode.fullTime.term.toString();
+      _attendanceYearController.text = byMode.fullTime.year.toString();
+      _hybridAttendanceMonthController.text = byMode.hybrid.month.toString();
+      _hybridAttendanceTermController.text = byMode.hybrid.term.toString();
+      _hybridAttendanceYearController.text = byMode.hybrid.year.toString();
       _attendanceFieldsInitialized = true;
     }
 
@@ -316,7 +325,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          'Expected present days used for month / term / session thresholds in Student Summary.',
+          'Expected present days used for month / term / session thresholds. Full-time and Hybrid are stored separately.',
           style: TextStyle(
             color: colorScheme.onSurfaceVariant,
             fontSize: 12,
@@ -324,34 +333,45 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        TextField(
-          controller: _attendanceMonthController,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Expected days per month',
-            border: OutlineInputBorder(),
+        Text(
+          'Full-time',
+          style: TextStyle(
+            color: colorScheme.onSurface,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'Questrial',
           ),
-          enabled: !_isSaving,
         ),
         const SizedBox(height: 12),
-        TextField(
-          controller: _attendanceTermController,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Expected days per term',
-            border: OutlineInputBorder(),
+        _attendanceExpectedDaysFields(
+          monthController: _attendanceMonthController,
+          termController: _attendanceTermController,
+          yearController: _attendanceYearController,
+        ),
+        const SizedBox(height: 24),
+        Text(
+          'Hybrid',
+          style: TextStyle(
+            color: colorScheme.onSurface,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'Questrial',
           ),
-          enabled: !_isSaving,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Term is typically 6, Month is typically 2 and session is typically 18',
+          style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 12,
+            fontFamily: 'Questrial',
+          ),
         ),
         const SizedBox(height: 12),
-        TextField(
-          controller: _attendanceYearController,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'Expected days per session',
-            border: OutlineInputBorder(),
-          ),
-          enabled: !_isSaving,
+        _attendanceExpectedDaysFields(
+          monthController: _hybridAttendanceMonthController,
+          termController: _hybridAttendanceTermController,
+          yearController: _hybridAttendanceYearController,
         ),
         const SizedBox(height: 12),
         SizedBox(
@@ -378,6 +398,46 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               textStyle: const TextStyle(fontFamily: 'Questrial'),
             ),
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _attendanceExpectedDaysFields({
+    required TextEditingController monthController,
+    required TextEditingController termController,
+    required TextEditingController yearController,
+  }) {
+    return Column(
+      children: [
+        TextField(
+          controller: monthController,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Expected days per month',
+            border: OutlineInputBorder(),
+          ),
+          enabled: !_isSaving,
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: termController,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Expected days per term',
+            border: OutlineInputBorder(),
+          ),
+          enabled: !_isSaving,
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: yearController,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Expected days per session',
+            border: OutlineInputBorder(),
+          ),
+          enabled: !_isSaving,
         ),
       ],
     );
@@ -1206,7 +1266,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final month = int.tryParse(_attendanceMonthController.text.trim());
     final term = int.tryParse(_attendanceTermController.text.trim());
     final year = int.tryParse(_attendanceYearController.text.trim());
-    if (month == null || month < 0 || term == null || term < 0 || year == null || year < 0) {
+    final hybridMonth =
+        int.tryParse(_hybridAttendanceMonthController.text.trim());
+    final hybridTerm =
+        int.tryParse(_hybridAttendanceTermController.text.trim());
+    final hybridYear =
+        int.tryParse(_hybridAttendanceYearController.text.trim());
+    final values = [month, term, year, hybridMonth, hybridTerm, hybridYear];
+    if (values.any((v) => v == null || v < 0)) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('Expected days must be valid integers (>= 0).'),
@@ -1227,34 +1294,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final userId = auth is Authenticated ? auth.user.id : null;
       final userDisplayName =
           auth is Authenticated ? auth.user.displayName : null;
-      await repo.set(
-        AppSettingsRepository.keyAttendanceExpectedDaysMonth,
-        month.toString(),
-        userRole: userRole,
-        userId: userId,
-        deviceId: deviceId,
-        userDisplayName: userDisplayName,
-        screen: 'Settings',
+      Future<void> saveKey(String key, int value) {
+        return repo.set(
+          key,
+          value.toString(),
+          userRole: userRole,
+          userId: userId,
+          deviceId: deviceId,
+          userDisplayName: userDisplayName,
+          screen: 'Settings',
+        );
+      }
+
+      await saveKey(AppSettingsRepository.keyAttendanceExpectedDaysMonth, month!);
+      await saveKey(AppSettingsRepository.keyAttendanceExpectedDaysTerm, term!);
+      await saveKey(AppSettingsRepository.keyAttendanceExpectedDaysYear, year!);
+      await saveKey(
+        AppSettingsRepository.keyAttendanceExpectedDaysHybridMonth,
+        hybridMonth!,
       );
-      await repo.set(
-        AppSettingsRepository.keyAttendanceExpectedDaysTerm,
-        term.toString(),
-        userRole: userRole,
-        userId: userId,
-        deviceId: deviceId,
-        userDisplayName: userDisplayName,
-        screen: 'Settings',
+      await saveKey(
+        AppSettingsRepository.keyAttendanceExpectedDaysHybridTerm,
+        hybridTerm!,
       );
-      await repo.set(
-        AppSettingsRepository.keyAttendanceExpectedDaysYear,
-        year.toString(),
-        userRole: userRole,
-        userId: userId,
-        deviceId: deviceId,
-        userDisplayName: userDisplayName,
-        screen: 'Settings',
+      await saveKey(
+        AppSettingsRepository.keyAttendanceExpectedDaysHybridYear,
+        hybridYear!,
       );
-      ref.invalidate(attendanceThresholdConfigProvider);
+      ref.invalidate(attendanceThresholdsByModeProvider);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

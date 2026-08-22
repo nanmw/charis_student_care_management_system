@@ -105,4 +105,49 @@ void main() {
       expect(paymentBelongsToSession(p, '2025'), isFalse);
     });
   });
+
+  group('calendarYearOverlapsRange', () {
+    test('a mid-year slice still overlaps that calendar year', () {
+      expect(
+        calendarYearOverlapsRange(
+          2026,
+          DateTime(2026, 5, 1),
+          DateTime(2026, 5, 31),
+        ),
+        isTrue,
+      );
+    });
+
+    test('a different year does not overlap', () {
+      expect(
+        calendarYearOverlapsRange(
+          2026,
+          DateTime(2025, 1, 1),
+          DateTime(2025, 12, 31),
+        ),
+        isFalse,
+      );
+    });
+  });
+
+  group('paymentTotalInDateRange', () {
+    test('sums overlapping months plus lump sum', () {
+      final p = _payment(
+        studentId: 1,
+        year: '2026',
+        jan: 10,
+        feb: 20,
+        mar: 40,
+        lumpSum: 100,
+      );
+      expect(
+        paymentTotalInDateRange(
+          p,
+          DateTime(2026, 3, 1),
+          DateTime(2026, 3, 31),
+        ),
+        140,
+      );
+    });
+  });
 }

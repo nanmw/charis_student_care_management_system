@@ -43,6 +43,13 @@ class AttendanceThresholdConfig {
     year: AppConstants.attendanceExpectedDaysPerYear,
   );
 
+  static const AttendanceThresholdConfig hybridDefaults =
+      AttendanceThresholdConfig(
+    month: AppConstants.attendanceExpectedDaysHybridPerMonth,
+    term: AppConstants.attendanceExpectedDaysHybridPerTerm,
+    year: AppConstants.attendanceExpectedDaysHybridPerYear,
+  );
+
   int forPeriod(AttendanceThresholdPeriod period) {
     switch (period) {
       case AttendanceThresholdPeriod.month:
@@ -63,6 +70,30 @@ int expectedDaysForPeriod(
   if (expectedDays != null) return expectedDays;
   if (config != null) return config.forPeriod(period);
   return AttendanceThresholdConfig.defaults.forPeriod(period);
+}
+
+/// Full-time and Hybrid expected-day triples.
+class AttendanceThresholdsByMode {
+  const AttendanceThresholdsByMode({
+    required this.fullTime,
+    required this.hybrid,
+  });
+
+  final AttendanceThresholdConfig fullTime;
+  final AttendanceThresholdConfig hybrid;
+
+  static const AttendanceThresholdsByMode defaults = AttendanceThresholdsByMode(
+    fullTime: AttendanceThresholdConfig.defaults,
+    hybrid: AttendanceThresholdConfig.hybridDefaults,
+  );
+
+  /// Hybrid students use [hybrid]; any other / null mode uses [fullTime].
+  AttendanceThresholdConfig forMode(String? mode) {
+    if (mode != null && mode.trim().toLowerCase() == 'hybrid') {
+      return hybrid;
+    }
+    return fullTime;
+  }
 }
 
 /// Counts present days among [records] whose date falls in [[start], [end]] (inclusive).
@@ -113,6 +144,27 @@ AttendanceThresholdResult evaluateAttendanceThreshold({
     default:
       return (DateTime(sessionYear, 2, 1), DateTime(sessionYear, 10, 31));
   }
+}
+
+/// Term number for a calendar month (Jan–Apr → 1, May–Jul → 2, Aug–Dec → 3).
+int termNumberForMonth(int month) {
+  if (month <= 4) return 1;
+  if (month <= 7) return 2;
+  return 3;
+}
+
+/// Inclusive calendar days from [start] through [end] (date-only, local).
+/// Returns an empty list when [end] is before [start].
+List<DateTime> calendarDaysInRange(DateTime start, DateTime end) {
+  var day = DateTime(start.year, start.month, start.day);
+  final last = DateTime(end.year, end.month, end.day);
+  if (day.isAfter(last)) return const [];
+  final days = <DateTime>[];
+  while (!day.isAfter(last)) {
+    days.add(day);
+    day = DateTime(day.year, day.month, day.day + 1);
+  }
+  return days;
 }
 
 /// Calendar month bounds for [year]/[month].

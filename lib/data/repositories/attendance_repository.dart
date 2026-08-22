@@ -108,6 +108,36 @@ class AttendanceRepository {
     return rows.map((r) => _dateOnly(r.date)).toSet();
   }
 
+  /// Stream of attendance rows whose date is in [[start], [end]] (inclusive, date-only).
+  /// When [studentIds] is non-null and non-empty, restrict to those students.
+  /// Empty [studentIds] returns no rows (fail-closed for facilitators with no students).
+  Stream<List<AttendanceData>> watchAttendanceInRange(
+    DateTime start,
+    DateTime end, {
+    List<int>? studentIds,
+  }) {
+    final startDay = _dateOnly(start);
+    final endDay = _dateOnly(end);
+    return (_db.select(_db.attendance)
+          ..where((t) {
+            var pred = t.date.isBiggerOrEqualValue(startDay) &
+                t.date.isSmallerOrEqualValue(endDay);
+            if (studentIds != null) {
+              if (studentIds.isEmpty) {
+                pred = pred & t.studentId.equals(-1);
+              } else {
+                pred = pred & t.studentId.isIn(studentIds);
+              }
+            }
+            return pred;
+          })
+          ..orderBy([
+            (t) => OrderingTerm.asc(t.date),
+            (t) => OrderingTerm.asc(t.studentId),
+          ]))
+        .watch();
+  }
+
   /// Upserts attendance for [date]. Each entry has studentId + present, notes.
   /// One row per (date, studentId); replaces existing for that date/student.
   /// When [academicSessionId] is provided, set on new rows (session-scoped attendance).
@@ -121,90 +151,149 @@ class AttendanceRepository {
     String? deviceId,
     String? userDisplayName,
     String? screen,
+  }) {
+    return upsertAttendanceRecords(
+      [
+        for (final e in rows)
+          AttendanceRecordEntry(
+            date: date,
+            studentId: e.studentId,
+            present: e.present,
+            notes: e.notes,
+          ),
+      ],
+      userRole: userRole,
+      academicSessionId: academicSessionId,
+      userId: userId,
+      deviceId: deviceId,
+      userDisplayName: userDisplayName,
+      screen: screen,
+    );
+  }
+
+  /// Upserts attendance cells across one or more dates in a single transaction.
+  /// When [academicSessionId] is provided, set on new rows.
+  Future<void> upsertAttendanceRecords(
+    List<AttendanceRecordEntry> records, {
+    required UserRole userRole,
+    int? academicSessionId,
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
   }) async {
     if (!RolePermissions.canEnterAttendance(userRole)) {
       throw StateError('Role cannot enter attendance');
     }
-    if (rows.isEmpty) return;
-    
-    final d = _dateOnly(date);
-    final studentIds = rows.map((e) => e.studentId).toList();
+    if (records.isEmpty) return;
 
-    // Fetch all existing attendance rows for this date and students in one query
-    final existingAttendance = await (_db.select(_db.attendance)
-          ..where((t) =>
-              t.date.equals(d) & t.studentId.isIn(studentIds),))
-        .get();
-
-    final existingMap = {for (final a in existingAttendance) a.studentId: a};
+    final grouped = <DateTime, List<AttendanceRecordEntry>>{};
+    for (final r in records) {
+      grouped.putIfAbsent(_dateOnly(r.date), () => []).add(r);
+    }
     final sessionCode = await _getSessionCodeById(academicSessionId);
 
-    // Use a transaction to batch all operations
     await _db.transaction(() async {
-      for (final e in rows) {
-        final existing = existingMap[e.studentId];
-        final operation = existing != null ? 'UPDATE' : 'INSERT';
-        int? attendanceId;
-
-        if (existing != null) {
-          // Update existing record
-          attendanceId = existing.id;
-          await (_db.update(_db.attendance)..where((t) => t.id.equals(existing.id))).write(
-            AttendanceCompanion(
-              present: Value(e.present ? 1 : 0),
-              notes: e.notes != null && e.notes!.trim().isNotEmpty
-                  ? Value(e.notes!.trim())
-                  : const Value.absent(),
-            ),
-          );
-        } else {
-          // Insert new record
-          attendanceId = await _db.into(_db.attendance).insert(
-            AttendanceCompanion.insert(
-              date: d,
-              studentId: e.studentId,
-              present: Value(e.present ? 1 : 0),
-              notes: e.notes != null && e.notes!.trim().isNotEmpty
-                  ? Value(e.notes!.trim())
-                  : const Value.absent(),
-              academicSessionId: academicSessionId != null ? Value(academicSessionId) : const Value.absent(),
-            ),
-          );
-        }
-        
-        if (userId != null) {
-          final studentRow = await (_db.select(_db.students)
-                ..where((t) => t.id.equals(e.studentId)))
-              .getSingleOrNull();
-          final payload = <String, dynamic>{
-            'date': d.toIso8601String(),
-            'studentId': e.studentId,
-            'present': e.present,
-            if (e.notes != null && e.notes!.trim().isNotEmpty) 'notes': e.notes!.trim(),
-            if (sessionCode != null) 'academicSession': sessionCode,
-            if (studentRow != null) 'studentName': '${studentRow.surname}, ${studentRow.firstName}',
-            if (studentRow != null) ..._studentYearEntry(await _classNameForId(studentRow.classId)),
-            if (studentRow != null && studentRow.mode != null && studentRow.mode!.isNotEmpty) 'studentMode': studentRow.mode,
-            if (userDisplayName != null) 'userDisplayName': userDisplayName,
-            if (screen != null) 'screen': screen,
-          };
-          await _insertChangeSet(
-            table: 'attendance',
-            recordId: attendanceId.toString(),
-            operation: operation,
-            payload: payload,
-            userId: userId,
-            version: 1,
-            deviceId: deviceId,
-            userDisplayName: userDisplayName,
-            screen: screen,
-            notifySync: false,
-          );
-        }
+      for (final entry in grouped.entries) {
+        await _upsertDateGroupInTransaction(
+          date: entry.key,
+          rows: entry.value,
+          academicSessionId: academicSessionId,
+          sessionCode: sessionCode,
+          userId: userId,
+          deviceId: deviceId,
+          userDisplayName: userDisplayName,
+          screen: screen,
+        );
       }
     });
     if (userId != null) {
       _onLocalChangeSetWritten?.call();
+    }
+  }
+
+  Future<void> _upsertDateGroupInTransaction({
+    required DateTime date,
+    required List<AttendanceRecordEntry> rows,
+    int? academicSessionId,
+    String? sessionCode,
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+  }) async {
+    final studentIds = rows.map((e) => e.studentId).toList();
+    final existingAttendance = await (_db.select(_db.attendance)
+          ..where((t) => t.date.equals(date) & t.studentId.isIn(studentIds)))
+        .get();
+    final existingMap = {for (final a in existingAttendance) a.studentId: a};
+
+    for (final e in rows) {
+      final existing = existingMap[e.studentId];
+      final operation = existing != null ? 'UPDATE' : 'INSERT';
+      final notesValue = e.notes != null && e.notes!.trim().isNotEmpty
+          ? Value(e.notes!.trim())
+          : const Value<String?>(null);
+      late final int attendanceId;
+
+      if (existing != null) {
+        attendanceId = existing.id;
+        await (_db.update(_db.attendance)..where((t) => t.id.equals(existing.id)))
+            .write(
+          AttendanceCompanion(
+            present: Value(e.present ? 1 : 0),
+            notes: notesValue,
+          ),
+        );
+      } else {
+        attendanceId = await _db.into(_db.attendance).insert(
+              AttendanceCompanion.insert(
+                date: date,
+                studentId: e.studentId,
+                present: Value(e.present ? 1 : 0),
+                notes: notesValue,
+                academicSessionId: academicSessionId != null
+                    ? Value(academicSessionId)
+                    : const Value.absent(),
+              ),
+            );
+      }
+
+      if (userId != null) {
+        final studentRow = await (_db.select(_db.students)
+              ..where((t) => t.id.equals(e.studentId)))
+            .getSingleOrNull();
+        final payload = <String, dynamic>{
+          'date': date.toIso8601String(),
+          'studentId': e.studentId,
+          'present': e.present,
+          if (e.notes != null && e.notes!.trim().isNotEmpty)
+            'notes': e.notes!.trim(),
+          if (sessionCode != null) 'academicSession': sessionCode,
+          if (studentRow != null)
+            'studentName': '${studentRow.surname}, ${studentRow.firstName}',
+          if (studentRow != null)
+            ..._studentYearEntry(await _classNameForId(studentRow.classId)),
+          if (studentRow != null &&
+              studentRow.mode != null &&
+              studentRow.mode!.isNotEmpty)
+            'studentMode': studentRow.mode,
+          if (userDisplayName != null) 'userDisplayName': userDisplayName,
+          if (screen != null) 'screen': screen,
+        };
+        await _insertChangeSet(
+          table: 'attendance',
+          recordId: attendanceId.toString(),
+          operation: operation,
+          payload: payload,
+          userId: userId,
+          version: 1,
+          deviceId: deviceId,
+          userDisplayName: userDisplayName,
+          screen: screen,
+          notifySync: false,
+        );
+      }
     }
   }
 
@@ -367,6 +456,21 @@ class AttendanceEntry {
     this.notes,
   });
 
+  final int studentId;
+  final bool present;
+  final String? notes;
+}
+
+/// One attendance cell across any date (for multi-date upsert).
+class AttendanceRecordEntry {
+  const AttendanceRecordEntry({
+    required this.date,
+    required this.studentId,
+    required this.present,
+    this.notes,
+  });
+
+  final DateTime date;
   final int studentId;
   final bool present;
   final String? notes;

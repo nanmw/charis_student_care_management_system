@@ -16,6 +16,34 @@ final attendanceRepositoryProvider = Provider<AttendanceRepository>((ref) {
   );
 });
 
+/// Inclusive date range key for [attendanceForRangeProvider].
+class AttendanceDateRange {
+  const AttendanceDateRange(this.start, this.end);
+
+  final DateTime start;
+  final DateTime end;
+
+  @override
+  bool operator ==(Object other) =>
+      other is AttendanceDateRange &&
+      other.start.year == start.year &&
+      other.start.month == start.month &&
+      other.start.day == start.day &&
+      other.end.year == end.year &&
+      other.end.month == end.month &&
+      other.end.day == end.day;
+
+  @override
+  int get hashCode => Object.hash(
+        start.year,
+        start.month,
+        start.day,
+        end.year,
+        end.month,
+        end.day,
+      );
+}
+
 /// Stream of attendance rows for [date] (date-only). Scoped to facilitator's class when applicable.
 final attendanceForDateProvider = StreamProvider.autoDispose
     .family<List<AttendanceData>, DateTime>((ref, date) {
@@ -28,6 +56,31 @@ final attendanceForDateProvider = StreamProvider.autoDispose
         final filter = studentIdsFilterForScope(scope, ids);
         return repo.watchAttendanceForDate(
           date,
+          studentIds: filter,
+        );
+      },
+      loading: () => const Stream.empty(),
+      error: (e, st) => Stream.error(e, st),
+    ),
+    loading: () => const Stream.empty(),
+    error: (e, st) => Stream.error(e, st),
+  );
+});
+
+/// Stream of attendance rows in [[AttendanceDateRange.start], [AttendanceDateRange.end]].
+/// Scoped to the facilitator's class when applicable.
+final attendanceForRangeProvider = StreamProvider.autoDispose
+    .family<List<AttendanceData>, AttendanceDateRange>((ref, range) {
+  final repo = ref.watch(attendanceRepositoryProvider);
+  final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
+  final allowedIdsAsync = ref.watch(allowedStudentIdsStreamProvider);
+  return scopeAsync.when(
+    data: (scope) => allowedIdsAsync.when(
+      data: (ids) {
+        final filter = studentIdsFilterForScope(scope, ids);
+        return repo.watchAttendanceInRange(
+          range.start,
+          range.end,
           studentIds: filter,
         );
       },

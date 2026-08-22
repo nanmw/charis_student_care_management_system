@@ -89,14 +89,11 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
   }
 
   bool _usesDateRange(ReportType type) {
-    if (type == ReportType.payments) {
-      final session = _selectedSession?.trim();
-      return session == null || session.isEmpty;
-    }
     return type == ReportType.studentSummary ||
         type == ReportType.attendance ||
         type == ReportType.ministryHours ||
         type == ReportType.tests ||
+        type == ReportType.payments ||
         type == ReportType.missionsPayment;
   }
 
@@ -139,7 +136,7 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
       firstDate: DateTime(2020),
       lastDate: DateTime(2030),
     );
-    if (picked != null && picked.isBefore(_dateEnd)) {
+    if (picked != null && !picked.isAfter(_dateEnd)) {
       setState(() => _dateStart = picked);
     }
   }
@@ -302,11 +299,42 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
         case ReportType.missionsPayment:
           final rows =
               await ref.read(missionPaymentsReportDataProvider(_filters).future);
-          const headers = ['Payment date', 'Student', 'Amount'];
+          const headers = [
+            'Student',
+            'Trip',
+            'Date',
+            'Amount',
+            'March',
+            'April',
+            'May',
+            'June',
+            'July',
+            'Aug',
+            'Sept',
+            'Oct',
+            'Paid to date',
+            'Balance',
+            'Comment',
+          ];
+          String money(double v) => v.toStringAsFixed(2);
           final tableRows = rows.map((r) => [
-            app_date_utils.DateUtils.formatIsoDate(r.paymentDate),
             r.studentName,
-            r.amount.toStringAsFixed(2),
+            r.tripSelected ?? '—',
+            r.date != null
+                ? app_date_utils.DateUtils.formatIsoDate(r.date!)
+                : '—',
+            money(r.amount),
+            money(r.mar),
+            money(r.apr),
+            money(r.may),
+            money(r.jun),
+            money(r.jul),
+            money(r.aug),
+            money(r.sep),
+            money(r.oct),
+            money(r.paidToDate),
+            money(r.balance),
+            r.comment ?? '—',
           ],).toList();
           const title = 'Missions Payment Report';
           if (format == ReportFormat.pdf) {
@@ -550,9 +578,6 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
     final usesSession = _usesSession(_selectedReportType);
     final usesClassAndMode = _usesClassAndMode(_selectedReportType);
     final isCohort = _selectedReportType == ReportType.cohortSummary;
-    final financesSessionLocksDate =
-        _selectedReportType == ReportType.payments &&
-            (_selectedSession?.trim().isNotEmpty ?? false);
     return Card(
       elevation: 0,
       color: isDark
@@ -900,65 +925,56 @@ class _ExportReportsScreenState extends ConsumerState<ExportReportsScreen> {
                   ),
                   const SizedBox(height: 8),
                   _buildModeField(colorScheme, enabled: usesClassAndMode),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Date Range',
-                    style: TextStyle(
-                      color: colorScheme.onSurface,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                      fontFamily: 'Questrial',
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: usesDateRange ? _pickDateStart : null,
-                          icon: const Icon(Icons.calendar_today, size: 18),
-                          label: Text(
-                            app_date_utils.DateUtils.formatIsoDate(_dateStart),
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      const Text('–', style: TextStyle(fontSize: 14)),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: usesDateRange ? _pickDateEnd : null,
-                          icon: const Icon(Icons.calendar_today, size: 18),
-                          label: Text(
-                            app_date_utils.DateUtils.formatIsoDate(_dateEnd),
-                            style: const TextStyle(fontSize: 13),
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 10,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (financesSessionLocksDate) ...[
-                    const SizedBox(height: 8),
+                  if (usesDateRange) ...[
+                    const SizedBox(height: 16),
                     Text(
-                      'Date range is unused while an academic session is selected; payments are scoped by session.',
+                      'Date Range',
                       style: TextStyle(
-                        color: colorScheme.onSurfaceVariant,
-                        fontSize: 12,
+                        color: colorScheme.onSurface,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
                         fontFamily: 'Questrial',
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _pickDateStart,
+                            icon: const Icon(Icons.calendar_today, size: 18),
+                            label: Text(
+                              app_date_utils.DateUtils.formatIsoDate(_dateStart),
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Text('–', style: TextStyle(fontSize: 14)),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: _pickDateEnd,
+                            icon: const Icon(Icons.calendar_today, size: 18),
+                            label: Text(
+                              app_date_utils.DateUtils.formatIsoDate(_dateEnd),
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 10,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ],

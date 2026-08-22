@@ -123,6 +123,16 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
   TestDataSource? _dataSource;
   ThemeMode? _dataSourceThemeMode;
 
+  /// Drives Save button enablement without remounting the data grid on keystrokes.
+  final ValueNotifier<bool> _canSaveNotifier = ValueNotifier(false);
+
+  void _syncCanSave() {
+    final canSave = _hasUnsavedChanges();
+    if (_canSaveNotifier.value != canSave) {
+      _canSaveNotifier.value = canSave;
+    }
+  }
+
   @override
   void dispose() {
     for (final timer in _debounceTimers.values) {
@@ -132,6 +142,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     for (final c in _controllers.values) {
       c.dispose();
     }
+    _canSaveNotifier.dispose();
     super.dispose();
   }
 
@@ -614,15 +625,22 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         const SizedBox(height: 16),
         Row(
           children: [
-            FilledButton.icon(
-              onPressed: _hasUnsavedChanges() ? _saveAllChanges : null,
-              icon: const Icon(Icons.save, size: 20),
-              label: const Text('Save All Changes'),
-              style: FilledButton.styleFrom(
-                backgroundColor: redColor,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-              ),
+            ValueListenableBuilder<bool>(
+              valueListenable: _canSaveNotifier,
+              builder: (context, canSave, _) {
+                return FilledButton.icon(
+                  onPressed: canSave ? _saveAllChanges : null,
+                  icon: const Icon(Icons.save, size: 20),
+                  label: const Text('Save All Changes'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: redColor,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                  ),
+                );
+              },
             ),
             const SizedBox(width: 12),
             DropdownButton<String>(
@@ -824,10 +842,12 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                       _edits[studentId]!.score = score;
                       // Avoid setState (full grid remount) while typing; refresh Passed cell only.
                       _dataSource?.refreshPassedCell(studentId);
+                      _syncCanSave();
                     },
                     onLabelChanged: (studentId, label) {
                       _edits[studentId] ??= TestRowEdit();
                       _edits[studentId]!.label = label;
+                      _syncCanSave();
                     },
                     onView: (student) {
                       StudentSummaryDialog.show(
@@ -1609,6 +1629,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
               }
             }
           });
+          _syncCanSave();
 
           // Update data source after state update completes
           // Use post-frame callback to ensure DataGrid rebuilds properly
@@ -1656,6 +1677,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         });
       }
     });
+    _syncCanSave();
   }
 
   /// Clears subject, score, notes, and Passed (shows "-") for all students in the
@@ -1678,6 +1700,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         _controllers[labelKey]?.text = '';
       }
     });
+    _syncCanSave();
 
     SchedulerBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -1818,6 +1841,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
           _edits.remove(id);
         }
       });
+      _syncCanSave();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1913,6 +1937,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
           }
         }
       });
+      _syncCanSave();
 
       // Update data source after state update completes
       // Use post-frame callback to ensure DataGrid rebuilds properly

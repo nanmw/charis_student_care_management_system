@@ -3,7 +3,7 @@
 ; Non-commercial use only
 
 #define MyAppName "Charis"
-#define MyAppVersion "1.8"
+#define MyAppVersion "1.10"
 #define MyAppPublisher "Nati Applications and Tailored Interfaces Ltd."
 #define MyAppURL "https://onedrive.live.com/"
 #define MyAppExeName "Charis.exe"
@@ -33,7 +33,7 @@ DisableProgramGroupPage=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only).
 ;PrivilegesRequired=lowest
 OutputDir=C:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\installers
-OutputBaseFilename=Charis_desktop_setup_v1.8
+OutputBaseFilename=Charis_desktop_setup_v1.10
 SetupIconFile=C:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\windows\runner\resources\app_icon.ico
 Password=SteveCharisDesktop
 Encryption=yes

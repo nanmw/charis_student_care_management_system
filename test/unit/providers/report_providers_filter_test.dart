@@ -147,7 +147,7 @@ void main() {
     expect(rows.single.student.surname, 'InScope');
   });
 
-  test('missionPaymentsReportDataProvider respects allow-list and active-only',
+  test('missionPaymentsReportDataProvider exports schedule grid and skips withdrawn',
       () async {
     final classes = await database.select(database.classes).get();
     final year1 = classes.firstWhere((c) => c.name == 'Year 1');
@@ -170,46 +170,21 @@ void main() {
           ),
         );
 
-    final missionId = await database.into(database.missions).insert(
-          MissionsCompanion.insert(
-            title: 'Trip',
-            location: 'Here',
-            startDate: DateTime(2026, 6, 1),
-            endDate: DateTime(2026, 6, 10),
-            slotsTotal: 10,
-            year: '2026',
-            mode: 'Full-time',
-          ),
-        );
-    final activePart = await database.into(database.missionParticipations).insert(
-          MissionParticipationsCompanion.insert(
-            missionId: missionId,
+    await database.into(database.missionPaymentSchedule).insert(
+          MissionPaymentScheduleCompanion.insert(
             studentId: activeId,
-            role: 'Volunteer',
-            amount: const Value(100),
+            year: '2026',
+            tripSelected: const Value('Cape Town'),
+            amount: const Value(1000),
+            mar: const Value(250),
           ),
         );
-    final withdrawnPart =
-        await database.into(database.missionParticipations).insert(
-              MissionParticipationsCompanion.insert(
-                missionId: missionId,
-                studentId: withdrawnId,
-                role: 'Volunteer',
-                amount: const Value(100),
-              ),
-            );
-    await database.into(database.missionPayments).insert(
-          MissionPaymentsCompanion.insert(
-            missionParticipationId: activePart,
-            paymentDate: DateTime(2026, 3, 1),
-            amount: 50,
-          ),
-        );
-    await database.into(database.missionPayments).insert(
-          MissionPaymentsCompanion.insert(
-            missionParticipationId: withdrawnPart,
-            paymentDate: DateTime(2026, 3, 2),
-            amount: 50,
+    await database.into(database.missionPaymentSchedule).insert(
+          MissionPaymentScheduleCompanion.insert(
+            studentId: withdrawnId,
+            year: '2026',
+            amount: const Value(1000),
+            mar: const Value(250),
           ),
         );
 
@@ -217,12 +192,16 @@ void main() {
       mode: 'Full-time',
       dateStart: DateTime(2026, 1, 1),
       dateEnd: DateTime(2026, 12, 31),
+      academicSession: '2026',
     );
 
     final rows =
         await container.read(missionPaymentsReportDataProvider(filters).future);
     expect(rows, hasLength(1));
     expect(rows.single.studentName, contains('Active'));
+    expect(rows.single.tripSelected, 'Cape Town');
+    expect(rows.single.paidToDate, 250);
+    expect(rows.single.balance, 750);
   });
 
   test('attendanceReportDataProvider filters by academicSessionId', () async {
@@ -252,6 +231,13 @@ void main() {
             academicSessionId: Value(session2025.id),
           ),
         );
+    await database.into(database.attendance).insert(
+          AttendanceCompanion.insert(
+            studentId: studentId,
+            date: DateTime.utc(2026, 3, 3),
+            present: const Value(1),
+          ),
+        );
 
     final filters = ReportFilters(
       mode: 'Full-time',
@@ -262,8 +248,69 @@ void main() {
 
     final rows =
         await container.read(attendanceReportDataProvider(filters).future);
-    expect(rows, hasLength(1));
-    expect(rows.single.date.day, 1);
+    expect(rows, hasLength(2));
+    expect(rows.map((r) => r.date.day).toSet(), {1, 3});
+  });
+
+  test('ministryReportDataProvider includes unscoped rows for selected session',
+      () async {
+    final sessions = await database.select(database.academicSessions).get();
+    final session2026 = sessions.firstWhere((s) => s.code == '2026');
+    final session2025 = sessions.firstWhere((s) => s.code == '2025');
+    final studentId = await database.into(database.students).insert(
+          StudentsCompanion.insert(
+            surname: 'Min',
+            firstName: 'Student',
+            mode: const Value('Full-time'),
+          ),
+        );
+    await database.into(database.ministryEntries).insert(
+          MinistryEntriesCompanion.insert(
+            studentId: studentId,
+            year: '2026',
+            term: 1,
+            ministryType: 'Community Service',
+            date: DateTime.utc(2026, 3, 1),
+            hours: 2,
+            academicSessionId: Value(session2026.id),
+          ),
+        );
+    await database.into(database.ministryEntries).insert(
+          MinistryEntriesCompanion.insert(
+            studentId: studentId,
+            year: '2025',
+            term: 1,
+            ministryType: 'Evangelism',
+            date: DateTime.utc(2026, 3, 2),
+            hours: 3,
+            academicSessionId: Value(session2025.id),
+          ),
+        );
+    await database.into(database.ministryEntries).insert(
+          MinistryEntriesCompanion.insert(
+            studentId: studentId,
+            year: '2026',
+            term: 1,
+            ministryType: 'Outreach',
+            date: DateTime.utc(2026, 3, 3),
+            hours: 4,
+          ),
+        );
+
+    final filters = ReportFilters(
+      mode: 'Full-time',
+      dateStart: DateTime(2026, 1, 1),
+      dateEnd: DateTime(2026, 12, 31),
+      academicSession: '2026',
+    );
+
+    final rows =
+        await container.read(ministryReportDataProvider(filters).future);
+    expect(rows, hasLength(2));
+    expect(rows.map((r) => r.ministryType).toSet(), {
+      'Community Service',
+      'Outreach',
+    });
   });
 
   test('reportDataProvider excludes students with no in-range activity', () async {
@@ -406,6 +453,115 @@ void main() {
     final rows =
         await container.read(studentsReportDataProvider(filters).future);
     expect(rows, isEmpty);
+  });
+
+  test('attendanceReportDataProvider respects date range', () async {
+    final studentId = await database.into(database.students).insert(
+          StudentsCompanion.insert(
+            surname: 'Range',
+            firstName: 'Att',
+            mode: const Value('Full-time'),
+          ),
+        );
+    await database.into(database.attendance).insert(
+          AttendanceCompanion.insert(
+            studentId: studentId,
+            date: DateTime.utc(2026, 3, 10),
+            present: const Value(1),
+          ),
+        );
+    await database.into(database.attendance).insert(
+          AttendanceCompanion.insert(
+            studentId: studentId,
+            date: DateTime.utc(2026, 5, 10),
+            present: const Value(1),
+          ),
+        );
+
+    final filters = ReportFilters(
+      mode: 'Full-time',
+      dateStart: DateTime(2026, 5, 1),
+      dateEnd: DateTime(2026, 5, 31),
+      academicSession: '2026',
+    );
+
+    final rows =
+        await container.read(attendanceReportDataProvider(filters).future);
+    expect(rows, hasLength(1));
+    expect(rows.single.date.month, 5);
+  });
+
+  test('paymentsReportDataProvider totals only months in date range', () async {
+    final studentId = await database.into(database.students).insert(
+          StudentsCompanion.insert(
+            surname: 'Range',
+            firstName: 'Pay',
+            mode: const Value('Full-time'),
+          ),
+        );
+    await database.into(database.payments).insert(
+          PaymentsCompanion.insert(
+            studentId: studentId,
+            year: '2026',
+            mar: const Value(40),
+            may: const Value(60),
+          ),
+        );
+
+    final filters = ReportFilters(
+      mode: 'Full-time',
+      dateStart: DateTime(2026, 5, 1),
+      dateEnd: DateTime(2026, 5, 31),
+      academicSession: '2026',
+    );
+
+    final rows =
+        await container.read(paymentsReportDataProvider(filters).future);
+    expect(rows, hasLength(1));
+    expect(rows.single.totalPaid, 60);
+  });
+
+  test('missionPaymentsReportDataProvider applies date range to trip date and months',
+      () async {
+    final studentId = await database.into(database.students).insert(
+          StudentsCompanion.insert(
+            surname: 'Trip',
+            firstName: 'Date',
+            mode: const Value('Full-time'),
+          ),
+        );
+    await database.into(database.missionPaymentSchedule).insert(
+          MissionPaymentScheduleCompanion.insert(
+            studentId: studentId,
+            year: '2026',
+            date: Value(DateTime.utc(2026, 3, 15).millisecondsSinceEpoch),
+            amount: const Value(1000),
+            mar: const Value(250),
+            oct: const Value(100),
+          ),
+        );
+
+    final inRange = ReportFilters(
+      mode: 'Full-time',
+      dateStart: DateTime(2026, 3, 1),
+      dateEnd: DateTime(2026, 3, 31),
+      academicSession: '2026',
+    );
+    final inRangeRows =
+        await container.read(missionPaymentsReportDataProvider(inRange).future);
+    expect(inRangeRows, hasLength(1));
+    expect(inRangeRows.single.mar, 250);
+    expect(inRangeRows.single.oct, 0);
+
+    final outOfRange = ReportFilters(
+      mode: 'Full-time',
+      dateStart: DateTime(2026, 5, 1),
+      dateEnd: DateTime(2026, 5, 31),
+      academicSession: '2026',
+    );
+    final outRows = await container
+        .read(missionPaymentsReportDataProvider(outOfRange).future);
+    expect(outRows, isEmpty);
   });
 }
 

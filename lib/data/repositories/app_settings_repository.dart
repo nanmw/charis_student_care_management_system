@@ -27,6 +27,12 @@ class AppSettingsRepository {
       'attendance_expected_days_term';
   static const String keyAttendanceExpectedDaysYear =
       'attendance_expected_days_year';
+  static const String keyAttendanceExpectedDaysHybridMonth =
+      'attendance_expected_days_hybrid_month';
+  static const String keyAttendanceExpectedDaysHybridTerm =
+      'attendance_expected_days_hybrid_term';
+  static const String keyAttendanceExpectedDaysHybridYear =
+      'attendance_expected_days_hybrid_year';
   static const String keyCurrentAcademicSession = 'current_academic_session';
 
   static const _tuitionKeys = {
@@ -38,6 +44,9 @@ class AppSettingsRepository {
     keyAttendanceExpectedDaysMonth,
     keyAttendanceExpectedDaysTerm,
     keyAttendanceExpectedDaysYear,
+    keyAttendanceExpectedDaysHybridMonth,
+    keyAttendanceExpectedDaysHybridTerm,
+    keyAttendanceExpectedDaysHybridYear,
   };
 
   /// Keys that replicate across devices via change-sets.
@@ -47,6 +56,9 @@ class AppSettingsRepository {
     keyAttendanceExpectedDaysMonth,
     keyAttendanceExpectedDaysTerm,
     keyAttendanceExpectedDaysYear,
+    keyAttendanceExpectedDaysHybridMonth,
+    keyAttendanceExpectedDaysHybridTerm,
+    keyAttendanceExpectedDaysHybridYear,
     keyCurrentAcademicSession,
   };
 

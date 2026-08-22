@@ -50,6 +50,78 @@ double paymentAmountForMonth(Payment p, int year, int month) {
   }
 }
 
+/// True when calendar [year]/[month] overlaps [[rangeStart], [rangeEnd]] (inclusive).
+bool calendarMonthOverlapsRange({
+  required int year,
+  required int month,
+  required DateTime rangeStart,
+  required DateTime rangeEnd,
+}) {
+  if (month < 1 || month > 12) return false;
+  final monthStart = DateTime.utc(year, month, 1);
+  final monthEnd = month == 12
+      ? DateTime.utc(year, 12, 31, 23, 59, 59, 999)
+      : DateTime.utc(year, month + 1, 1)
+          .subtract(const Duration(milliseconds: 1));
+  final start = DateTime.utc(rangeStart.year, rangeStart.month, rangeStart.day);
+  final end = DateTime.utc(
+    rangeEnd.year,
+    rangeEnd.month,
+    rangeEnd.day,
+    23,
+    59,
+    59,
+    999,
+  );
+  return !monthEnd.isBefore(start) && !monthStart.isAfter(end);
+}
+
+/// True when calendar [year] (1 Jan–31 Dec) overlaps the date range.
+bool calendarYearOverlapsRange(
+  int year,
+  DateTime rangeStart,
+  DateTime rangeEnd,
+) {
+  final yearStart = DateTime.utc(year, 1, 1);
+  final yearEnd = DateTime.utc(year, 12, 31, 23, 59, 59, 999);
+  final start = DateTime.utc(rangeStart.year, rangeStart.month, rangeStart.day);
+  final end = DateTime.utc(
+    rangeEnd.year,
+    rangeEnd.month,
+    rangeEnd.day,
+    23,
+    59,
+    59,
+    999,
+  );
+  return !yearEnd.isBefore(start) && !yearStart.isAfter(end);
+}
+
+/// Sum of monthly amounts (and lump sum) whose calendar month overlaps [rangeStart]–[rangeEnd].
+double paymentTotalInDateRange(
+  Payment p,
+  DateTime rangeStart,
+  DateTime rangeEnd,
+) {
+  final year = int.tryParse(p.year);
+  if (year == null) return 0;
+  var total = 0.0;
+  var yearOverlaps = false;
+  for (var m = 1; m <= 12; m++) {
+    if (calendarMonthOverlapsRange(
+      year: year,
+      month: m,
+      rangeStart: rangeStart,
+      rangeEnd: rangeEnd,
+    )) {
+      yearOverlaps = true;
+      total += paymentAmountForMonth(p, year, m);
+    }
+  }
+  if (yearOverlaps) total += p.lumpSum;
+  return total;
+}
+
 /// Session tuition paid on one payment row (Feb–Oct months + lump sum).
 /// Jan/Nov/Dec are excluded (outside the academic session).
 double sessionPaymentTotal(Payment p) {

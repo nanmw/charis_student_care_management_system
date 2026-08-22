@@ -90,9 +90,8 @@ final attendanceSummaryForStudentProvider = StreamProvider.autoDispose
     .family<AttendanceSummary, int>((ref, studentId) {
   final db = ref.watch(appDatabaseProvider);
   final currentSessionAsync = ref.watch(currentAcademicSessionProvider);
-  final thresholdConfig =
-      ref.watch(attendanceThresholdConfigProvider).valueOrNull ??
-          AttendanceThresholdConfig.defaults;
+  final byMode = ref.watch(attendanceThresholdsByModeProvider).valueOrNull ??
+      AttendanceThresholdsByMode.defaults;
 
   if (currentSessionAsync.hasError) {
     return Stream.error(
@@ -104,11 +103,16 @@ final attendanceSummaryForStudentProvider = StreamProvider.autoDispose
     return const Stream.empty();
   }
 
-  final query = db.select(db.attendance)
+  final studentQuery = db.select(db.students)
+    ..where((t) => t.id.equals(studentId));
+  final attendanceQuery = db.select(db.attendance)
     ..where((t) => t.studentId.equals(studentId))
     ..orderBy([(t) => OrderingTerm.desc(t.date)]);
 
-  return query.watch().map((allAttendance) {
+  return studentQuery.watch().asyncExpand((students) {
+    final mode = students.isEmpty ? null : students.first.mode;
+    final thresholdConfig = byMode.forMode(mode);
+    return attendanceQuery.watch().map((allAttendance) {
     final totalDays = allAttendance.length;
     final presentDays = allAttendance.where((a) => a.present == 1).length;
     final percentage = totalDays > 0 ? (presentDays / totalDays) * 100 : 0.0;
@@ -163,6 +167,7 @@ final attendanceSummaryForStudentProvider = StreamProvider.autoDispose
         config: thresholdConfig,
       ),
     );
+    });
   });
 });
 

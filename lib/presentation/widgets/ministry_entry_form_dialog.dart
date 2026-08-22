@@ -7,6 +7,7 @@ import 'package:charis_student_care/core/constants/app_constants.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/presentation/providers/academic_session_providers.dart';
 import 'package:charis_student_care/presentation/providers/class_providers.dart';
 import 'package:charis_student_care/presentation/providers/ministry_providers.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
@@ -138,6 +139,14 @@ class _MinistryEntryFormDialogState
         );
       } else {
         final now = DateTime.now();
+        int? academicSessionId;
+        final sessionCode =
+            ref.read(currentAcademicSessionProvider).valueOrNull?.trim();
+        if (sessionCode != null && sessionCode.isNotEmpty) {
+          academicSessionId = await ref
+              .read(academicSessionRepositoryProvider)
+              .getSessionIdByCode(sessionCode);
+        }
         await repo.insert(
           MinistryEntriesCompanion(
             studentId: Value(_studentId!),
@@ -153,6 +162,9 @@ class _MinistryEntryFormDialogState
             notes: Value(notes),
             createdAt: Value(now),
             updatedAt: const Value.absent(),
+            academicSessionId: academicSessionId != null
+                ? Value(academicSessionId)
+                : const Value.absent(),
           ),
           userRole: auth is Authenticated
               ? auth.role
