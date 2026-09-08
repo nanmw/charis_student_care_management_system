@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:charis_student_care/data/database/app_database.dart';
@@ -65,6 +66,30 @@ final attendanceForDateProvider = StreamProvider.autoDispose
     loading: () => const Stream.empty(),
     error: (e, st) => Stream.error(e, st),
   );
+});
+
+/// Sorted student-id list for [attendanceForStudentIdsProvider] family equality.
+class AttendanceStudentIds {
+  AttendanceStudentIds(Iterable<int> ids)
+      : ids = List<int>.unmodifiable((ids.toList()..sort()));
+
+  final List<int> ids;
+
+  @override
+  bool operator ==(Object other) =>
+      other is AttendanceStudentIds && listEquals(other.ids, ids);
+
+  @override
+  int get hashCode => Object.hashAll(ids);
+}
+
+/// All attendance rows for [AttendanceStudentIds.ids] (no date range).
+/// Empty ids returns no rows. Scoped to facilitator when [studentIdsFilterForScope]
+/// is applied by the caller (pass already-visible students).
+final attendanceForStudentIdsProvider = StreamProvider.autoDispose
+    .family<List<AttendanceData>, AttendanceStudentIds>((ref, key) {
+  final repo = ref.watch(attendanceRepositoryProvider);
+  return repo.watchAttendanceForStudents(studentIds: key.ids);
 });
 
 /// Stream of attendance rows in [[AttendanceDateRange.start], [AttendanceDateRange.end]].

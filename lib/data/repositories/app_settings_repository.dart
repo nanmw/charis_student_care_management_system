@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import 'package:charis_student_care/core/config/sync_folder_config.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/domain/attendance/attendance_thresholds.dart';
 
 /// Generic key-value repository for app_settings table.
 /// Used for OneDrive URL and other global preferences.
@@ -33,6 +34,7 @@ class AppSettingsRepository {
       'attendance_expected_days_hybrid_term';
   static const String keyAttendanceExpectedDaysHybridYear =
       'attendance_expected_days_hybrid_year';
+  static const String keyAttendanceHolidays = 'attendance_holidays';
   static const String keyCurrentAcademicSession = 'current_academic_session';
 
   static const _tuitionKeys = {
@@ -47,6 +49,7 @@ class AppSettingsRepository {
     keyAttendanceExpectedDaysHybridMonth,
     keyAttendanceExpectedDaysHybridTerm,
     keyAttendanceExpectedDaysHybridYear,
+    keyAttendanceHolidays,
   };
 
   /// Keys that replicate across devices via change-sets.
@@ -59,6 +62,7 @@ class AppSettingsRepository {
     keyAttendanceExpectedDaysHybridMonth,
     keyAttendanceExpectedDaysHybridTerm,
     keyAttendanceExpectedDaysHybridYear,
+    keyAttendanceHolidays,
     keyCurrentAcademicSession,
   };
 
@@ -71,6 +75,19 @@ class AppSettingsRepository {
     final d = deviceId?.trim();
     if (d != null && d.isNotEmpty && d != 'legacy') return d;
     return SyncFolderConfig.getOrCreateDeviceId();
+  }
+
+  /// Writes 2026 Full-time/Hybrid holiday seed when [keyAttendanceHolidays]
+  /// is missing. Does not overwrite admin edits and does not emit a change-set.
+  Future<void> ensureAttendanceHolidaysSeeded() async {
+    final existing = await get(keyAttendanceHolidays);
+    if (existing != null && existing.trim().isNotEmpty) return;
+    await _db.into(_db.appSettings).insertOnConflictUpdate(
+          AppSettingsCompanion.insert(
+            key: keyAttendanceHolidays,
+            value: Value(AttendanceHolidaysByMode.seed2026.toJsonString()),
+          ),
+        );
   }
 
   /// Gets a setting value by key. Returns null if not set.

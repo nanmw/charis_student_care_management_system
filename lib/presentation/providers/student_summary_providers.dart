@@ -90,6 +90,8 @@ final attendanceSummaryForStudentProvider = StreamProvider.autoDispose
     .family<AttendanceSummary, int>((ref, studentId) {
   final db = ref.watch(appDatabaseProvider);
   final currentSessionAsync = ref.watch(currentAcademicSessionProvider);
+  final sessions =
+      ref.watch(allAcademicSessionsStreamProvider).valueOrNull ?? const [];
   final byMode = ref.watch(attendanceThresholdsByModeProvider).valueOrNull ??
       AttendanceThresholdsByMode.defaults;
 
@@ -126,10 +128,17 @@ final attendanceSummaryForStudentProvider = StreamProvider.autoDispose
     final sessionCode = (trimmed != null && trimmed.isNotEmpty)
         ? trimmed
         : _defaultCurrentAcademicSession();
-    final yearStr =
-        AcademicSessionRepository.yearFromSessionCode(sessionCode) ??
-            DateTime.now().year.toString();
-    final sessionYear = int.tryParse(yearStr) ?? DateTime.now().year;
+    DateTime? sessionStart;
+    for (final s in sessions) {
+      if (s.code == sessionCode) {
+        sessionStart = s.startDate;
+        break;
+      }
+    }
+    final sessionYear = sessionCalendarYear(
+      sessionCode: sessionCode,
+      startDate: sessionStart,
+    );
     final now = DateTime.now();
 
     final monthRange = monthDateRange(now.year, now.month);

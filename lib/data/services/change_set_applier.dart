@@ -763,6 +763,7 @@ class ChangeSetApplier {
           );
           await _storeMapping('payments', record.recordId, existing.id);
         } else {
+          final now = DateTime.now();
           final id = await _db.into(_db.payments).insert(
                 PaymentsCompanion.insert(
                   studentId: studentId,
@@ -783,6 +784,8 @@ class ChangeSetApplier {
                   nov: Value(getDouble('nov')),
                   dec: Value(getDouble('dec')),
                   lumpSum: Value(getDouble('lumpSum')),
+                  createdAt: Value(now),
+                  updatedAt: Value(now),
                 ),
               );
           await _storeMapping('payments', record.recordId, id);
@@ -1031,6 +1034,7 @@ class ChangeSetApplier {
                   supervisor: _optValue<String>(payload['supervisor']),
                   approved: Value(payload['approved'] as bool? ?? false),
                   notes: _optValue<String>(payload['notes']),
+                  createdAt: Value(DateTime.now()),
                   academicSessionId: sessionId != null
                       ? Value(sessionId)
                       : const Value.absent(),

@@ -1727,20 +1727,22 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
     });
   }
 
+  /// True when [edit] is complete and differs from the cached test (or has no cached row).
+  bool _editDiffersFromCached(int studentId, TestRowEdit edit) {
+    if (edit.subjectId == null || edit.score == null) return false;
+    final test = _cachedTests![studentId];
+    if (test == null) return true;
+    return edit.subjectId != test.subjectId ||
+        edit.score != test.score ||
+        (edit.label ?? '') != (test.label ?? '');
+  }
+
   /// True when there is at least one row with a complete, changed value that can be saved.
   /// Existing rows can be updated via upsert flow.
   bool _hasUnsavedChanges() {
     if (_cachedTests == null) return false;
     for (final entry in _edits.entries) {
-      final studentId = entry.key;
-      final edit = entry.value;
-      final test = _cachedTests![studentId];
-      if (edit.subjectId == null || edit.score == null) continue;
-      if (test == null) return true;
-      final hasChange = edit.subjectId != test.subjectId ||
-          edit.score != test.score ||
-          (edit.label ?? '') != (test.label ?? '');
-      if (hasChange) return true;
+      if (_editDiffersFromCached(entry.key, entry.value)) return true;
     }
     return false;
   }
@@ -1778,6 +1780,7 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
         final studentId = entry.key;
         final edit = entry.value;
 
+        if (!_editDiffersFromCached(studentId, edit)) continue;
         if (edit.subjectId == null) continue; // Subject required (guideline 8)
         if (edit.score == null) {
           continue; // Score undefined: not yet entered, skip
@@ -1808,8 +1811,9 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
             updatedCount++;
           }
           savedStudentIds.add(studentId);
-        } catch (_) {
-          failures.add(studentNameById[studentId] ?? 'student $studentId');
+        } catch (e) {
+          final name = studentNameById[studentId] ?? 'student $studentId';
+          failures.add('$name ($e)');
         }
       }
 

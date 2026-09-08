@@ -21,6 +21,26 @@ void main() {
     await db.close();
   });
 
+  test('watchAttendanceInRange includes local-midnight stored days', () async {
+    final studentId = await db.into(db.students).insert(
+          StudentsCompanion.insert(surname: 'Ada', firstName: 'Lovelace'),
+        );
+    // Legacy path: local midnight (not UTC). Must still appear in the term window.
+    await db.into(db.attendance).insert(
+          AttendanceCompanion.insert(
+            date: DateTime(2026, 7, 15),
+            studentId: studentId,
+            present: const Value(1),
+          ),
+        );
+
+    final rows = await repo
+        .watchAttendanceInRange(DateTime(2026, 5, 1), DateTime(2026, 7, 31))
+        .first;
+    expect(rows.length, 1);
+    expect(rows.first.present, 1);
+  });
+
   test('watchAttendanceInRange returns only dates inside the window', () async {
     final studentId = await db.into(db.students).insert(
           StudentsCompanion.insert(surname: 'Ada', firstName: 'Lovelace'),

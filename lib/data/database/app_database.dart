@@ -2,8 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 import 'tables/academic_sessions.dart';
 import 'tables/classes.dart';
 import 'tables/students.dart';
@@ -23,6 +21,7 @@ import 'tables/missions.dart';
 import 'tables/users.dart';
 import 'tables/sync_record_mapping.dart';
 import 'tables/sync_conflicts.dart';
+import 'database_file.dart';
 
 part 'app_database.g.dart';
 
@@ -1398,11 +1397,11 @@ class AppDatabase extends _$AppDatabase {
   }
 }
 
-/// Opens a database connection (plain SQLite; no encryption on disk)
+/// Opens a database connection (plain SQLite; no encryption on disk).
+/// Live file is in Application Support; Documents copies are migrated once.
 LazyDatabase _openConnection() {
   return LazyDatabase(() async {
-    final dbFolder = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dbFolder.path, 'charis_student_care.db'));
+    final file = await DatabaseFile.resolveLiveFile();
 
     return NativeDatabase.createInBackground(
       file,

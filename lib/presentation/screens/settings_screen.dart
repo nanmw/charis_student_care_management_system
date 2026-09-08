@@ -5,8 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/config/sync_folder_config.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
+import 'package:charis_student_care/core/utils/file_export_utils.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/data/database/database_file.dart';
 import 'package:charis_student_care/data/services/change_set_applier.dart';
+import 'package:charis_student_care/data/services/database_backup_service.dart';
 import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
 import 'package:charis_student_care/data/repositories/app_settings_repository.dart';
 import 'package:charis_student_care/domain/attendance/attendance_thresholds.dart';
@@ -40,6 +43,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _hybridAttendanceTermController = TextEditingController();
   final _hybridAttendanceYearController = TextEditingController();
   bool _isSaving = false;
+  bool _isBackingUp = false;
   bool _isResolvingAll = false;
   bool _tuitionFieldsInitialized = false;
   bool _attendanceFieldsInitialized = false;
@@ -71,6 +75,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final discountPercentAsync = ref.watch(lumpSumDiscountPercentProvider);
     final attendanceThresholdsAsync =
         ref.watch(attendanceThresholdsByModeProvider);
+    final attendanceHolidaysAsync =
+        ref.watch(attendanceHolidaysByModeProvider);
 
     ref.listen<AsyncValue<SyncFolderConfig>>(syncFolderConfigProvider, (prev, next) {
       next.whenData((config) {
@@ -112,6 +118,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 children: [
                   _buildSyncSection(context, colorScheme, redColor, configAsync, syncStatus.isSyncing),
                   RoleGuard(
+                    canShow: RolePermissions.canManageAcademicSession,
+                    child: _buildBackupSection(context, colorScheme, redColor),
+                  ),
+                  RoleGuard(
                     canShow: RolePermissions.canManageFinancials,
                     child: _buildTuitionSection(
                       context,
@@ -128,6 +138,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       colorScheme,
                       redColor,
                       attendanceThresholdsAsync,
+                    ),
+                  ),
+                  RoleGuard(
+                    canShow: RolePermissions.canManageAcademicSession,
+                    child: _buildAttendanceHolidaysSection(
+                      context,
+                      colorScheme,
+                      redColor,
+                      attendanceHolidaysAsync,
                     ),
                   ),
                   RoleGuard(
@@ -291,6 +310,76 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  Widget _buildBackupSection(
+    BuildContext context,
+    ColorScheme colorScheme,
+    Color redColor,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 32),
+        const Divider(),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Backup',
+                style: TextStyle(
+                  color: colorScheme.onSurfaceVariant,
+                  fontSize: 14,
+                  fontFamily: 'Questrial',
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'How to use Backup',
+              onPressed: () => _showBackupHelpDialog(context, colorScheme),
+              icon: Icon(
+                Icons.help_outline,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Save a full copy of the school data to a USB stick or folder you choose. This is not the same as OneDrive Sync.',
+          style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 12,
+            fontFamily: 'Questrial',
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed:
+                _isBackingUp ? null : () => _backupDatabase(context, colorScheme),
+            icon: _isBackingUp
+                ? SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: colorScheme.onPrimary,
+                    ),
+                  )
+                : const Icon(Icons.save_alt_outlined),
+            label: Text(_isBackingUp ? 'Saving backup...' : 'Backup database'),
+            style: FilledButton.styleFrom(
+              backgroundColor: redColor,
+              foregroundColor: colorScheme.onPrimary,
+              textStyle: const TextStyle(fontFamily: 'Questrial'),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildAttendanceThresholdSection(
     BuildContext context,
     ColorScheme colorScheme,
@@ -399,6 +488,156 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildAttendanceHolidaysSection(
+    BuildContext context,
+    ColorScheme colorScheme,
+    Color redColor,
+    AsyncValue<AttendanceHolidaysByMode> holidaysAsync,
+  ) {
+    final holidays =
+        holidaysAsync.valueOrNull ?? AttendanceHolidaysByMode.seed2026;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 32),
+        const Divider(),
+        const SizedBox(height: 16),
+        Text(
+          'Attendance holidays',
+          style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 14,
+            fontFamily: 'Questrial',
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Closed periods and public holidays are hidden on the attendance register and are not counted as school days. Full-time and Hybrid are stored separately.',
+          style: TextStyle(
+            color: colorScheme.onSurfaceVariant,
+            fontSize: 12,
+            fontFamily: 'Questrial',
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Full-time',
+          style: TextStyle(
+            color: colorScheme.onSurface,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'Questrial',
+          ),
+        ),
+        const SizedBox(height: 8),
+        _holidayRangeList(
+          colorScheme: colorScheme,
+          ranges: holidays.fullTime,
+          onDelete: (index) => _deleteHolidayRange(
+            holidays: holidays,
+            hybrid: false,
+            index: index,
+            colorScheme: colorScheme,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: _isSaving
+                ? null
+                : () => _addHolidayRange(
+                      holidays: holidays,
+                      hybrid: false,
+                      colorScheme: colorScheme,
+                    ),
+            icon: const Icon(Icons.add),
+            label: const Text('Add Full-time range'),
+          ),
+        ),
+        const SizedBox(height: 24),
+        Text(
+          'Hybrid',
+          style: TextStyle(
+            color: colorScheme.onSurface,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            fontFamily: 'Questrial',
+          ),
+        ),
+        const SizedBox(height: 8),
+        _holidayRangeList(
+          colorScheme: colorScheme,
+          ranges: holidays.hybrid,
+          onDelete: (index) => _deleteHolidayRange(
+            holidays: holidays,
+            hybrid: true,
+            index: index,
+            colorScheme: colorScheme,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: _isSaving
+                ? null
+                : () => _addHolidayRange(
+                      holidays: holidays,
+                      hybrid: true,
+                      colorScheme: colorScheme,
+                    ),
+            icon: const Icon(Icons.add),
+            label: const Text('Add Hybrid range'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _holidayRangeList({
+    required ColorScheme colorScheme,
+    required List<AttendanceHolidayRange> ranges,
+    required void Function(int index) onDelete,
+  }) {
+    if (ranges.isEmpty) {
+      return Text(
+        'No holiday ranges.',
+        style: TextStyle(
+          color: colorScheme.onSurfaceVariant,
+          fontSize: 13,
+          fontFamily: 'Questrial',
+        ),
+      );
+    }
+    return Column(
+      children: [
+        for (var i = 0; i < ranges.length; i++)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              ranges[i].name,
+              style: const TextStyle(fontFamily: 'Questrial'),
+            ),
+            subtitle: Text(
+              ranges[i].start == ranges[i].end
+                  ? attendanceIsoDate(ranges[i].start)
+                  : '${attendanceIsoDate(ranges[i].start)} – ${attendanceIsoDate(ranges[i].end)}',
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontFamily: 'Questrial',
+              ),
+            ),
+            trailing: IconButton(
+              tooltip: 'Delete',
+              onPressed: _isSaving ? null : () => onDelete(i),
+              icon: const Icon(Icons.delete_outline),
+            ),
+          ),
       ],
     );
   }
@@ -1092,6 +1331,92 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  Future<void> _showBackupHelpDialog(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) async {
+    final livePath = DatabaseFile.liveFile?.path;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('How to use Backup'),
+          content: SingleChildScrollView(
+            child: Text(
+              'Backup saves a full copy of the school data to a USB stick or '
+              'folder you choose.\n\n'
+              'It is not the same as OneDrive Sync. Sync shares changes between '
+              'PCs. Backup is a spare copy if a PC goes wrong.\n\n'
+              'Do not save into the Charis Sync folder or into OneDrive Documents.\n\n'
+              'After it succeeds, keep that file somewhere safe.\n\n'
+              'To use a backup later: close Charis on that PC, replace the live '
+              'database file with the backup, then open the app again. The live '
+              'file is stored in the Windows AppData folder (Application Support '
+              'on a Mac), not in Documents.'
+              '${livePath != null ? '\n\nOn this PC the live file is:\n$livePath' : ''}',
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontFamily: 'Questrial',
+                fontSize: 14,
+                height: 1.4,
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _backupDatabase(
+    BuildContext context,
+    ColorScheme colorScheme,
+  ) async {
+    final suggested = DatabaseBackupService.suggestedFileName();
+    final path = await FilePicker.platform.saveFile(
+      dialogTitle: 'Save database backup',
+      fileName: suggested,
+      type: FileType.custom,
+      allowedExtensions: const ['db'],
+    );
+    if (path == null || path.isEmpty || !mounted) return;
+
+    var destPath = path;
+    if (!destPath.toLowerCase().endsWith('.db')) {
+      destPath = '$destPath.db';
+    }
+
+    setState(() => _isBackingUp = true);
+    try {
+      final db = ref.read(appDatabaseProvider);
+      await DatabaseBackupService(db).backupTo(destPath);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Backup saved to $destPath'),
+          backgroundColor: AppColors.syncedGreen,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            FileExportUtils.userFacingSaveError(e, itemLabel: 'backup'),
+          ),
+          backgroundColor: colorScheme.error,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isBackingUp = false);
+    }
+  }
+
   Future<void> _saveSyncPath(ColorScheme colorScheme) async {
     final path = _pathController.text.trim();
     setState(() => _isSaving = true);
@@ -1342,5 +1667,177 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
+  }
+
+  Future<void> _persistAttendanceHolidays(
+    AttendanceHolidaysByMode holidays,
+    ColorScheme colorScheme,
+  ) async {
+    setState(() => _isSaving = true);
+    try {
+      final repo = ref.read(settingsRepositoryProvider);
+      final auth = ref.read(authStateProvider).valueOrNull;
+      final userRole = auth is Authenticated
+          ? auth.role
+          : UserRole.facilitator;
+      final deviceId = await ref.read(deviceIdProvider.future);
+      final userId = auth is Authenticated ? auth.user.id : null;
+      final userDisplayName =
+          auth is Authenticated ? auth.user.displayName : null;
+      await repo.set(
+        AppSettingsRepository.keyAttendanceHolidays,
+        holidays.toJsonString(),
+        userRole: userRole,
+        userId: userId,
+        deviceId: deviceId,
+        userDisplayName: userDisplayName,
+        screen: 'Settings',
+      );
+      ref.invalidate(attendanceHolidaysByModeProvider);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save attendance holidays: $e'),
+            backgroundColor: colorScheme.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _deleteHolidayRange({
+    required AttendanceHolidaysByMode holidays,
+    required bool hybrid,
+    required int index,
+    required ColorScheme colorScheme,
+  }) async {
+    final current = hybrid ? holidays.hybrid : holidays.fullTime;
+    if (index < 0 || index >= current.length) return;
+    final next = List<AttendanceHolidayRange>.from(current)..removeAt(index);
+    await _persistAttendanceHolidays(
+      hybrid
+          ? holidays.copyWith(hybrid: next)
+          : holidays.copyWith(fullTime: next),
+      colorScheme,
+    );
+  }
+
+  Future<void> _addHolidayRange({
+    required AttendanceHolidaysByMode holidays,
+    required bool hybrid,
+    required ColorScheme colorScheme,
+  }) async {
+    final result = await showDialog<AttendanceHolidayRange>(
+      context: context,
+      builder: (context) => const _AddAttendanceHolidayDialog(),
+    );
+    if (result == null || !mounted) return;
+    final current = hybrid ? holidays.hybrid : holidays.fullTime;
+    final next = [...current, result];
+    await _persistAttendanceHolidays(
+      hybrid
+          ? holidays.copyWith(hybrid: next)
+          : holidays.copyWith(fullTime: next),
+      colorScheme,
+    );
+  }
+}
+
+class _AddAttendanceHolidayDialog extends StatefulWidget {
+  const _AddAttendanceHolidayDialog();
+
+  @override
+  State<_AddAttendanceHolidayDialog> createState() =>
+      _AddAttendanceHolidayDialogState();
+}
+
+class _AddAttendanceHolidayDialogState
+    extends State<_AddAttendanceHolidayDialog> {
+  final _nameController = TextEditingController();
+  DateTime _start = DateTime(2026, 2, 1);
+  DateTime _end = DateTime(2026, 2, 1);
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDate({required bool isStart}) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: isStart ? _start : _end,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      if (isStart) {
+        _start = DateTime(picked.year, picked.month, picked.day);
+        if (_end.isBefore(_start)) _end = _start;
+      } else {
+        _end = DateTime(picked.year, picked.month, picked.day);
+        if (_end.isBefore(_start)) _start = _end;
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text(
+        'Add holiday range',
+        style: TextStyle(fontFamily: 'Questrial'),
+      ),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                labelText: 'Name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Start'),
+              subtitle: Text(attendanceIsoDate(_start)),
+              trailing: const Icon(Icons.calendar_today_outlined),
+              onTap: () => _pickDate(isStart: true),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('End'),
+              subtitle: Text(attendanceIsoDate(_end)),
+              trailing: const Icon(Icons.calendar_today_outlined),
+              onTap: () => _pickDate(isStart: false),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            final name = _nameController.text.trim();
+            if (name.isEmpty) return;
+            Navigator.of(context).pop(
+              AttendanceHolidayRange(name: name, start: _start, end: _end),
+            );
+          },
+          child: const Text('Add'),
+        ),
+      ],
+    );
   }
 }

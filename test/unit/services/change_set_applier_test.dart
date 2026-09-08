@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/services/change_set_applier.dart';
 import 'package:charis_student_care/data/services/change_set_sync_service.dart';
-import 'package:drift/drift.dart';
+import 'package:drift/drift.dart' hide isNotNull;
 
 void main() {
   late AppDatabase db;
@@ -96,6 +96,66 @@ void main() {
     expect(payments.length, 1);
     expect(payments.first.studentId, localStudentId);
     expect(payments.first.feb, 100.0);
+  });
+
+  test('payment INSERT succeeds when created_at has no SQL default', () async {
+    await db.customStatement('DROP TABLE IF EXISTS payments');
+    await db.customStatement('''
+      CREATE TABLE payments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        student_id INTEGER NOT NULL,
+        year TEXT NOT NULL,
+        jan REAL NOT NULL DEFAULT 0,
+        feb REAL NOT NULL DEFAULT 0,
+        mar REAL NOT NULL DEFAULT 0,
+        apr REAL NOT NULL DEFAULT 0,
+        may REAL NOT NULL DEFAULT 0,
+        jun REAL NOT NULL DEFAULT 0,
+        jul REAL NOT NULL DEFAULT 0,
+        aug REAL NOT NULL DEFAULT 0,
+        sep REAL NOT NULL DEFAULT 0,
+        oct REAL NOT NULL DEFAULT 0,
+        nov REAL NOT NULL DEFAULT 0,
+        dec REAL NOT NULL DEFAULT 0,
+        lump_sum REAL NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        academic_session_id INTEGER,
+        UNIQUE(student_id, year)
+      )
+    ''');
+
+    final localStudentId = await db.into(db.students).insert(
+          StudentsCompanion.insert(
+            surname: 'Mpushe',
+            firstName: 'Thembelani',
+          ),
+        );
+    await db.into(db.syncRecordMapping).insert(
+          SyncRecordMappingCompanion.insert(
+            entityTable: 'students',
+            recordId: '108',
+            localId: localStudentId,
+          ),
+        );
+
+    final result = await applier.tryApply(
+      record(
+        id: 'pay-legacy-1',
+        table: 'payments',
+        recordId: '500',
+        operation: 'INSERT',
+        payload: '{"studentId":108,"year":"2026","mar":450.0}',
+      ),
+    );
+
+    expect(result, isA<ApplyResultApplied>());
+    final payments = await db.select(db.payments).get();
+    expect(payments, hasLength(1));
+    expect(payments.single.studentId, localStudentId);
+    expect(payments.single.mar, 450.0);
+    expect(payments.single.createdAt, isNotNull);
+    expect(payments.single.updatedAt, isNotNull);
   });
 
   test('applies mission_locations INSERT and stores mapping', () async {

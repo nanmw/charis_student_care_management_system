@@ -76,8 +76,10 @@ class MinistryEntryFilters {
   final String? ministryType;
   final DateTime? dateFrom;
   final DateTime? dateTo;
+
   /// When non-null and non-empty, only entries whose ministry_entries.class_id is in this list.
   final List<int>? classIds;
+
   /// When non-null and non-empty, filter by academic session (resolves to academic_session_id).
   final String? academicSession;
 
@@ -148,7 +150,8 @@ class MinistryEntryRepository {
       conditions.add('m.year = ?');
       variables.add(Variable.withString(filters.year!.trim()));
     }
-    if (filters.ministryType != null && filters.ministryType!.trim().isNotEmpty) {
+    if (filters.ministryType != null &&
+        filters.ministryType!.trim().isNotEmpty) {
       conditions.add('m.ministry_type = ?');
       variables.add(Variable.withString(filters.ministryType!.trim()));
     }
@@ -164,7 +167,8 @@ class MinistryEntryRepository {
       if (filters.classIds!.isEmpty) {
         conditions.add('1 = 0');
       } else {
-        final placeholders = List.filled(filters.classIds!.length, '?').join(',');
+        final placeholders =
+            List.filled(filters.classIds!.length, '?').join(',');
         conditions.add('m.class_id IN ($placeholders)');
         for (final id in filters.classIds!) {
           variables.add(Variable.withInt(id));
@@ -172,8 +176,7 @@ class MinistryEntryRepository {
       }
     }
 
-    final whereSql =
-        conditions.isEmpty ? '1=1' : conditions.join(' AND ');
+    final whereSql = conditions.isEmpty ? '1=1' : conditions.join(' AND ');
     return (whereSql, variables);
   }
 
@@ -192,10 +195,13 @@ class MinistryEntryRepository {
   }
 
   /// Async version that resolves [MinistryEntryFilters.academicSession] to session ID.
-  Future<(String, List<Variable>)> _buildWhereAndVarsAsync(MinistryEntryFilters filters) async {
+  Future<(String, List<Variable>)> _buildWhereAndVarsAsync(
+      MinistryEntryFilters filters) async {
     var (whereSql, variables) = _buildWhereAndVars(filters);
-    if (filters.academicSession != null && filters.academicSession!.trim().isNotEmpty) {
-      final sessionId = await _getSessionIdByCode(filters.academicSession!.trim());
+    if (filters.academicSession != null &&
+        filters.academicSession!.trim().isNotEmpty) {
+      final sessionId =
+          await _getSessionIdByCode(filters.academicSession!.trim());
       if (sessionId != null) {
         final conditions = whereSql == '1=1' ? <String>[] : [whereSql];
         conditions.add('m.academic_session_id = ?');
@@ -213,7 +219,11 @@ class MinistryEntryRepository {
     MinistryEntryFilters filters = const MinistryEntryFilters(),
   }) async {
     final (whereSql, whereVars) = await _buildWhereAndVarsAsync(filters);
-    final allVars = [...whereVars, Variable.withInt(limit), Variable.withInt(offset)];
+    final allVars = [
+      ...whereVars,
+      Variable.withInt(limit),
+      Variable.withInt(offset)
+    ];
 
     final query = _db.customSelect(
       '''
@@ -304,10 +314,12 @@ class MinistryEntryRepository {
     int classId,
     String studyMode,
   ) {
-    final controller = StreamController<List<MinistryHoursSummaryRow>>.broadcast();
+    final controller =
+        StreamController<List<MinistryHoursSummaryRow>>.broadcast();
     void onEvent(_) async {
       controller.add(await getMinistryHoursSummary(classId, studyMode));
     }
+
     final sub1 = _db.select(_db.students).watch().listen(onEvent);
     final sub2 = _db.select(_db.ministryEntries).watch().listen(onEvent);
     controller.onCancel = () {
@@ -398,7 +410,8 @@ class MinistryEntryRepository {
   }
 
   /// Stream of summary stats (reactive when ministry_entries change). When [classIds] is non-null and non-empty, scoped to those classes.
-  Stream<MinistrySummaryStats> watchMinistrySummaryStats({List<int>? classIds}) {
+  Stream<MinistrySummaryStats> watchMinistrySummaryStats(
+      {List<int>? classIds}) {
     return _db.select(_db.ministryEntries).watch().asyncMap((_) async {
       return getMinistrySummaryStats(classIds: classIds);
     });
@@ -407,7 +420,8 @@ class MinistryEntryRepository {
   /// Total ministry hours per student (all entries, sum of hours). Used for dashboard.
   Future<Map<int, double>> getTotalHoursByStudent() async {
     final query = _db.selectOnly(_db.ministryEntries)
-      ..addColumns([_db.ministryEntries.studentId, _db.ministryEntries.hours.sum()])
+      ..addColumns(
+          [_db.ministryEntries.studentId, _db.ministryEntries.hours.sum()])
       ..groupBy([_db.ministryEntries.studentId]);
     final rows = await query.get();
     final map = <int, double>{};
@@ -449,6 +463,86 @@ class MinistryEntryRepository {
     if (!RolePermissions.canEnterMinistryHours(userRole)) {
       throw StateError('Role cannot enter ministry hours');
     }
+    final id = await _insertRowAndChangeSet(
+      companion,
+      userId: userId,
+      deviceId: deviceId,
+      userDisplayName: userDisplayName,
+      screen: screen,
+    );
+    if (userId != null) {
+      _onLocalChangeSetWritten?.call();
+    }
+    return id;
+  }
+
+  /// Inserts many ministry entries in one transaction.
+  /// Writes one INSERT change-set per row; notifies [onLocalChangeSetWritten] once.
+  /// Returns the number of rows inserted. Empty [companions] is a no-op.
+  Future<int> insertAll(
+    List<MinistryEntriesCompanion> companions, {
+    required UserRole userRole,
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+  }) async {
+    if (!RolePermissions.canEnterMinistryHours(userRole)) {
+      throw StateError('Role cannot enter ministry hours');
+    }
+    if (companions.isEmpty) return 0;
+
+    final count = await _db.transaction(() async {
+      var n = 0;
+      for (final companion in companions) {
+        await _insertRowAndChangeSet(
+          companion,
+          userId: userId,
+          deviceId: deviceId,
+          userDisplayName: userDisplayName,
+          screen: screen,
+        );
+        n++;
+      }
+      return n;
+    });
+    if (userId != null && count > 0) {
+      _onLocalChangeSetWritten?.call();
+    }
+    return count;
+  }
+
+  /// Student ids in [studentIds] that already have a ministry entry of
+  /// [ministryType] on the same calendar day as [date].
+  Future<List<int>> findStudentsWithEntryOnDate({
+    required List<int> studentIds,
+    required DateTime date,
+    required String ministryType,
+  }) async {
+    if (studentIds.isEmpty) return [];
+    final dayStart = DateTime(date.year, date.month, date.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    final rows = await (_db.select(_db.ministryEntries)
+          ..where(
+            (t) =>
+                t.studentId.isIn(studentIds) &
+                t.ministryType.equals(ministryType) &
+                t.date.isBiggerOrEqualValue(dayStart) &
+                t.date.isSmallerThanValue(dayEnd),
+          ))
+        .get();
+    final ids = rows.map((r) => r.studentId).toSet().toList()..sort();
+    return ids;
+  }
+
+  /// Writes the row and optional change-set without notifying sync.
+  Future<int> _insertRowAndChangeSet(
+    MinistryEntriesCompanion companion, {
+    String? userId,
+    String? deviceId,
+    String? userDisplayName,
+    String? screen,
+  }) async {
     final id = await _db.into(_db.ministryEntries).insert(companion);
     if (userId != null) {
       final row = await (_db.select(_db.ministryEntries)
@@ -465,6 +559,7 @@ class MinistryEntryRepository {
           deviceId: deviceId,
           userDisplayName: userDisplayName,
           screen: screen,
+          notifySync: false,
         );
       }
     }
@@ -572,6 +667,7 @@ class MinistryEntryRepository {
     String? deviceId,
     String? userDisplayName,
     String? screen,
+    bool notifySync = true,
   }) async {
     final effectiveDeviceId = await _effectiveChangeSetDeviceId(deviceId);
     final fullPayload = Map<String, dynamic>.from(payload);
@@ -591,6 +687,8 @@ class MinistryEntryRepository {
             deviceId: effectiveDeviceId,
           ),
         );
-    _onLocalChangeSetWritten?.call();
+    if (notifySync) {
+      _onLocalChangeSetWritten?.call();
+    }
   }
 }

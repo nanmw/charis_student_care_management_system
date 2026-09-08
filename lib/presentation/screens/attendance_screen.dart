@@ -8,7 +8,6 @@ import 'package:charis_student_care/core/constants/app_constants.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
-import 'package:charis_student_care/data/repositories/academic_session_repository.dart';
 import 'package:charis_student_care/data/repositories/attendance_repository.dart';
 import 'package:charis_student_care/domain/attendance/attendance_thresholds.dart';
 import 'package:charis_student_care/domain/use_cases/sort_students_alphabetically.dart';
@@ -52,8 +51,11 @@ String attendanceCellKey(int studentId, DateTime date) {
   return '$studentId-${attendanceDayColumnName(date).substring(2)}';
 }
 
-bool attendanceSameDay(DateTime a, DateTime b) =>
-    a.year == b.year && a.month == b.month && a.day == b.day;
+bool attendanceSameDay(DateTime a, DateTime b) {
+  final aa = attendanceCalendarDay(a);
+  final bb = attendanceCalendarDay(b);
+  return aa.year == bb.year && aa.month == bb.month && aa.day == bb.day;
+}
 
 /// One register cell. [present] is null when unmarked (no row).
 class AttendanceCellEdit {
@@ -89,8 +91,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   Map<String, AttendanceCellEdit> _original = {};
   String _rangeKey = '';
 
-  final DataGridController _gridController = DataGridController();
+  DataGridController _gridController = DataGridController();
   AttendanceRegisterDataSource? _dataSource;
+  String _columnSetKey = '';
   bool _didAutoScrollToday = false;
   bool _saving = false;
 
@@ -109,6 +112,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     final redColor =
         isDark ? AppColors.primaryActionRed : AppColors.charisRedPrimary;
     final studentsAsync = ref.watch(studentsStreamProvider('Active'));
+    final year3ClassId = ref.watch(year3ClassIdProvider).valueOrNull;
     final visibleClassesRaw =
         ref.watch(classesVisibleToCurrentUserProvider).valueOrNull;
     final visibleClasses = visibleClassesRaw ?? <SchoolClass>[];
@@ -152,14 +156,23 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
 
     final sessionCode =
         ref.watch(currentAcademicSessionProvider).valueOrNull?.trim();
-    final yearStr = AcademicSessionRepository.yearFromSessionCode(sessionCode) ??
-        DateTime.now().year.toString();
-    final sessionYear = int.tryParse(yearStr) ?? DateTime.now().year;
-    final termRange = termDateRange(sessionYear, _selectedTerm);
-    final days = calendarDaysInRange(termRange.$1, termRange.$2);
-    final attendanceAsync = ref.watch(
-      attendanceForRangeProvider(AttendanceDateRange(termRange.$1, termRange.$2)),
+    final sessions =
+        ref.watch(allAcademicSessionsStreamProvider).valueOrNull ?? const [];
+    DateTime? sessionStart;
+    if (sessionCode != null && sessionCode.isNotEmpty) {
+      for (final s in sessions) {
+        if (s.code == sessionCode) {
+          sessionStart = s.startDate;
+          break;
+        }
+      }
+    }
+    final sessionYear = sessionCalendarYear(
+      sessionCode: sessionCode,
+      startDate: sessionStart,
     );
+    final termRange = termDateRange(sessionYear, _selectedTerm);
+    final calendarDays = calendarDaysInRange(termRange.$1, termRange.$2);
     final expectedDays = ref
             .watch(attendanceThresholdsByModeProvider)
             .valueOrNull
@@ -168,17 +181,36 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         (_selectedMode == 'Hybrid'
             ? AppConstants.attendanceExpectedDaysHybridPerTerm
             : AppConstants.attendanceExpectedDaysPerTerm);
+    final holidaysAsync = ref.watch(attendanceHolidaysByModeProvider);
+    final holidays = holidaysAsync.valueOrNull;
 
     final allStudents = studentsAsync.valueOrNull;
-    if (allStudents != null) {
-      final filtered = allStudents
-          .where((s) => s.mode == _selectedMode)
-          .where((s) => _classFilter == null || s.classId == _classFilter)
-          .toList();
+    final filteredStudents = allStudents == null
+        ? null
+        : allStudents
+            .where((s) => s.mode == _selectedMode)
+            .where((s) => _classFilter == null || s.classId == _classFilter)
+            .toList();
+    final days = holidays == null
+        ? const <DateTime>[]
+        : _filteredRegisterDays(
+            calendarDays,
+            holidays: holidays,
+            students: filteredStudents,
+            year3ClassId: year3ClassId,
+          );
+    final attendanceAsync = ref.watch(
+      attendanceForStudentIdsProvider(
+        AttendanceStudentIds(filteredStudents?.map((s) => s.id) ?? const []),
+      ),
+    );
+    if (holidays != null &&
+        filteredStudents != null &&
+        attendanceAsync.hasValue) {
       _syncOriginalIfNeeded(
-        sortStudentsAlphabetically(filtered),
+        sortStudentsAlphabetically(filteredStudents),
         days,
-        attendanceAsync.valueOrNull ?? const [],
+        attendanceAsync.value ?? const [],
       );
     }
 
@@ -215,45 +247,54 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
           _buildFiltersRow(colorScheme, redColor, days),
           const SizedBox(height: 16),
           Expanded(
-            child: studentsAsync.when(
-              data: (allStudents) {
-                final filtered = allStudents
-                    .where((s) => s.mode == _selectedMode)
-                    .where((s) =>
-                        _classFilter == null || s.classId == _classFilter,)
-                    .toList();
-                final students = sortStudentsAlphabetically(filtered);
-                if (students.isEmpty) {
-                  return Center(
-                    child: Text(
-                      'No students match the selected mode.',
-                      style: TextStyle(
-                        color: colorScheme.onSurfaceVariant,
-                        fontSize: 14,
-                        fontFamily: 'Questrial',
+            child: !holidaysAsync.hasValue
+                ? Center(
+                    child: CircularProgressIndicator(
+                      color: colorScheme.onSurface,
+                    ),
+                  )
+                : studentsAsync.when(
+                    data: (allStudents) {
+                      final filtered = allStudents
+                          .where((s) => s.mode == _selectedMode)
+                          .where((s) =>
+                              _classFilter == null ||
+                              s.classId == _classFilter,)
+                          .toList();
+                      final students = sortStudentsAlphabetically(filtered);
+                      if (students.isEmpty) {
+                        return Center(
+                          child: Text(
+                            'No students match the selected mode.',
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                              fontSize: 14,
+                              fontFamily: 'Questrial',
+                            ),
+                          ),
+                        );
+                      }
+                      return _buildRegisterGrid(
+                        context,
+                        colorScheme,
+                        redColor,
+                        students,
+                        days,
+                        expectedDays,
+                      );
+                    },
+                    loading: () => Center(
+                      child: CircularProgressIndicator(
+                        color: colorScheme.onSurface,
                       ),
                     ),
-                  );
-                }
-                return _buildRegisterGrid(
-                  context,
-                  colorScheme,
-                  redColor,
-                  students,
-                  days,
-                  expectedDays,
-                );
-              },
-              loading: () => Center(
-                child: CircularProgressIndicator(color: colorScheme.onSurface),
-              ),
-              error: (err, _) => Center(
-                child: Text(
-                  'Error: $err',
-                  style: TextStyle(color: colorScheme.onSurface),
-                ),
-              ),
-            ),
+                    error: (err, _) => Center(
+                      child: Text(
+                        'Error: $err',
+                        style: TextStyle(color: colorScheme.onSurface),
+                      ),
+                    ),
+                  ),
           ),
         ],
       ),
@@ -269,28 +310,78 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         '${_selectedTerm}_${days.isEmpty ? '' : attendanceDayColumnName(days.first)}_${days.isEmpty ? '' : attendanceDayColumnName(days.last)}_${students.map((s) => s.id).join(',')}';
     final original = <String, AttendanceCellEdit>{};
     for (final r in rows) {
-      original[attendanceCellKey(r.studentId, r.date)] = AttendanceCellEdit(
+      final cell = AttendanceCellEdit(
         present: r.present == 1,
         notes: r.notes ?? '',
       );
+      for (final key in attendanceRegisterKeysForRow(r.studentId, r.date)) {
+        original[key] = cell;
+      }
     }
-    if (rangeKey != _rangeKey) {
+    final rangeChanged = rangeKey != _rangeKey;
+    if (rangeChanged) {
       _rangeKey = rangeKey;
       _original = original;
       _edits.clear();
       _didAutoScrollToday = false;
-      return;
+    } else {
+      _original = original;
+      _edits.removeWhere((key, edit) {
+        final orig = original[key] ?? AttendanceCellEdit();
+        return edit.sameAs(orig);
+      });
     }
-    _original = original;
-    _edits.removeWhere((key, edit) {
-      final orig = original[key] ?? AttendanceCellEdit();
-      return edit.sameAs(orig);
+    _scheduleGridRefresh();
+  }
+
+  void _scheduleGridRefresh() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _dataSource?.refresh();
     });
   }
 
   AttendanceCellEdit _effective(int studentId, DateTime date) {
     final key = attendanceCellKey(studentId, date);
     return _edits[key] ?? _original[key] ?? AttendanceCellEdit();
+  }
+
+  bool _isYear3(Student student) {
+    final year3Id = ref.read(year3ClassIdProvider).valueOrNull;
+    return year3Id != null && student.classId == year3Id;
+  }
+
+  bool _isSchoolDay(Student student, DateTime date) {
+    final holidays = ref.read(attendanceHolidaysByModeProvider).valueOrNull ??
+        AttendanceHolidaysByMode.seed2026;
+    return isAttendanceSchoolDay(
+      date: date,
+      mode: student.mode,
+      isYear3: _isYear3(student),
+      holidays: holidays.forMode(student.mode),
+    );
+  }
+
+  /// Header "mark column" uses Full-time Mon–Fri / Hybrid Saturday (Year 3
+  /// Friday is skipped per student in [_markDayPresent]).
+  bool _isColumnMarkable(DateTime date) {
+    final holidays = ref.read(attendanceHolidaysByModeProvider).valueOrNull ??
+        AttendanceHolidaysByMode.seed2026;
+    return isAttendanceSchoolDay(
+      date: date,
+      mode: _selectedMode,
+      isYear3: false,
+      holidays: holidays.forMode(_selectedMode),
+    );
+  }
+
+  Student? _studentById(int studentId) {
+    final all = ref.read(studentsStreamProvider('Active')).valueOrNull;
+    if (all == null) return null;
+    for (final s in all) {
+      if (s.id == studentId) return s;
+    }
+    return null;
   }
 
   bool get _hasUnsavedChanges {
@@ -306,6 +397,8 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     DateTime date,
     void Function(AttendanceCellEdit) update,
   ) {
+    final student = _studentById(studentId);
+    if (student != null && !_isSchoolDay(student, date)) return;
     final key = attendanceCellKey(studentId, date);
     final next = _effective(studentId, date).copy();
     update(next);
@@ -322,6 +415,18 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   ) {
     final today = DateTime.now();
     final todayInTerm = days.any((d) => attendanceSameDay(d, today));
+    final allStudents = ref.watch(studentsStreamProvider('Active')).valueOrNull;
+    final filteredToday = allStudents == null
+        ? const <Student>[]
+        : allStudents
+            .where((s) => s.mode == _selectedMode)
+            .where((s) => _classFilter == null || s.classId == _classFilter)
+            .toList();
+    final canMarkToday = todayInTerm &&
+        filteredToday.any((s) => _isSchoolDay(
+              s,
+              DateTime(today.year, today.month, today.day),
+            ));
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -391,7 +496,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
             ),
             const SizedBox(width: 12),
             OutlinedButton.icon(
-              onPressed: todayInTerm
+              onPressed: canMarkToday
                   ? () => _markDayPresent(DateTime(today.year, today.month, today.day))
                   : null,
               icon: const Icon(Icons.check_circle_outline, size: 20),
@@ -541,6 +646,47 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
   }
 
+  List<DateTime> _filteredRegisterDays(
+    List<DateTime> calendarDays, {
+    required AttendanceHolidaysByMode holidays,
+    required Iterable<Student>? students,
+    required int? year3ClassId,
+  }) {
+    final cohorts = (students == null || students.isEmpty)
+        ? <({String? mode, bool isYear3})>[
+            (mode: _selectedMode, isYear3: false),
+          ]
+        : students.map(
+            (s) => (
+              mode: s.mode,
+              isYear3: year3ClassId != null && s.classId == year3ClassId,
+            ),
+          );
+    return filterAttendanceRegisterDays(
+      calendarDays,
+      students: cohorts,
+      holidays: holidays,
+    );
+  }
+
+  String _registerColumnSetKey(List<DateTime> days) {
+    final first = days.isEmpty ? '' : attendanceDayColumnName(days.first);
+    final last = days.isEmpty ? '' : attendanceDayColumnName(days.last);
+    return '$_selectedMode-$_selectedTerm-$_classFilter-${days.length}-$first-$last';
+  }
+
+  void _recreateRegisterGrid(String columnSetKey) {
+    _columnSetKey = columnSetKey;
+    _didAutoScrollToday = false;
+    final oldController = _gridController;
+    _gridController = DataGridController();
+    _dataSource?.dispose();
+    _dataSource = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      oldController.dispose();
+    });
+  }
+
   Widget _buildRegisterGrid(
     BuildContext context,
     ColorScheme colorScheme,
@@ -549,10 +695,15 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     List<DateTime> days,
     int expectedDays,
   ) {
+    final columnSetKey = _registerColumnSetKey(days);
+    if (columnSetKey != _columnSetKey) {
+      _recreateRegisterGrid(columnSetKey);
+    }
     _dataSource ??= AttendanceRegisterDataSource(
       students: students,
       days: days,
       lookup: _effective,
+      isSchoolDay: _isSchoolDay,
       expectedDays: expectedDays,
       colorScheme: colorScheme,
       redColor: redColor,
@@ -618,6 +769,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     ];
 
     return SfDataGrid(
+      key: ValueKey(columnSetKey),
       source: _dataSource!,
       controller: _gridController,
       columns: columns,
@@ -701,51 +853,56 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     Color redColor,
     DateTime day,
   ) {
-    final isWeekend =
-        day.weekday == DateTime.saturday || day.weekday == DateTime.sunday;
+    final markable = _isColumnMarkable(day);
+    final isInactiveColumn = !markable;
     final isToday = attendanceSameDay(day, DateTime.now());
     final weekday = DateFormat.E().format(day)[0];
+    final tooltip = markable
+        ? '${DateFormat('EEE d MMM yyyy').format(day)} — click to mark all present'
+        : '${DateFormat('EEE d MMM yyyy').format(day)} — not a school day';
+    final header = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            '${day.day}',
+            style: TextStyle(
+              color: isInactiveColumn
+                  ? colorScheme.onSurfaceVariant
+                  : colorScheme.onSurface,
+              fontWeight: FontWeight.w600,
+              fontSize: 12,
+              height: 1.1,
+              fontFamily: 'Questrial',
+            ),
+          ),
+          Text(
+            weekday,
+            style: TextStyle(
+              color: colorScheme.onSurfaceVariant,
+              fontSize: 10,
+              height: 1.1,
+              fontFamily: 'Questrial',
+            ),
+          ),
+        ],
+      ),
+    );
     return Tooltip(
-      message:
-          '${DateFormat('EEE d MMM yyyy').format(day)} — click to mark all present',
+      message: tooltip,
       child: Material(
         color: isToday
             ? redColor.withValues(alpha: 0.22)
-            : (isWeekend
+            : (isInactiveColumn
                 ? colorScheme.outlineVariant.withValues(alpha: 0.35)
                 : Colors.transparent),
-        child: InkWell(
-          onTap: () => _markDayPresent(day),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  '${day.day}',
-                  style: TextStyle(
-                    color: isWeekend
-                        ? colorScheme.onSurfaceVariant
-                        : colorScheme.onSurface,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 12,
-                    height: 1.1,
-                    fontFamily: 'Questrial',
-                  ),
-                ),
-                Text(
-                  weekday,
-                  style: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                    fontSize: 10,
-                    height: 1.1,
-                    fontFamily: 'Questrial',
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        child: markable
+            ? InkWell(
+                onTap: () => _markDayPresent(day),
+                child: header,
+              )
+            : header,
       ),
     );
   }
@@ -755,7 +912,9 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     if (date == null) return;
     final rowIndex = details.rowColumnIndex.rowIndex - _kHeaderLineCount;
     if (rowIndex < 0 || rowIndex >= students.length) return;
-    _editNotes(students[rowIndex], date);
+    final student = students[rowIndex];
+    if (!_isSchoolDay(student, date)) return;
+    _editNotes(student, date);
   }
 
   void _scrollToToday(List<DateTime> days) {
@@ -764,7 +923,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     if (dayIndex < 0) return;
     _gridController.scrollToColumn(
       (2 + dayIndex).toDouble(),
-      canAnimate: true,
+      canAnimate: false,
       position: DataGridScrollPosition.center,
     );
   }
@@ -779,8 +938,11 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
           .toList(),
     );
     if (students.isEmpty) return;
+    var eligible = 0;
     var count = 0;
     for (final student in students) {
+      if (!_isSchoolDay(student, date)) continue;
+      eligible++;
       final current = _effective(student.id, date);
       if (current.present == true) continue;
       final key = attendanceCellKey(student.id, date);
@@ -790,14 +952,21 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     }
     setState(() {});
     _dataSource?.refresh();
-    if (!mounted || count == 0) {
-      if (mounted && count == 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('All filtered students are already marked present'),
-          ),
-        );
-      }
+    if (!mounted) return;
+    if (eligible == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('This is not a school day for the selected students.'),
+        ),
+      );
+      return;
+    }
+    if (count == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('All filtered students are already marked present'),
+        ),
+      );
       return;
     }
     final themeMode = ref.read(themeModeProvider);
@@ -815,6 +984,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
   }
 
   Future<void> _editNotes(Student student, DateTime date) async {
+    if (!_isSchoolDay(student, date)) return;
     final current = _effective(student.id, date);
     final controller = TextEditingController(text: current.notes);
     final result = await showDialog<String>(
@@ -879,12 +1049,31 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
     );
     final sessionCode =
         ref.read(currentAcademicSessionProvider).valueOrNull?.trim();
-    final yearStr =
-        AcademicSessionRepository.yearFromSessionCode(sessionCode) ??
-            DateTime.now().year.toString();
-    final sessionYear = int.tryParse(yearStr) ?? DateTime.now().year;
+    final sessions =
+        ref.read(allAcademicSessionsStreamProvider).valueOrNull ?? const [];
+    DateTime? sessionStart;
+    if (sessionCode != null && sessionCode.isNotEmpty) {
+      for (final s in sessions) {
+        if (s.code == sessionCode) {
+          sessionStart = s.startDate;
+          break;
+        }
+      }
+    }
+    final sessionYear = sessionCalendarYear(
+      sessionCode: sessionCode,
+      startDate: sessionStart,
+    );
     final termRange = termDateRange(sessionYear, _selectedTerm);
-    final days = calendarDaysInRange(termRange.$1, termRange.$2);
+    final year3ClassId = ref.read(year3ClassIdProvider).valueOrNull;
+    final holidays = ref.read(attendanceHolidaysByModeProvider).valueOrNull ??
+        AttendanceHolidaysByMode.seed2026;
+    final days = _filteredRegisterDays(
+      calendarDaysInRange(termRange.$1, termRange.$2),
+      holidays: holidays,
+      students: students,
+      year3ClassId: year3ClassId,
+    );
 
     final records = <AttendanceRecordEntry>[];
     for (final student in students) {
@@ -894,6 +1083,7 @@ class _AttendanceScreenState extends ConsumerState<AttendanceScreen> {
         if (edit == null) continue;
         final orig = _original[key] ?? AttendanceCellEdit();
         if (edit.sameAs(orig)) continue;
+        if (!_isSchoolDay(student, day)) continue;
         if (edit.present == null && edit.notes.trim().isEmpty) continue;
         records.add(
           AttendanceRecordEntry(
@@ -967,6 +1157,7 @@ class AttendanceRegisterDataSource extends DataGridSource {
     required List<Student> students,
     required List<DateTime> days,
     required AttendanceCellEdit Function(int studentId, DateTime date) lookup,
+    required bool Function(Student student, DateTime date) isSchoolDay,
     required int expectedDays,
     required ColorScheme colorScheme,
     required Color redColor,
@@ -977,6 +1168,7 @@ class AttendanceRegisterDataSource extends DataGridSource {
   })  : _students = students,
         _days = days,
         _lookup = lookup,
+        _isSchoolDay = isSchoolDay,
         _expectedDays = expectedDays,
         _colorScheme = colorScheme,
         _redColor = redColor,
@@ -989,6 +1181,7 @@ class AttendanceRegisterDataSource extends DataGridSource {
   List<Student> _students;
   List<DateTime> _days;
   final AttendanceCellEdit Function(int studentId, DateTime date) _lookup;
+  final bool Function(Student student, DateTime date) _isSchoolDay;
   int _expectedDays;
   ColorScheme _colorScheme;
   Color _redColor;
@@ -1037,7 +1230,9 @@ class AttendanceRegisterDataSource extends DataGridSource {
       var presentCount = 0;
       for (final day in _days) {
         final cell = _lookup(student.id, day);
-        if (cell.present == true) presentCount++;
+        if (cell.present == true && _isSchoolDay(student, day)) {
+          presentCount++;
+        }
         cells.add(
           DataGridCell<bool?>(
             columnName: attendanceDayColumnName(day),
@@ -1122,16 +1317,15 @@ class AttendanceRegisterDataSource extends DataGridSource {
           return const SizedBox.shrink();
         }
         final edit = _lookup(student.id, date);
-        final isWeekend =
-            date.weekday == DateTime.saturday || date.weekday == DateTime.sunday;
+        final schoolDay = _isSchoolDay(student, date);
         final isToday = attendanceSameDay(date, today);
         final hasNotes = edit.notes.trim().isNotEmpty;
         return ColoredBox(
           color: isToday
               ? _redColor.withValues(alpha: 0.08)
-              : (isWeekend
-                  ? _colorScheme.outlineVariant.withValues(alpha: 0.18)
-                  : Colors.transparent),
+              : (schoolDay
+                  ? Colors.transparent
+                  : _colorScheme.outlineVariant.withValues(alpha: 0.18)),
           child: Stack(
             children: [
               Center(
@@ -1141,8 +1335,13 @@ class AttendanceRegisterDataSource extends DataGridSource {
                   child: FittedBox(
                     child: Checkbox(
                       value: edit.present == true,
-                      onChanged: (v) =>
-                          _onPresentChanged(student.id, date, v ?? false),
+                      onChanged: schoolDay
+                          ? (v) => _onPresentChanged(
+                                student.id,
+                                date,
+                                v ?? false,
+                              )
+                          : null,
                       activeColor: _redColor,
                       checkColor: AppColors.charisWhite,
                       materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -1158,14 +1357,20 @@ class AttendanceRegisterDataSource extends DataGridSource {
                 Positioned(
                   top: 0,
                   right: 0,
-                  child: GestureDetector(
-                    onTap: () => _onEditNotes(student, date),
-                    child: Icon(
-                      Icons.edit_note,
-                      size: 12,
-                      color: _redColor,
-                    ),
-                  ),
+                  child: schoolDay
+                      ? GestureDetector(
+                          onTap: () => _onEditNotes(student, date),
+                          child: Icon(
+                            Icons.edit_note,
+                            size: 12,
+                            color: _redColor,
+                          ),
+                        )
+                      : Icon(
+                          Icons.edit_note,
+                          size: 12,
+                          color: _colorScheme.onSurfaceVariant,
+                        ),
                 ),
             ],
           ),

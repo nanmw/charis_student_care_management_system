@@ -368,7 +368,7 @@ class PaymentRepository {
     final existingMap = {for (final p in existingPayments) p.studentId: p};
 
     // Use a transaction to batch all operations
-    return await _db.transaction(() async {
+    final count = await _db.transaction(() async {
       int count = 0;
 
       for (final entry in payments.entries) {
@@ -463,6 +463,7 @@ class PaymentRepository {
             deviceId: deviceId,
             userDisplayName: userDisplayName,
             screen: screen,
+            notifySync: false,
           );
         }
         count++;
@@ -470,6 +471,10 @@ class PaymentRepository {
 
       return count;
     });
+    if (userId != null && count > 0) {
+      _onLocalChangeSetWritten?.call();
+    }
+    return count;
   }
 
   /// Calculates session total paid for [year] (Feb–Oct + lump sum; excludes Jan/Nov/Dec).
@@ -540,6 +545,7 @@ class PaymentRepository {
     String? deviceId,
     String? userDisplayName,
     String? screen,
+    bool notifySync = true,
   }) async {
     final effectiveDeviceId = await _effectiveChangeSetDeviceId(deviceId);
     final fullPayload = Map<String, dynamic>.from(payload);
@@ -557,6 +563,8 @@ class PaymentRepository {
             deviceId: effectiveDeviceId,
           ),
         );
-    _onLocalChangeSetWritten?.call();
+    if (notifySync) {
+      _onLocalChangeSetWritten?.call();
+    }
   }
 }

@@ -139,4 +139,276 @@ void main() {
       );
     });
   });
+
+  group('attendanceDateStamps', () {
+    test('UTC midnight includes that calendar day', () {
+      expect(
+        attendanceDateStamps(DateTime.utc(2026, 7, 15)),
+        contains('2026-07-15'),
+      );
+    });
+
+    test('UTC evening of previous day also stamps the next calendar day', () {
+      expect(
+        attendanceDateStamps(DateTime.utc(2026, 7, 14, 22)),
+        contains('2026-07-15'),
+      );
+    });
+
+    test('local midnight DateTime stamps that local day', () {
+      expect(
+        attendanceDateStamps(DateTime(2026, 7, 15)),
+        contains('2026-07-15'),
+      );
+    });
+
+    test('attendanceDayInRange keeps UTC-evening encoding inside Term 2', () {
+      expect(
+        attendanceDayInRange(
+          DateTime.utc(2026, 7, 14, 22),
+          DateTime(2026, 5, 1),
+          DateTime(2026, 7, 31),
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('sessionCalendarYear', () {
+    test('single-year 2026 stays 2026', () {
+      expect(
+        sessionCalendarYear(
+          sessionCode: '2026',
+          now: DateTime(2026, 8, 25),
+        ),
+        2026,
+      );
+    });
+
+    test('2025-2026 in August 2026 is 2026', () {
+      expect(
+        sessionCalendarYear(
+          sessionCode: '2025-2026',
+          now: DateTime(2026, 8, 25),
+        ),
+        2026,
+      );
+    });
+
+    test('prefers startDate year over code', () {
+      expect(
+        sessionCalendarYear(
+          sessionCode: '2025-2026',
+          startDate: DateTime.utc(2026, 2, 1),
+          now: DateTime(2026, 8, 25),
+        ),
+        2026,
+      );
+    });
+  });
+
+  group('attendanceRegisterKeysForRow', () {
+    test('UTC evening lights the next calendar-day column', () {
+      final keys = attendanceRegisterKeysForRow(
+        1,
+        DateTime.utc(2026, 7, 14, 22),
+      );
+      expect(keys, contains('1-2026-07-15'));
+    });
+
+    test('May UTC midnight still lights May', () {
+      final keys = attendanceRegisterKeysForRow(
+        1,
+        DateTime.utc(2026, 5, 12),
+      );
+      expect(keys, contains('1-2026-05-12'));
+    });
+  });
+
+  group('isAttendanceSchoolDay', () {
+    final saturday = DateTime(2026, 8, 22);
+    final sunday = DateTime(2026, 8, 23);
+    final monday = DateTime(2026, 8, 24);
+    final thursday = DateTime(2026, 8, 20);
+    final friday = DateTime(2026, 8, 21);
+
+    test('Sunday is never a school day', () {
+      expect(
+        isAttendanceSchoolDay(date: sunday, mode: 'Full-time', isYear3: false),
+        isFalse,
+      );
+      expect(
+        isAttendanceSchoolDay(date: sunday, mode: 'Full-time', isYear3: true),
+        isFalse,
+      );
+      expect(
+        isAttendanceSchoolDay(date: sunday, mode: 'Hybrid', isYear3: false),
+        isFalse,
+      );
+    });
+
+    test('Hybrid is Saturday only', () {
+      expect(
+        isAttendanceSchoolDay(date: saturday, mode: 'Hybrid', isYear3: false),
+        isTrue,
+      );
+      expect(
+        isAttendanceSchoolDay(date: monday, mode: 'hybrid', isYear3: false),
+        isFalse,
+      );
+      expect(
+        isAttendanceSchoolDay(date: friday, mode: 'Hybrid', isYear3: true),
+        isFalse,
+      );
+    });
+
+    test('Full-time Friday vs Saturday', () {
+      expect(
+        isAttendanceSchoolDay(date: friday, mode: 'Full-time', isYear3: false),
+        isTrue,
+      );
+      expect(
+        isAttendanceSchoolDay(date: saturday, mode: 'Full-time', isYear3: false),
+        isFalse,
+      );
+    });
+
+    test('Year 3 Full-time is Monday–Thursday', () {
+      expect(
+        isAttendanceSchoolDay(date: thursday, mode: 'Full-time', isYear3: true),
+        isTrue,
+      );
+      expect(
+        isAttendanceSchoolDay(date: friday, mode: 'Full-time', isYear3: true),
+        isFalse,
+      );
+      expect(
+        isAttendanceSchoolDay(date: monday, mode: 'Full-time', isYear3: true),
+        isTrue,
+      );
+    });
+  });
+
+  group('filterAttendanceRegisterDays', () {
+    final week = [
+      DateTime(2026, 8, 21), // Friday
+      DateTime(2026, 8, 22), // Saturday
+      DateTime(2026, 8, 23), // Sunday
+      DateTime(2026, 8, 24), // Monday
+    ];
+
+    test('Sunday is always dropped', () {
+      final days = filterAttendanceRegisterDays(
+        week,
+        students: const [
+          (mode: 'Full-time', isYear3: false),
+          (mode: 'Hybrid', isYear3: false),
+        ],
+      );
+      expect(days.any((d) => d.weekday == DateTime.sunday), isFalse);
+    });
+
+    test('Hybrid keeps only Saturday', () {
+      final days = filterAttendanceRegisterDays(
+        week,
+        students: const [(mode: 'Hybrid', isYear3: false)],
+      );
+      expect(days, [DateTime(2026, 8, 22)]);
+    });
+
+    test('Full-time mixed keeps Friday', () {
+      final days = filterAttendanceRegisterDays(
+        week,
+        students: const [
+          (mode: 'Full-time', isYear3: true),
+          (mode: 'Full-time', isYear3: false),
+        ],
+      );
+      expect(days, [DateTime(2026, 8, 21), DateTime(2026, 8, 24)]);
+    });
+
+    test('Year 3-only drops Friday', () {
+      final days = filterAttendanceRegisterDays(
+        week,
+        students: const [(mode: 'Full-time', isYear3: true)],
+      );
+      expect(days, [DateTime(2026, 8, 24)]);
+    });
+  });
+
+  group('2026 attendance holidays', () {
+    final seed = AttendanceHolidaysByMode.seed2026;
+
+    test('Full-time 15 Jul 2026 is not a school day', () {
+      expect(
+        isAttendanceSchoolDay(
+          date: DateTime(2026, 7, 15),
+          mode: 'Full-time',
+          isYear3: false,
+          holidays: seed.fullTime,
+        ),
+        isFalse,
+      );
+    });
+
+    test('Full-time 8 Apr 2026 (Term 2 open) is a school day', () {
+      expect(
+        isAttendanceSchoolDay(
+          date: DateTime(2026, 4, 8),
+          mode: 'Full-time',
+          isYear3: false,
+          holidays: seed.fullTime,
+        ),
+        isTrue,
+      );
+    });
+
+    test('Hybrid 4 Jul 2026 Saturday is not a school day', () {
+      expect(
+        isAttendanceSchoolDay(
+          date: DateTime(2026, 7, 4),
+          mode: 'Hybrid',
+          isYear3: false,
+          holidays: seed.hybrid,
+        ),
+        isFalse,
+      );
+    });
+
+    test('Hybrid 1 Aug 2026 Saturday is a school day', () {
+      expect(
+        isAttendanceSchoolDay(
+          date: DateTime(2026, 8, 1),
+          mode: 'Hybrid',
+          isYear3: false,
+          holidays: seed.hybrid,
+        ),
+        isTrue,
+      );
+    });
+
+    test('21 Mar 2026 Full-time is not (Human Rights Day)', () {
+      expect(
+        isAttendanceSchoolDay(
+          date: DateTime(2026, 3, 21),
+          mode: 'Full-time',
+          isYear3: false,
+          holidays: seed.fullTime,
+        ),
+        isFalse,
+      );
+    });
+
+    test('Year 3 Hybrid 31 Jan 2026 Saturday stays a school day', () {
+      expect(
+        isAttendanceSchoolDay(
+          date: DateTime(2026, 1, 31),
+          mode: 'Hybrid',
+          isYear3: true,
+          holidays: seed.hybrid,
+        ),
+        isTrue,
+      );
+    });
+  });
 }

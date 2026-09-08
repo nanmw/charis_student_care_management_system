@@ -39,6 +39,46 @@ class MissionPaymentData {
   final String? comment;
 }
 
+String? _normalizedMissionPaymentText(String? value) {
+  if (value == null || value.isEmpty) return null;
+  return value;
+}
+
+/// True when [edit] differs from [row], or [row] is missing and [edit] is not all defaults.
+bool missionPaymentRowHasChanges({
+  required MissionPaymentData edit,
+  MissionPaymentScheduleData? row,
+}) {
+  final trip = _normalizedMissionPaymentText(edit.tripSelected);
+  final comment = _normalizedMissionPaymentText(edit.comment);
+  if (row == null) {
+    return trip != null ||
+        edit.date != null ||
+        edit.amount != 0 ||
+        edit.mar != 0 ||
+        edit.apr != 0 ||
+        edit.may != 0 ||
+        edit.jun != 0 ||
+        edit.jul != 0 ||
+        edit.aug != 0 ||
+        edit.sep != 0 ||
+        edit.oct != 0 ||
+        comment != null;
+  }
+  return trip != _normalizedMissionPaymentText(row.tripSelected) ||
+      edit.date != row.date ||
+      edit.amount != row.amount ||
+      edit.mar != row.mar ||
+      edit.apr != row.apr ||
+      edit.may != row.may ||
+      edit.jun != row.jun ||
+      edit.jul != row.jul ||
+      edit.aug != row.aug ||
+      edit.sep != row.sep ||
+      edit.oct != row.oct ||
+      comment != _normalizedMissionPaymentText(row.comment);
+}
+
 /// Mission payment schedule repository: watch/upsert by student and year.
 class MissionPaymentRepository {
   MissionPaymentRepository(
@@ -152,7 +192,7 @@ class MissionPaymentRepository {
     final sessionCode =
         await _getSessionCodeById(academicSessionId) ?? year;
 
-    return await _db.transaction(() async {
+    final count = await _db.transaction(() async {
       int count = 0;
       for (final entry in payments.entries) {
         final studentId = entry.key;
@@ -234,12 +274,17 @@ class MissionPaymentRepository {
             deviceId: deviceId,
             userDisplayName: userDisplayName,
             screen: screen,
+            notifySync: false,
           );
         }
         count++;
       }
       return count;
     });
+    if (userId != null && count > 0) {
+      _onLocalChangeSetWritten?.call();
+    }
+    return count;
   }
 
   Future<void> _insertChangeSet({
@@ -252,6 +297,7 @@ class MissionPaymentRepository {
     String? deviceId,
     String? userDisplayName,
     String? screen,
+    bool notifySync = true,
   }) async {
     final effectiveDeviceId = await _effectiveChangeSetDeviceId(deviceId);
     final fullPayload = Map<String, dynamic>.from(payload);
@@ -271,6 +317,8 @@ class MissionPaymentRepository {
             deviceId: effectiveDeviceId,
           ),
         );
-    _onLocalChangeSetWritten?.call();
+    if (notifySync) {
+      _onLocalChangeSetWritten?.call();
+    }
   }
 }

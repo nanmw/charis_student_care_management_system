@@ -6,10 +6,18 @@ import 'package:uuid/uuid.dart';
 import 'package:charis_student_care/core/config/sync_folder_config.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/domain/attendance/attendance_thresholds.dart';
 
 /// Normalizes [date] to date-only (midnight UTC) for storage/comparison.
 DateTime _dateOnly(DateTime date) {
   return DateTime.utc(date.year, date.month, date.day);
+}
+
+bool _sameSchoolDay(DateTime stored, DateTime target) {
+  final stamp = attendanceDateStamp(
+    DateTime(target.year, target.month, target.day),
+  );
+  return attendanceDateStamps(stored).contains(stamp);
 }
 
 /// Attendance repository: watch/get/upsert daily attendance by date.
@@ -56,10 +64,15 @@ class AttendanceRepository {
     DateTime date, {
     List<int>? studentIds,
   }) {
-    final d = _dateOnly(date);
+    final target = DateTime(date.year, date.month, date.day);
+    final startDay = DateTime.utc(target.year, target.month, target.day)
+        .subtract(const Duration(days: 1));
+    final endDay = DateTime.utc(target.year, target.month, target.day)
+        .add(const Duration(days: 1));
     return (_db.select(_db.attendance)
           ..where((t) {
-            var pred = t.date.equals(d);
+            var pred = t.date.isBiggerOrEqualValue(startDay) &
+                t.date.isSmallerThanValue(endDay);
             if (studentIds != null) {
               if (studentIds.isEmpty) {
                 pred = pred & t.studentId.equals(-1);
@@ -70,7 +83,8 @@ class AttendanceRepository {
             return pred;
           })
           ..orderBy([(t) => OrderingTerm.asc(t.studentId)]))
-        .watch();
+        .watch()
+        .map((rows) => rows.where((r) => _sameSchoolDay(r.date, target)).toList());
   }
 
   /// One-time fetch of attendance rows for [date] and optional [studentIds].
@@ -78,10 +92,15 @@ class AttendanceRepository {
     DateTime date, [
     List<int>? studentIds,
   ]) async {
-    final d = _dateOnly(date);
+    final target = DateTime(date.year, date.month, date.day);
+    final startDay = DateTime.utc(target.year, target.month, target.day)
+        .subtract(const Duration(days: 1));
+    final endDay = DateTime.utc(target.year, target.month, target.day)
+        .add(const Duration(days: 1));
     var query = _db.select(_db.attendance)
       ..where((t) {
-        var pred = t.date.equals(d);
+        var pred = t.date.isBiggerOrEqualValue(startDay) &
+            t.date.isSmallerThanValue(endDay);
         if (studentIds != null) {
           if (studentIds.isEmpty) {
             pred = pred & t.studentId.equals(-1);
@@ -91,13 +110,15 @@ class AttendanceRepository {
         }
         return pred;
       });
-    return (query..orderBy([(t) => OrderingTerm.asc(t.studentId)])).get();
+    final rows =
+        await (query..orderBy([(t) => OrderingTerm.asc(t.studentId)])).get();
+    return rows.where((r) => _sameSchoolDay(r.date, target)).toList();
   }
 
   /// Returns the set of distinct dates that have at least one attendance record.
   /// When [studentIds] is null, all dates are returned (admin scope).
   /// When [studentIds] is non-null, only dates with attendance for those students are included;
-  /// empty list returns no dates (facilitator with no students).
+  /// empty list returns empty (facilitator with no students).
   Future<Set<DateTime>> getDatesWithAttendance({List<int>? studentIds}) async {
     if (studentIds != null && studentIds.isEmpty) return {};
     var query = _db.select(_db.attendance);
@@ -105,23 +126,37 @@ class AttendanceRepository {
       query = query..where((t) => t.studentId.isIn(studentIds));
     }
     final rows = await query.get();
-    return rows.map((r) => _dateOnly(r.date)).toSet();
+    return rows
+        .map(
+          (r) => DateTime.utc(
+            r.date.toLocal().year,
+            r.date.toLocal().month,
+            r.date.toLocal().day,
+          ),
+        )
+        .toSet();
   }
 
   /// Stream of attendance rows whose date is in [[start], [end]] (inclusive, date-only).
   /// When [studentIds] is non-null and non-empty, restrict to those students.
   /// Empty [studentIds] returns no rows (fail-closed for facilitators with no students).
+  ///
+  /// Bounds are padded so both UTC-midnight and local-midnight encodings of the
+  /// same calendar day are included (local midnight in UTC+ offsets falls on the
+  /// previous UTC day).
   Stream<List<AttendanceData>> watchAttendanceInRange(
     DateTime start,
     DateTime end, {
     List<int>? studentIds,
   }) {
-    final startDay = _dateOnly(start);
-    final endDay = _dateOnly(end);
+    final startDay = DateTime.utc(start.year, start.month, start.day)
+        .subtract(const Duration(days: 1));
+    final endDay = DateTime.utc(end.year, end.month, end.day)
+        .add(const Duration(days: 1));
     return (_db.select(_db.attendance)
           ..where((t) {
             var pred = t.date.isBiggerOrEqualValue(startDay) &
-                t.date.isSmallerOrEqualValue(endDay);
+                t.date.isSmallerThanValue(endDay);
             if (studentIds != null) {
               if (studentIds.isEmpty) {
                 pred = pred & t.studentId.equals(-1);
@@ -135,7 +170,12 @@ class AttendanceRepository {
             (t) => OrderingTerm.asc(t.date),
             (t) => OrderingTerm.asc(t.studentId),
           ]))
-        .watch();
+        .watch()
+        .map(
+          (rows) => rows
+              .where((r) => attendanceDayInRange(r.date, start, end))
+              .toList(),
+        );
   }
 
   /// Upserts attendance for [date]. Each entry has studentId + present, notes.
@@ -223,10 +263,25 @@ class AttendanceRepository {
     String? screen,
   }) async {
     final studentIds = rows.map((e) => e.studentId).toList();
-    final existingAttendance = await (_db.select(_db.attendance)
-          ..where((t) => t.date.equals(date) & t.studentId.isIn(studentIds)))
+    final target = DateTime(date.year, date.month, date.day);
+    final startDay = DateTime.utc(target.year, target.month, target.day)
+        .subtract(const Duration(days: 1));
+    final endDay = DateTime.utc(target.year, target.month, target.day)
+        .add(const Duration(days: 1));
+    final candidates = await (_db.select(_db.attendance)
+          ..where(
+            (t) =>
+                t.date.isBiggerOrEqualValue(startDay) &
+                t.date.isSmallerThanValue(endDay) &
+                t.studentId.isIn(studentIds),
+          ))
         .get();
-    final existingMap = {for (final a in existingAttendance) a.studentId: a};
+    final existingMap = <int, AttendanceData>{};
+    for (final a in candidates) {
+      if (_sameSchoolDay(a.date, target)) {
+        existingMap[a.studentId] = a;
+      }
+    }
 
     for (final e in rows) {
       final existing = existingMap[e.studentId];

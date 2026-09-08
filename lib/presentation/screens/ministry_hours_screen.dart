@@ -8,7 +8,8 @@ import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:go_router/go_router.dart';
-import 'package:charis_student_care/core/utils/date_utils.dart' as app_date_utils;
+import 'package:charis_student_care/core/utils/date_utils.dart'
+    as app_date_utils;
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/ministry_entry_repository.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
@@ -19,6 +20,7 @@ import 'package:charis_student_care/presentation/providers/ministry_providers.da
 import 'package:charis_student_care/presentation/providers/sync_providers.dart';
 import 'package:charis_student_care/presentation/providers/theme_mode_provider.dart';
 import 'package:charis_student_care/presentation/theme/app_table_style.dart';
+import 'package:charis_student_care/presentation/widgets/ministry_bulk_entry_dialog.dart';
 import 'package:charis_student_care/presentation/widgets/ministry_entry_form_dialog.dart';
 
 /// Builds summary tab options from classes (classId + studyMode + label).
@@ -40,11 +42,13 @@ List<({int classId, String studyMode, String label})> _buildSummaryTabOptions(
         ? ordinals[yearLevel - 1]
         : '${yearLevel}th';
     for (final mode in modes) {
-      options.add((
-        classId: c.id,
-        studyMode: mode,
-        label: '$ord Year $mode',
-      ),);
+      options.add(
+        (
+          classId: c.id,
+          studyMode: mode,
+          label: '$ord Year $mode',
+        ),
+      );
     }
   }
   return options;
@@ -136,7 +140,8 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
     final selectedClassId = ref.watch(ministrySummaryClassIdProvider);
     final selectedStudyMode = ref.watch(ministrySummaryStudyModeProvider);
     final summaryKey = (selectedClassId, selectedStudyMode);
-    final summaryListAsync = ref.watch(ministryHoursSummaryProvider(summaryKey));
+    final summaryListAsync =
+        ref.watch(ministryHoursSummaryProvider(summaryKey));
     final classesAsync = ref.watch(classesVisibleToCurrentUserProvider);
     final scopeAsync = ref.watch(currentUserFacilitatorScopeProvider);
     final auth = ref.watch(authStateProvider).valueOrNull;
@@ -155,8 +160,10 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
         if (selectedClassId != wantClassId || selectedStudyMode != wantMode) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (!mounted) return;
-            ref.read(ministrySummaryClassIdProvider.notifier).state = wantClassId;
-            ref.read(ministrySummaryStudyModeProvider.notifier).state = wantMode;
+            ref.read(ministrySummaryClassIdProvider.notifier).state =
+                wantClassId;
+            ref.read(ministrySummaryStudyModeProvider.notifier).state =
+                wantMode;
           });
         }
       } else if (!visibleClasses.any((c) => c.id == selectedClassId)) {
@@ -169,15 +176,18 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
           defaultClassId = scope.classIds!.first;
           defaultMode = scope.mode ?? 'Full-time';
         } else {
-          final year1 = visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
+          final year1 =
+              visibleClasses.where((SchoolClass c) => c.name == 'Year 1');
           final firstClass = visibleClasses.first;
           defaultClassId = year1.isEmpty ? firstClass.id : year1.first.id;
           defaultMode = 'Full-time';
         }
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          ref.read(ministrySummaryClassIdProvider.notifier).state = defaultClassId;
-          ref.read(ministrySummaryStudyModeProvider.notifier).state = defaultMode;
+          ref.read(ministrySummaryClassIdProvider.notifier).state =
+              defaultClassId;
+          ref.read(ministrySummaryStudyModeProvider.notifier).state =
+              defaultMode;
         });
       }
     }
@@ -284,7 +294,8 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
                     summaryListAsync,
                     allowedMode: scopeAsync.valueOrNull?.mode,
                   ),
-                  loading: () => const Center(child: CircularProgressIndicator()),
+                  loading: () =>
+                      const Center(child: CircularProgressIndicator()),
                   error: (e, _) => Center(child: Text('Error: $e')),
                 ),
                 _buildEntriesTab(
@@ -311,7 +322,8 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
     AsyncValue<List<MinistryHoursSummaryRow>> summaryListAsync, {
     String? allowedMode,
   }) {
-    final summaryTabOptions = _buildSummaryTabOptions(classes, allowedMode: allowedMode);
+    final summaryTabOptions =
+        _buildSummaryTabOptions(classes, allowedMode: allowedMode);
     final idx = classes.indexWhere((c) => c.id == selectedClassId);
     final selectedClass = idx >= 0 ? classes[idx] : null;
     final yearLevel = selectedClass != null ? selectedClass.sortOrder : 1;
@@ -356,21 +368,24 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
         Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
+            OutlinedButton.icon(
+              onPressed: () => _openBulkAddMinistryEntry(context),
+              icon: const Icon(Icons.playlist_add, size: 20),
+              label: const Text('Bulk add'),
+              style: OutlinedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
+            ),
+            const SizedBox(width: 8),
             FilledButton.icon(
-              onPressed: () async {
-                final added = await showDialog<bool>(
-                  context: context,
-                  builder: (ctx) => const MinistryEntryFormDialog(),
-                );
-                if (added == true && mounted) {
-                  ref.read(ministryEntriesProvider.notifier).loadInitial();
-                }
-              },
+              onPressed: () => _openAddMinistryEntry(context),
               icon: const Icon(Icons.add, size: 20),
               label: const Text('Add Ministry Entry'),
               style: FilledButton.styleFrom(
                 backgroundColor: redColor,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
               ),
             ),
           ],
@@ -440,8 +455,7 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
                 ],
               );
             },
-            loading: () =>
-                const Center(child: CircularProgressIndicator()),
+            loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => Center(
               child: Text(
                 'Error: $e',
@@ -498,9 +512,8 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
         _statCard(
           colorScheme: colorScheme,
           title: 'Avg Hours per Student',
-          value: stats != null
-              ? stats.avgHoursPerStudent.toStringAsFixed(1)
-              : '—',
+          value:
+              stats != null ? stats.avgHoursPerStudent.toStringAsFixed(1) : '—',
           subtitle: 'Average hours contributed by each student.',
           valueColor: colorScheme.onSurface,
           icon: Icons.person_outline,
@@ -747,16 +760,17 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
           ),
         ),
         const Spacer(),
+        OutlinedButton.icon(
+          onPressed: () => _openBulkAddMinistryEntry(context),
+          icon: const Icon(Icons.playlist_add, size: 20),
+          label: const Text('Bulk add'),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          ),
+        ),
+        const SizedBox(width: 8),
         FilledButton.icon(
-          onPressed: () async {
-            final added = await showDialog<bool>(
-              context: context,
-              builder: (ctx) => const MinistryEntryFormDialog(),
-            );
-            if (added == true && mounted) {
-              ref.read(ministryEntriesProvider.notifier).loadInitial();
-            }
-          },
+          onPressed: () => _openAddMinistryEntry(context),
           icon: const Icon(Icons.add, size: 20),
           label: const Text('Add Ministry Entry'),
           style: FilledButton.styleFrom(
@@ -766,6 +780,26 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
         ),
       ],
     );
+  }
+
+  Future<void> _openAddMinistryEntry(BuildContext context) async {
+    final added = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => const MinistryEntryFormDialog(),
+    );
+    if (added == true && mounted) {
+      ref.read(ministryEntriesProvider.notifier).loadInitial();
+    }
+  }
+
+  Future<void> _openBulkAddMinistryEntry(BuildContext context) async {
+    final added = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => const MinistryBulkEntryDialog(),
+    );
+    if (added == true && mounted) {
+      ref.read(ministryEntriesProvider.notifier).loadInitial();
+    }
   }
 
   Future<void> _openEditMinistryEntry(
@@ -820,9 +854,7 @@ class _MinistryHoursScreenState extends ConsumerState<MinistryHoursScreen>
       final deviceId = await ref.read(deviceIdProvider.future);
       await ref.read(ministryEntryRepositoryProvider).delete(
             entry.id,
-            userRole: auth is Authenticated
-                ? auth.role
-                : UserRole.facilitator,
+            userRole: auth is Authenticated ? auth.role : UserRole.facilitator,
             userId: userId,
             deviceId: deviceId,
             userDisplayName:
@@ -1139,22 +1171,35 @@ class MinistryEntryDataSource extends DataGridSource {
       final i = e.key + 1;
       final row = e.value;
       final entry = row.entry;
-      return DataGridRow(cells: [
-        DataGridCell<int>(columnName: 'sn', value: i),
-        DataGridCell<String>(
-            columnName: 'name', value: row.studentDisplayName,),
-        DataGridCell<String>(columnName: 'year', value: entry.year),
-        DataGridCell<String>(
-            columnName: 'type', value: entry.ministryType,),
-        DataGridCell<DateTime>(columnName: 'date', value: entry.date),
-        DataGridCell<double>(columnName: 'hours', value: entry.hours),
-        DataGridCell<String?>(
-            columnName: 'supervisor', value: entry.supervisor ?? 'N/A',),
-        DataGridCell<bool>(columnName: 'approved', value: entry.approved),
-        DataGridCell<MinistryEntryWithStudent>(
-            columnName: 'actions', value: row,),
-        DataGridCell<String?>(columnName: 'notes', value: entry.notes,),
-      ],);
+      return DataGridRow(
+        cells: [
+          DataGridCell<int>(columnName: 'sn', value: i),
+          DataGridCell<String>(
+            columnName: 'name',
+            value: row.studentDisplayName,
+          ),
+          DataGridCell<String>(columnName: 'year', value: entry.year),
+          DataGridCell<String>(
+            columnName: 'type',
+            value: entry.ministryType,
+          ),
+          DataGridCell<DateTime>(columnName: 'date', value: entry.date),
+          DataGridCell<double>(columnName: 'hours', value: entry.hours),
+          DataGridCell<String?>(
+            columnName: 'supervisor',
+            value: entry.supervisor ?? 'N/A',
+          ),
+          DataGridCell<bool>(columnName: 'approved', value: entry.approved),
+          DataGridCell<MinistryEntryWithStudent>(
+            columnName: 'actions',
+            value: row,
+          ),
+          DataGridCell<String?>(
+            columnName: 'notes',
+            value: entry.notes,
+          ),
+        ],
+      );
     }).toList();
   }
 

@@ -1165,10 +1165,13 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
         return;
       }
 
+      final dbRows = await repo.watchForSession(_scheduleSession).first;
+      final dbMap = {for (final r in dbRows) r.studentId: r};
+
       final paymentDataMap = <int, MissionPaymentData>{};
       for (final entry in edits.entries) {
         final e = entry.value;
-        paymentDataMap[entry.key] = MissionPaymentData(
+        final data = MissionPaymentData(
           tripSelected: e.tripSelected,
           date: e.date,
           amount: e.amount,
@@ -1182,6 +1185,18 @@ class _MissionsPaymentScreenState extends ConsumerState<MissionsPaymentScreen> {
           oct: e.oct,
           comment: e.comment,
         );
+        if (missionPaymentRowHasChanges(edit: data, row: dbMap[entry.key])) {
+          paymentDataMap[entry.key] = data;
+        }
+      }
+
+      if (paymentDataMap.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No changes to save.')),
+          );
+        }
+        return;
       }
 
       final sessionRepo = ref.read(academicSessionRepositoryProvider);

@@ -140,3 +140,18 @@ final attendanceThresholdsByModeProvider =
       .watch()
       .map(_thresholdsFromSettingRows);
 });
+
+/// Reactive Full-time and Hybrid closed/holiday ranges. Seeds 2026 once.
+final attendanceHolidaysByModeProvider =
+    StreamProvider.autoDispose<AttendanceHolidaysByMode>((ref) {
+  final repo = ref.watch(settingsRepositoryProvider);
+  return repo
+      .watch(AppSettingsRepository.keyAttendanceHolidays)
+      .asyncMap((value) async {
+    if (value == null || value.trim().isEmpty) {
+      await repo.ensureAttendanceHolidaysSeeded();
+      return AttendanceHolidaysByMode.seed2026;
+    }
+    return AttendanceHolidaysByMode.fromJsonString(value);
+  });
+});

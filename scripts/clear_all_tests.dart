@@ -6,16 +6,15 @@
 ///   dart run scripts/clear_all_tests.dart
 ///   dart run scripts/clear_all_tests.dart --db-path="C:\path\to\charis_student_care.db"
 ///
-/// With no --db-path, uses the app's default database (Documents/charis_student_care.db).
+/// With no --db-path, uses the app's default database (Application Support,
+/// with a one-time migrate from Documents if needed).
 /// WARNING: This is a destructive operation that cannot be undone.
 
 import 'dart:io';
 
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/data/database/database_file.dart';
 import 'package:charis_student_care/data/repositories/test_repository.dart';
 
 Future<void> main(List<String> args) async {
@@ -49,9 +48,9 @@ Future<void> main(List<String> args) async {
     database = AppDatabase.fromFile(file);
     pathUsed = file.absolute.path;
   } else {
-    final dbFolder = await getApplicationDocumentsDirectory();
-    pathUsed = p.join(dbFolder.path, 'charis_student_care.db');
-    database = AppDatabase.fromFile(File(pathUsed));
+    final file = await DatabaseFile.resolveLiveFile();
+    pathUsed = file.absolute.path;
+    database = AppDatabase.fromFile(file);
   }
   print('Using database: $pathUsed');
   print('');

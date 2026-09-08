@@ -165,6 +165,7 @@ class StudentRepository {
     bool? mediaRelease,
     bool? accidentWaiver,
     String? currentSessionCode,
+    bool notifySync = true,
   }) async {
     if (!RolePermissions.canManageStudents(userRole)) {
       throw StateError('Role cannot add students');
@@ -231,6 +232,7 @@ class StudentRepository {
         deviceId: deviceId,
         userDisplayName: userDisplayName,
         screen: screen,
+        notifySync: notifySync,
       );
     }
     return id;
@@ -276,7 +278,7 @@ class StudentRepository {
     if (!RolePermissions.canManageStudents(userRole)) {
       throw StateError('Role cannot add students');
     }
-    return _db.transaction(() async {
+    final count = await _db.transaction(() async {
       var count = 0;
       for (final item in items) {
         final id = await addStudent(
@@ -296,6 +298,7 @@ class StudentRepository {
           mediaRelease: item.mediaRelease,
           accidentWaiver: item.accidentWaiver,
           currentSessionCode: item.applySession ? item.sessionCode : null,
+          notifySync: false,
         );
         if (item.status != null && item.status != 'Active') {
           await updateStudent(
@@ -306,12 +309,17 @@ class StudentRepository {
             deviceId: deviceId,
             userDisplayName: userDisplayName,
             screen: screen,
+            notifySync: false,
           );
         }
         count++;
       }
       return count;
     });
+    if (userId != null && count > 0) {
+      _onLocalChangeSetWritten?.call();
+    }
+    return count;
   }
 
   /// Updates student. For name/field edits requires canManageStudents; status change always allowed.
@@ -335,6 +343,7 @@ class StudentRepository {
     String? deviceId,
     String? userDisplayName,
     String? screen,
+    bool notifySync = true,
   }) async {
     final row = await (_db.select(_db.students)..where((t) => t.id.equals(id)))
         .getSingleOrNull();
@@ -465,6 +474,7 @@ class StudentRepository {
         version: newVersion,
         userDisplayName: userDisplayName,
         screen: screen,
+        notifySync: notifySync,
       );
     }
   }
@@ -621,6 +631,7 @@ class StudentRepository {
     String? deviceId,
     String? userDisplayName,
     String? screen,
+    bool notifySync = true,
   }) async {
     final effectiveDeviceId = await _effectiveChangeSetDeviceId(deviceId);
     final fullPayload = Map<String, dynamic>.from(payload);
@@ -638,6 +649,8 @@ class StudentRepository {
             deviceId: effectiveDeviceId,
           ),
         );
-    _onLocalChangeSetWritten?.call();
+    if (notifySync) {
+      _onLocalChangeSetWritten?.call();
+    }
   }
 }
