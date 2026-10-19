@@ -12,7 +12,7 @@ import 'package:charis_student_care/presentation/providers/theme_mode_provider.d
 import 'package:charis_student_care/presentation/widgets/shell/app_footer.dart';
 
 import 'package:charis_student_care/data/database/app_database.dart';
-import 'package:charis_student_care/data/services/sync_folder_watch_coordinator.dart';
+import 'package:charis_student_care/data/services/sync_poll_coordinator.dart';
 
 /// App shell: header, sidebar, main content, footer.
 /// Used as ShellRoute child builder; [child] is the current route's content.
@@ -27,13 +27,16 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   bool _startupSyncScheduled = false;
-  late final SyncFolderWatchCoordinator _autoSyncCoordinator;
+  late final SyncPollCoordinator _autoSyncCoordinator;
 
   @override
   void initState() {
     super.initState();
-    _autoSyncCoordinator = SyncFolderWatchCoordinator(
-      onSyncRequested: () => runChangeSetFullSyncForWidget(ref),
+    _autoSyncCoordinator = SyncPollCoordinator(
+      onSyncRequested: () => runChangeSetFullSyncForWidget(
+        ref,
+        quietIfUnconfigured: true,
+      ),
     );
   }
 
@@ -63,16 +66,10 @@ class _AppShellState extends ConsumerState<AppShell> {
     final colorScheme = Theme.of(context).colorScheme;
     final auth = ref.watch(authStateProvider).valueOrNull;
     final config = ref.watch(syncFolderConfigProvider).valueOrNull;
-    final deviceId = ref.watch(deviceIdProvider).valueOrNull;
-    if (deviceId != null && deviceId.isNotEmpty) {
-      _autoSyncCoordinator.configure(
-        syncFolderPath: config?.syncFolderPath,
-        enabled: config?.autoSyncOnRemoteChange ?? true,
-        localDeviceId: deviceId,
-      );
-    } else {
-      _autoSyncCoordinator.stop();
-    }
+    _autoSyncCoordinator.configure(
+      connectionString: config?.neonConnectionString,
+      enabled: config?.autoSyncOnRemoteChange ?? true,
+    );
     final displayName = auth is Authenticated ? auth.user.displayName : 'User';
     final roleLabel = auth is Authenticated ? auth.role.displayName : '';
 
@@ -96,10 +93,10 @@ class _AppShellState extends ConsumerState<AppShell> {
     );
   }
 
-  /// Run change-set sync once after the shell is visible (export then import).
+  /// Run change-set sync once after the shell is visible (push then pull).
   Future<void> _runStartupSync() async {
     try {
-      await runChangeSetFullSyncForWidget(ref);
+      await runChangeSetFullSyncForWidget(ref, quietIfUnconfigured: true);
     } catch (e) {
       // Status is already updated by runChangeSetFullSync.
     }
@@ -239,16 +236,14 @@ class _AppShellState extends ConsumerState<AppShell> {
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
 
-    final hasSyncFolder = configAsync.valueOrNull?.syncFolderPath != null &&
-        configAsync.valueOrNull!.syncFolderPath!.trim().isNotEmpty;
+    final hasSyncDatabase =
+        configAsync.valueOrNull?.hasNeonConnection ?? false;
     final isSyncing = syncStatus.isSyncing;
     final hasError = syncStatus.hasError;
     final conflictCount = conflictCountAsync.valueOrNull ?? 0;
     final changeSets = changeSetsAsync.valueOrNull ?? <ChangeSet>[];
     final lastSync = syncStatus.lastSyncTime;
-    final hasPending = lastSync == null
-        ? changeSets.isNotEmpty
-        : changeSets.any((c) => c.timestamp.isAfter(lastSync));
+    final hasPending = changeSets.any((c) => !c.remotePushed);
 
     Color backgroundColor;
     String label;
@@ -256,11 +251,11 @@ class _AppShellState extends ConsumerState<AppShell> {
 
     if (isSyncing) {
       backgroundColor = isDark ? AppColors.surfaceDarkElevated : AppColors.charisLightGray;
-      label = 'OneDrive syncing...';
+      label = 'Syncing...';
       labelColor = isDark ? AppColors.textSecondaryOnDark : AppColors.charisDarkGray;
     } else if (hasError) {
       backgroundColor = AppColors.charisRedDark;
-      label = 'OneDrive sync failed';
+      label = 'Sync failed';
       labelColor = AppColors.charisWhite;
     } else if (conflictCount > 0) {
       backgroundColor = AppColors.charisRedDark;
@@ -270,13 +265,13 @@ class _AppShellState extends ConsumerState<AppShell> {
       backgroundColor = isDark ? AppColors.surfaceDarkElevated : AppColors.charisLightGray;
       label = 'Pending';
       labelColor = isDark ? AppColors.textSecondaryOnDark : AppColors.charisDarkGray;
-    } else if (hasSyncFolder) {
+    } else if (hasSyncDatabase) {
       backgroundColor = AppColors.syncedGreen;
-      label = 'OneDrive synced';
+      label = 'Synced';
       labelColor = AppColors.charisWhite;
     } else {
       backgroundColor = isDark ? AppColors.surfaceDarkElevated : AppColors.charisLightGray;
-      label = 'No sync folder';
+      label = 'No sync database';
       labelColor = isDark ? AppColors.textSecondaryOnDark : AppColors.charisDarkGray;
     }
 

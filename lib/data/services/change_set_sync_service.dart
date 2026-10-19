@@ -6,10 +6,16 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'package:charis_student_care/core/config/sync_folder_config.dart';
+import 'package:charis_student_care/core/exceptions/sync_exception.dart';
 import 'package:charis_student_care/core/utils/io_retry.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/repositories/change_sets_repository.dart';
 import 'package:charis_student_care/data/repositories/sync_conflicts_repository.dart';
+import 'package:charis_student_care/data/services/change_set_remote.dart';
+import 'package:charis_student_care/data/services/neon_change_set_transport.dart';
+
+export 'package:charis_student_care/data/services/change_set_remote.dart'
+    show ChangeSetRecord, ChangeSetRemote, RemoteChangeSet;
 
 /// Export format: one JSON file per device. Array of change-set objects.
 Map<String, dynamic> changeSetToJson(ChangeSet cs) {
@@ -26,43 +32,18 @@ Map<String, dynamic> changeSetToJson(ChangeSet cs) {
   };
 }
 
-/// Parsed row from imported JSON (before inserting into DB).
-class ChangeSetRecord {
-  const ChangeSetRecord({
-    required this.id,
-    required this.table,
-    required this.recordId,
-    required this.operation,
-    required this.payload,
-    required this.timestamp,
-    required this.userId,
-    required this.version,
-    required this.deviceId,
-  });
-
-  final String id;
-  final String table;
-  final String recordId;
-  final String operation;
-  final String payload;
-  final DateTime timestamp;
-  final String userId;
-  final int version;
-  final String deviceId;
-
-  static ChangeSetRecord fromJson(Map<String, dynamic> json) {
-    return ChangeSetRecord(
-      id: json['id'] as String,
-      table: json['table'] as String,
-      recordId: json['recordId'] as String,
-      operation: json['operation'] as String,
-      payload: json['payload'] as String,
-      timestamp: DateTime.parse(json['timestamp'] as String),
-      userId: json['userId'] as String,
-      version: json['version'] as int,
-      deviceId: json['deviceId'] as String,
-    );
-  }
+ChangeSetRecord changeSetRecordFromLocal(ChangeSet cs) {
+  return ChangeSetRecord(
+    id: cs.id,
+    table: cs.table,
+    recordId: cs.recordId,
+    operation: cs.operation,
+    payload: cs.payload,
+    timestamp: cs.timestamp.toUtc(),
+    userId: cs.userId,
+    version: cs.version,
+    deviceId: cs.deviceId,
+  );
 }
 
 /// Result of applying a single change-set: applied, conflict, or skipped.
@@ -105,15 +86,24 @@ class ChangeSetSyncService {
     required SyncConflictsRepository syncConflictsRepo,
     Future<SyncFolderConfig> Function()? loadConfig,
     Future<Directory> Function()? exportHashCacheDir,
+    Future<void> Function(int seq)? saveLastPulledSeq,
+    ChangeSetRemote Function(String connectionString)? openRemote,
   })  : _changeSetsRepo = changeSetsRepo,
         _syncConflictsRepo = syncConflictsRepo,
         _loadConfig = loadConfig ?? SyncFolderConfig.load,
-        _exportHashCacheDir = exportHashCacheDir ?? _defaultExportHashCacheDir;
+        _exportHashCacheDir = exportHashCacheDir ?? _defaultExportHashCacheDir,
+        _saveLastPulledSeq = saveLastPulledSeq ?? SyncFolderConfig.saveLastPulledSeq,
+        _openRemote = openRemote ?? NeonChangeSetTransport.new;
 
   final ChangeSetsRepository _changeSetsRepo;
   final SyncConflictsRepository _syncConflictsRepo;
   final Future<SyncFolderConfig> Function() _loadConfig;
   final Future<Directory> Function() _exportHashCacheDir;
+  final Future<void> Function(int seq) _saveLastPulledSeq;
+  final ChangeSetRemote Function(String connectionString) _openRemote;
+
+  static const int _pushBatchSize = 100;
+  static const int _pullBatchSize = 200;
 
   static const String _deviceFilePrefix = 'device_';
   static const String _deviceFileSuffix = '.json';
@@ -244,6 +234,7 @@ class ChangeSetSyncService {
   /// Import change-sets from the sync folder: read all device_*.json files,
   /// merge by id, sort by timestamp, then try to apply any not already in local DB.
   /// Uses [tryApply] (returns [ApplyResult]); on conflict, records the change-set as seen and stores conflict.
+  /// An exception from one change-set is recorded the same way and does not stop the rest.
   Future<int> import({Future<ApplyResult> Function(ChangeSetRecord)? tryApply}) async {
     final config = await _loadConfig();
     final path = config.syncFolderPath;
@@ -270,35 +261,29 @@ class ChangeSetSyncService {
     for (final record in sorted) {
       final exists = await _changeSetsRepo.hasChangeSet(record.id);
       if (!exists) {
-        final result = await tryApply(record);
+        final ApplyResult result;
+        try {
+          result = await tryApply(record);
+        } catch (e) {
+          await _markChangeSetSeen(record);
+          await _syncConflictsRepo.insert(
+            changeSetId: record.id,
+            tableName: record.table,
+            recordId: record.recordId,
+            incomingPayload: record.payload,
+            localSnapshot: jsonEncode({'error': e.toString()}),
+            sourceDeviceId: record.deviceId,
+          );
+          continue;
+        }
         if (result is ApplyResultSkipped) {
           if (result.permanent) {
-            await _changeSetsRepo.insertChangeSetRaw(
-              id: record.id,
-              table: record.table,
-              recordId: record.recordId,
-              operation: record.operation,
-              payload: record.payload,
-              timestamp: record.timestamp,
-              userId: record.userId,
-              version: record.version,
-              deviceId: record.deviceId,
-            );
+            await _markChangeSetSeen(record);
           }
           continue;
         }
         if (result is ApplyResultConflict) {
-          await _changeSetsRepo.insertChangeSetRaw(
-            id: record.id,
-            table: record.table,
-            recordId: record.recordId,
-            operation: record.operation,
-            payload: record.payload,
-            timestamp: record.timestamp,
-            userId: record.userId,
-            version: record.version,
-            deviceId: record.deviceId,
-          );
+          await _markChangeSetSeen(record);
           await _syncConflictsRepo.insert(
             changeSetId: result.changeSetId,
             tableName: result.tableName,
@@ -312,6 +297,133 @@ class ChangeSetSyncService {
         }
       }
     }
+    return applied;
+  }
+
+  Future<void> _markChangeSetSeen(ChangeSetRecord record) {
+    return _changeSetsRepo.insertChangeSetRaw(
+      id: record.id,
+      table: record.table,
+      recordId: record.recordId,
+      operation: record.operation,
+      payload: record.payload,
+      timestamp: record.timestamp,
+      userId: record.userId,
+      version: record.version,
+      deviceId: record.deviceId,
+    );
+  }
+
+  /// Whether this PC has a Neon connection string saved.
+  Future<bool> remoteConfigured() async {
+    final config = await _loadConfig();
+    return config.hasNeonConnection;
+  }
+
+  /// Push unpushed local change-sets, then pull and apply remote rows.
+  ///
+  /// Returns how many remote change-sets were newly applied.
+  /// Throws [SyncException] when no connection string is saved.
+  Future<int> syncWithRemote({
+    required Future<ApplyResult> Function(ChangeSetRecord) tryApply,
+  }) async {
+    final config = await _loadConfig();
+    final connectionString = config.neonConnectionString?.trim();
+    if (connectionString == null || connectionString.isEmpty) {
+      throw SyncException('Neon connection string is not set');
+    }
+
+    await _changeSetsRepo.retagLegacyChangeSetsTo(config.deviceId);
+    final remote = _openRemote(connectionString);
+    try {
+      await _pushUnpushed(remote);
+      return await _pullAndApply(
+        remote,
+        startSeq: config.lastPulledSeq,
+        tryApply: tryApply,
+      );
+    } finally {
+      await remote.close();
+    }
+  }
+
+  Future<void> _pushUnpushed(ChangeSetRemote remote) async {
+    while (true) {
+      final rows = await _changeSetsRepo.getUnpushedChangeSets(
+        limit: _pushBatchSize,
+      );
+      if (rows.isEmpty) return;
+      await remote.push(rows.map(changeSetRecordFromLocal).toList());
+      await _changeSetsRepo.markRemotePushed(rows.map((row) => row.id));
+      if (rows.length < _pushBatchSize) return;
+    }
+  }
+
+  Future<int> _pullAndApply(
+    ChangeSetRemote remote, {
+    required int startSeq,
+    required Future<ApplyResult> Function(ChangeSetRecord) tryApply,
+  }) async {
+    var cursor = startSeq;
+    var applied = 0;
+
+    while (true) {
+      final rows = await remote.pullAfter(cursor, limit: _pullBatchSize);
+      if (rows.isEmpty) break;
+
+      var blocked = false;
+      for (final row in rows) {
+        final record = row.record;
+        final exists = await _changeSetsRepo.hasChangeSet(record.id);
+        if (exists) {
+          cursor = row.seq;
+          continue;
+        }
+
+        final ApplyResult result;
+        try {
+          result = await tryApply(record);
+        } catch (e) {
+          await _markChangeSetSeen(record);
+          await _syncConflictsRepo.insert(
+            changeSetId: record.id,
+            tableName: record.table,
+            recordId: record.recordId,
+            incomingPayload: record.payload,
+            localSnapshot: jsonEncode({'error': e.toString()}),
+            sourceDeviceId: record.deviceId,
+          );
+          await _changeSetsRepo.markRemotePushed([record.id]);
+          cursor = row.seq;
+          continue;
+        }
+
+        if (result is ApplyResultSkipped && !result.permanent) {
+          blocked = true;
+          break;
+        }
+        if (result is ApplyResultSkipped && result.permanent) {
+          await _markChangeSetSeen(record);
+        } else if (result is ApplyResultConflict) {
+          await _markChangeSetSeen(record);
+          await _syncConflictsRepo.insert(
+            changeSetId: result.changeSetId,
+            tableName: result.tableName,
+            recordId: result.recordId,
+            incomingPayload: result.incomingPayload,
+            localSnapshot: result.localSnapshot,
+            sourceDeviceId: result.sourceDeviceId,
+          );
+        }
+        await _changeSetsRepo.markRemotePushed([record.id]);
+        if (result is ApplyResultApplied) applied++;
+        cursor = row.seq;
+      }
+
+      await _saveLastPulledSeq(cursor);
+      if (blocked || rows.length < _pullBatchSize) break;
+    }
+
     return applied;
   }
 }

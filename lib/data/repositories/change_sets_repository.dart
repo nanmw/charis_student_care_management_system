@@ -58,6 +58,7 @@ class ChangeSetsRepository {
     required String userId,
     required int version,
     required String deviceId,
+    bool remotePushed = false,
   }) async {
     await _db.into(_db.changeSets).insert(
           ChangeSetsCompanion.insert(
@@ -70,7 +71,33 @@ class ChangeSetsRepository {
             userId: userId,
             version: version,
             deviceId: deviceId,
+            remotePushed: Value(remotePushed),
           ),
         );
+  }
+
+  /// Local change-sets that have not been stored in the remote database yet.
+  Future<List<ChangeSet>> getUnpushedChangeSets({int limit = 100}) {
+    return (_db.select(_db.changeSets)
+          ..where((t) => t.remotePushed.equals(false))
+          ..orderBy([
+            (t) => OrderingTerm.asc(t.timestamp),
+            (t) => OrderingTerm.asc(t.id),
+          ])
+          ..limit(limit))
+        .get();
+  }
+
+  /// Marks change-sets as stored in the remote database.
+  Future<void> markRemotePushed(Iterable<String> ids) async {
+    final list = ids.toList();
+    const chunkSize = 200;
+    for (var i = 0; i < list.length; i += chunkSize) {
+      final end = i + chunkSize > list.length ? list.length : i + chunkSize;
+      final slice = list.sublist(i, end);
+      await (_db.update(_db.changeSets)..where((t) => t.id.isIn(slice))).write(
+        const ChangeSetsCompanion(remotePushed: Value(true)),
+      );
+    }
   }
 }

@@ -23,7 +23,7 @@ void main() {
     });
 
     test('schema version is correct', () {
-      expect(database.schemaVersion, equals(34));
+      expect(database.schemaVersion, equals(36));
     });
 
     test('tables are created correctly', () async {

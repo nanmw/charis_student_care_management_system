@@ -415,6 +415,80 @@ void main() {
     expect(math.single.classId, year2.id);
   });
 
+  test('subject INSERT of an existing name maps to that row', () async {
+    final year2 = (await db.select(db.classes).get())
+        .firstWhere((c) => c.name == 'Year 2');
+    final first = await applier.tryApply(
+      record(
+        id: 'subj-math-1',
+        table: 'subjects',
+        recordId: 'remote-subj-1',
+        operation: 'INSERT',
+        payload: '{"name":"Math","className":"Year 2"}',
+      ),
+    );
+    expect(first, isA<ApplyResultApplied>());
+
+    final second = await applier.tryApply(
+      record(
+        id: 'subj-math-2',
+        table: 'subjects',
+        recordId: 'remote-subj-2',
+        operation: 'INSERT',
+        payload: '{"name":"Math","className":"Year 2"}',
+      ),
+    );
+    expect(second, isA<ApplyResultApplied>());
+
+    final math = (await db.select(db.subjects).get())
+        .where((s) => s.name == 'Math' && s.classId == year2.id)
+        .toList();
+    expect(math, hasLength(1));
+    final mapping = await (db.select(db.syncRecordMapping)
+          ..where((t) =>
+              t.entityTable.equals('subjects') &
+              t.recordId.equals('remote-subj-2'),))
+        .getSingle();
+    expect(mapping.localId, math.single.id);
+  });
+
+  test('subject rename onto a name already used in that class conflicts',
+      () async {
+    final year1 = (await db.select(db.classes).get())
+        .firstWhere((c) => c.name == 'Year 1');
+    final subjects = await (db.select(db.subjects)
+          ..where((t) => t.classId.equals(year1.id)))
+        .get();
+    final healing = subjects.firstWhere((s) => s.name == 'Healing');
+    final foundations =
+        subjects.firstWhere((s) => s.name == 'A Sure Foundation');
+
+    final result = await applier.tryApply(
+      record(
+        id: 'subj-rename-clash',
+        table: 'subjects',
+        recordId: healing.id.toString(),
+        operation: 'UPDATE',
+        payload: '{"name":"A Sure Foundation"}',
+      ),
+    );
+
+    expect(result, isA<ApplyResultConflict>());
+    final conflict = result as ApplyResultConflict;
+    expect(conflict.tableName, 'subjects');
+    expect(conflict.recordId, healing.id.toString());
+    final unchanged = await (db.select(db.subjects)
+          ..where((t) => t.id.equals(healing.id)))
+        .getSingle();
+    expect(unchanged.name, 'Healing');
+    final stillThere = await (db.select(db.subjects)
+          ..where((t) => t.id.equals(foundations.id)))
+        .getSingle();
+    expect(stillThere.name, 'A Sure Foundation');
+    final seen = await db.select(db.changeSets).get();
+    expect(seen.where((c) => c.id == 'subj-rename-clash'), isEmpty);
+  });
+
   test('class INSERT merges onto seeded Year 1 by name and maps remote id',
       () async {
     final year1 = (await db.select(db.classes).get())

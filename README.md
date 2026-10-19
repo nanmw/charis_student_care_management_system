@@ -4,8 +4,8 @@ Flutter desktop application replacing Excel-based Student Care Data Capture Syst
 
 ## Features
 
-- Offline-first architecture with multi-user sync via a shared OneDrive folder (change-set sync; no API; OneDrive desktop required)
-- Git-inspired change-set synchronization (export/import JSON; merge by timestamp)
+- Offline-first architecture with multi-user sync via a Neon Postgres change-set log
+- Git-inspired change-set synchronization (push and pull new rows; merge by timestamp)
 - Role-based access control (Facilitator, Admin Level 02, Admin Level 01)
 - Student management with alphabetical sorting
 - Attendance tracking with percentage calculation
@@ -19,7 +19,7 @@ Flutter desktop application replacing Excel-based Student Care Data Capture Syst
 - Riverpod 2.x (State Management)
 - Drift (Type-safe SQLite with encryption)
 - Microsoft Entra ID (OAuth2 Authentication)
-- Sync: change-set export/import to a shared OneDrive folder (no API; OneDrive desktop syncs files)
+- Sync: incremental change-set push/pull to a Neon Postgres database (local SQLite stays the database each screen reads)
 
 ## Getting Started
 
@@ -60,9 +60,19 @@ flutter run -d windows --dart-define=CHARIS_AUTH_SKIP=true
 
 You will go straight to the app. Do **not** use this in production.
 
-### Sync (change-set via OneDrive folder)
+### Sync (change-set via Neon)
 
-Sync uses a shared folder (no API). In the app, go to **Settings** → **Sync**, choose a folder inside your OneDrive (e.g. `OneDrive\\CharisStudentCare\\Sync`). All devices that use the same folder will exchange change-sets. OneDrive desktop must be installed so the folder syncs. Sync runs on startup and you can use **Sync now** in Settings.
+Each PC keeps its own SQLite database. Sync sends new change-sets to a shared Neon Postgres table and pulls change-sets from other PCs.
+
+1. Create a free Neon project and open its SQL editor.
+2. Run the script in [docs/neon_change_sets.sql](docs/neon_change_sets.sql) once.
+3. Copy the **pooled** connection string (the host contains `-pooler`, and it uses `sslmode=require`).
+4. In the app, go to **Settings → Sync**, paste that string, and save. It is stored only on that PC and is not shown again.
+5. Repeat on each PC. Use **Sync now**, or leave auto-sync on. Auto-sync checks about once a minute while the app is open, and the app also syncs after you save.
+
+The first sync uploads the change-sets already on that PC. Later syncs send only new edits. The free Neon compute sleeps after a few idle minutes and wakes on the next sync.
+
+Do not commit the connection string.
 
 ### Alternative: Using Environment Variables
 

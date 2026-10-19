@@ -252,5 +252,47 @@ void main() {
       expect(seen, isNot(contains(ownOnlyId)));
       expect(seen, isNot(contains(ownLegacyOnlyId)));
     });
+
+    test('import continues after an apply exception and does not retry it',
+        () async {
+      const badId = 'cs-bad';
+      const goodId = 'cs-good';
+      final remoteFile = File(
+        '${tempDir.path}/${ChangeSetSyncService.deviceFileNameFor(remoteDeviceId)}',
+      );
+      await remoteFile.writeAsString(
+        '['
+        '{"id":"$badId","table":"subjects","recordId":"121","operation":"UPDATE","payload":"{\\"name\\":\\"tested\\"}","timestamp":"2026-01-01T00:00:00.000Z","userId":"user-b","version":1,"deviceId":"$remoteDeviceId"},'
+        '{"id":"$goodId","table":"students","recordId":"2","operation":"INSERT","payload":"{}","timestamp":"2026-01-02T00:00:00.000Z","userId":"user-b","version":1,"deviceId":"$remoteDeviceId"}'
+        ']',
+      );
+
+      final seen = <String>[];
+      final applied = await service.import(
+        tryApply: (record) async {
+          seen.add(record.id);
+          if (record.id == badId) {
+            throw Exception('UNIQUE constraint failed: subjects.name');
+          }
+          return ApplyResultApplied();
+        },
+      );
+
+      expect(applied, 1);
+      expect(seen, [badId, goodId]);
+      final conflicts = await SyncConflictsRepository(db).listConflicts();
+      expect(conflicts, hasLength(1));
+      expect(conflicts.single.changeSetId, badId);
+
+      seen.clear();
+      await service.import(
+        tryApply: (record) async {
+          seen.add(record.id);
+          return ApplyResultApplied();
+        },
+      );
+      expect(seen, [goodId]);
+      expect(seen, isNot(contains(badId)));
+    });
   });
 }

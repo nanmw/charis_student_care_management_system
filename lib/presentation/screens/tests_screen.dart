@@ -1,19 +1,25 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:syncfusion_flutter_datagrid/datagrid.dart';
 
 import 'package:charis_student_care/core/constants/app_constants.dart';
 import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
+import 'package:charis_student_care/core/utils/file_export_utils.dart';
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:go_router/go_router.dart';
 import 'package:charis_student_care/core/utils/date_utils.dart'
     as app_date_utils;
 import 'package:charis_student_care/data/database/app_database.dart';
+import 'package:charis_student_care/data/services/report_service.dart';
+import 'package:charis_student_care/data/services/test_score_import_service.dart';
 import 'package:charis_student_care/domain/use_cases/sort_students_alphabetically.dart';
 import 'package:charis_student_care/presentation/providers/auth_provider.dart';
 import 'package:charis_student_care/presentation/providers/auth_state.dart';
@@ -51,6 +57,26 @@ class TestRowEdit {
   bool get passed => score != null && score! >= 70;
 }
 
+class _AcceptedScoreImport {
+  _AcceptedScoreImport({
+    required this.rowNumber,
+    required this.studentId,
+    required this.studentName,
+    required this.score,
+    required this.notesProvided,
+    required this.willUpdate,
+    this.notes,
+  });
+
+  final int rowNumber;
+  final int studentId;
+  final String studentName;
+  final int score;
+  final bool notesProvided;
+  final String? notes;
+  final bool willUpdate;
+}
+
 /// Tests Entry screen: table-based layout for managing student test scores
 class TestsScreen extends ConsumerStatefulWidget {
   const TestsScreen({super.key});
@@ -60,6 +86,9 @@ class TestsScreen extends ConsumerStatefulWidget {
 }
 
 class _TestsScreenState extends ConsumerState<TestsScreen> {
+  final TestScoreImportService _testScoreImportService =
+      const TestScoreImportService();
+
   String _selectedMode = 'Full-time';
   int? _studentClassId; // Student class filter (from DB classes)
   String?
@@ -656,6 +685,32 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
                   _exportCsv(context);
                 }
               },
+            ),
+            const SizedBox(width: 12),
+            OutlinedButton.icon(
+              onPressed: _scoreImportReady
+                  ? () => _downloadScoreTemplate(context)
+                  : null,
+              icon: const Icon(Icons.description_outlined, size: 20),
+              label: const Text('Download template'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            OutlinedButton.icon(
+              onPressed: () => _importScores(context),
+              icon: const Icon(Icons.upload_file_outlined, size: 20),
+              label: const Text('Import scores'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
+              ),
             ),
             const SizedBox(width: 12),
             OutlinedButton.icon(
@@ -1971,6 +2026,469 @@ class _TestsScreenState extends ConsumerState<TestsScreen> {
           ),
         ),
       );
+    }
+  }
+
+  bool get _scoreImportReady {
+    return _bulkSubjectId != null &&
+        _studentClassId != null &&
+        _selectedMode.trim().isNotEmpty &&
+        (_selectedAcademicSession?.trim().isNotEmpty ?? false);
+  }
+
+  String _studentNameKey(String surname, String firstName) {
+    return '${surname.trim().toLowerCase()}|${firstName.trim().toLowerCase()}';
+  }
+
+  List<Student> _scoreImportRoster() {
+    final students =
+        ref.read(studentsStreamProvider('Active')).valueOrNull ?? const [];
+    final classId = _studentClassId;
+    final filtered = students.where((student) {
+      return student.mode == _selectedMode && student.classId == classId;
+    }).toList();
+    return sortStudentsAlphabetically(filtered);
+  }
+
+  String? _selectedSubjectName() {
+    final classId = _studentClassId;
+    final subjectId = _bulkSubjectId;
+    if (classId == null || subjectId == null) return null;
+    final subjects =
+        ref.read(subjectsForClassStreamProvider(classId)).valueOrNull;
+    for (final subject in subjects ?? const <Subject>[]) {
+      if (subject.id == subjectId) return subject.name;
+    }
+    return null;
+  }
+
+  String? _selectedClassName() {
+    final classes =
+        ref.read(classesVisibleToCurrentUserProvider).valueOrNull ?? const [];
+    for (final schoolClass in classes) {
+      if (schoolClass.id == _studentClassId) return schoolClass.name;
+    }
+    return null;
+  }
+
+  String _safeFilePart(String value) {
+    final cleaned = value.replaceAll(RegExp(r'[\\/:*?"<>|]'), ' ').trim();
+    return cleaned.isEmpty ? 'scores' : cleaned;
+  }
+
+  Future<void> _downloadScoreTemplate(BuildContext context) async {
+    final auth = ref.read(authStateProvider).valueOrNull;
+    if (auth is! Authenticated || !RolePermissions.canEnterTests(auth.role)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You do not have permission to download the template'),
+        ),
+      );
+      return;
+    }
+    if (!_scoreImportReady) return;
+
+    final roster = _scoreImportRoster();
+    if (roster.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No active students in this class and mode'),
+        ),
+      );
+      return;
+    }
+
+    final allTests = ref.read(allTestsProvider).valueOrNull ?? const <Test>[];
+    final subjectId = _bulkSubjectId!;
+    final rows = <List<String>>[];
+    for (final student in roster) {
+      final existing = _findTestForStudentAndSubject(
+        allTests,
+        student.id,
+        subjectId,
+        null,
+        academicSession: _selectedAcademicSession,
+      );
+      rows.add([
+        student.surname,
+        student.firstName,
+        existing?.score.toString() ?? '',
+        existing?.label ?? '',
+      ]);
+    }
+
+    final subjectName = _selectedSubjectName() ?? 'Subject';
+    final className = _selectedClassName() ?? 'Class';
+    final bytes = ReportService.buildTableExcel(
+      'Test Scores',
+      'Test Scores',
+      const ['surname', 'firstName', 'score', 'notes'],
+      rows,
+    );
+
+    try {
+      final downloadsDir = await getDownloadsDirectory();
+      const extension = 'xlsx';
+      final suggestedName =
+          'Test_Scores_${_safeFilePart(className)}_${_safeFilePart(_selectedMode)}_${_safeFilePart(subjectName)}.$extension';
+      final path = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save test score template',
+        fileName: suggestedName,
+        bytes: bytes,
+        type: FileType.custom,
+        allowedExtensions: const [extension],
+        initialDirectory: downloadsDir?.path,
+      );
+      if (path == null || path.isEmpty) return;
+
+      var filePath = path;
+      if (!filePath.toLowerCase().endsWith('.$extension')) {
+        filePath = '$filePath.$extension';
+      }
+      try {
+        await File(filePath).writeAsBytes(bytes, flush: true);
+      } catch (writeError) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                FileExportUtils.userFacingSaveError(
+                  writeError,
+                  itemLabel: 'template',
+                ),
+              ),
+              backgroundColor: Theme.of(context).colorScheme.error,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 8),
+            ),
+          );
+        }
+        return;
+      }
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Template saved to $filePath'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        final message = e is FileSystemException ||
+                e.toString().toLowerCase().contains('pathaccess') ||
+                e.toString().toLowerCase().contains('errno =')
+            ? FileExportUtils.userFacingSaveError(e, itemLabel: 'template')
+            : 'Could not save template. Please try again.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 8),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _importScores(BuildContext context) async {
+    final auth = ref.read(authStateProvider).valueOrNull;
+    if (auth is! Authenticated || !RolePermissions.canEnterTests(auth.role)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('You do not have permission to import scores'),
+        ),
+      );
+      return;
+    }
+    if (!_scoreImportReady) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Select a class, mode, subject, and academic session before importing scores.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final roster = _scoreImportRoster();
+    if (roster.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No active students in this class and mode'),
+        ),
+      );
+      return;
+    }
+
+    bool progressShown = false;
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['xlsx'],
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final file = result.files.single;
+      Uint8List? bytes = file.bytes;
+      if (bytes == null) {
+        final path = file.path;
+        if (path == null || path.isEmpty) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Could not read selected file')),
+            );
+          }
+          return;
+        }
+        bytes = await File(path).readAsBytes();
+      }
+
+      final parsed = _testScoreImportService.parseWorkbook(bytes);
+      final studentsByName = <String, List<Student>>{};
+      for (final student in roster) {
+        final key = _studentNameKey(student.surname, student.firstName);
+        studentsByName.putIfAbsent(key, () => []).add(student);
+      }
+
+      final allTests = ref.read(allTestsProvider).valueOrNull ?? const <Test>[];
+      final subjectId = _bulkSubjectId!;
+      final issues = <String>[...parsed.issues];
+      final acceptedByStudent = <int, _AcceptedScoreImport>{};
+
+      for (final row in parsed.rows) {
+        final key = _studentNameKey(row.surname, row.firstName);
+        final matches = studentsByName[key] ?? const <Student>[];
+        final displayName = '${row.surname}, ${row.firstName}';
+        if (matches.isEmpty) {
+          issues.add(
+            'Row ${row.rowNumber}: no student named $displayName in this class and mode',
+          );
+          continue;
+        }
+        if (matches.length > 1) {
+          issues.add(
+            'Row ${row.rowNumber}: more than one student named $displayName',
+          );
+          continue;
+        }
+
+        final student = matches.single;
+        final previous = acceptedByStudent[student.id];
+        if (previous != null) {
+          issues.add(
+            'Row ${previous.rowNumber}: duplicate of $displayName, later row ${row.rowNumber} is used',
+          );
+        }
+        final existing = _findTestForStudentAndSubject(
+          allTests,
+          student.id,
+          subjectId,
+          null,
+          academicSession: _selectedAcademicSession,
+        );
+        acceptedByStudent[student.id] = _AcceptedScoreImport(
+          rowNumber: row.rowNumber,
+          studentId: student.id,
+          studentName: '${student.surname}, ${student.firstName}',
+          score: row.score,
+          notesProvided: row.notesProvided,
+          notes: row.notes,
+          willUpdate: existing != null,
+        );
+      }
+
+      final accepted = acceptedByStudent.values.toList()
+        ..sort((a, b) => a.rowNumber.compareTo(b.rowNumber));
+      final createCount = accepted.where((row) => !row.willUpdate).length;
+      final updateCount = accepted.where((row) => row.willUpdate).length;
+
+      if (!context.mounted) return;
+      final proceed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Import preflight'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Rows to create: $createCount'),
+              Text('Rows to update: $updateCount'),
+              Text('Skipped or warnings: ${issues.length}'),
+              if (issues.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                const Text(
+                  'Sample warnings:',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                for (final issue in issues.take(5))
+                  Text('• $issue', style: const TextStyle(fontSize: 13)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: accepted.isEmpty ? null : () => Navigator.of(ctx).pop(true),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      );
+      if (proceed != true || !context.mounted) return;
+
+      progressShown = true;
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          return const AlertDialog(
+            content: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 12),
+                Text('Importing scores...'),
+              ],
+            ),
+          );
+        },
+      );
+
+      final repo = ref.read(testRepositoryProvider);
+      var createdCount = 0;
+      var updatedCount = 0;
+      final savedStudentIds = <int>{};
+      final failures = <String>[];
+      for (final row in accepted) {
+        try {
+          final action = await repo.saveOrUpdateTestForStudentSubjectSession(
+            row.studentId,
+            row.score,
+            label: row.notesProvided ? (row.notes ?? '') : null,
+            subjectId: subjectId,
+            academicSession: _selectedAcademicSession,
+            userRole: auth.role,
+            userId: auth.user.id,
+            userDisplayName: auth.user.displayName,
+            screen: 'Tests Import',
+          );
+          if (action == 'created') {
+            createdCount++;
+          } else if (action == 'updated') {
+            updatedCount++;
+          }
+          savedStudentIds.add(row.studentId);
+        } catch (e) {
+          failures.add('${row.studentName} ($e)');
+        }
+      }
+
+      ref.invalidate(allTestsProvider);
+      ref.invalidate(datesWithTestChangesProvider(_selectedAcademicSession));
+      if (mounted) {
+        setState(() {
+          _cachedTests = null;
+          _dataSource = null;
+          _cohortFieldsCleared = false;
+          for (final id in savedStudentIds) {
+            _edits.remove(id);
+          }
+        });
+        _syncCanSave();
+      }
+
+      if (!context.mounted) return;
+      if (progressShown) {
+        Navigator.of(context, rootNavigator: true).pop();
+        progressShown = false;
+      }
+
+      final savedCount = createdCount + updatedCount;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Imported $savedCount score(s): $createdCount created, $updatedCount updated'
+            '${issues.isNotEmpty || failures.isNotEmpty ? ', ${issues.length + failures.length} skipped' : ''}',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      final details = <String>[...issues, ...failures];
+      if (details.isNotEmpty) {
+        final limited = details.length > 10
+            ? [...details.take(10), '... and ${details.length - 10} more']
+            : details;
+        showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Import details'),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'Created $createdCount, updated $updatedCount.',
+                  ),
+                  const SizedBox(height: 8),
+                  for (final item in limited)
+                    Text('• $item', style: const TextStyle(fontSize: 13)),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Close'),
+              ),
+            ],
+          ),
+        );
+      }
+    } on TestScoreImportException catch (e) {
+      if (context.mounted) {
+        final recommendation = switch (e.type) {
+          TestScoreImportFailureType.fileParse =>
+            'Use the Download template file or re-save your workbook as standard .xlsx in Excel, then retry.',
+          TestScoreImportFailureType.headerValidation =>
+            'Ensure your file includes surname, firstName, and score columns.',
+          TestScoreImportFailureType.worksheetValidation =>
+            'Ensure the workbook has at least one sheet with a header row and at least one data row.',
+        };
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${e.message} $recommendation'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import failed: $e'),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (progressShown && context.mounted) {
+        Navigator.of(context, rootNavigator: true).pop();
+      }
     }
   }
 

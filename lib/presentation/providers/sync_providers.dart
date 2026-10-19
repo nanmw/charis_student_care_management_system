@@ -43,7 +43,7 @@ final syncConflictsListStreamProvider = StreamProvider.autoDispose<List<SyncConf
   return repo.watchConflicts();
 });
 
-/// Status of change-set sync (folder-based sync). Replaces old OneDrive OAuth status.
+/// Status of change-set sync against Neon.
 class ChangeSetSyncStatus extends ChangeNotifier {
   bool _isSyncing = false;
   DateTime? _lastSyncTime;
@@ -103,16 +103,21 @@ final changeSetSyncServiceProvider = Provider<ChangeSetSyncService>((ref) {
   );
 });
 
-/// Runs full folder-based sync (export then import) and updates sync status.
+/// Runs full Neon sync (push then pull) and updates sync status.
 /// Returns number of imported/applied change-sets from other devices.
+///
+/// When [quietIfUnconfigured] is true, a missing connection string returns 0
+/// without marking sync as failed. Startup, polling, and post-save sync use that.
 Future<int> runChangeSetFullSync(
   Ref ref, {
   bool invalidateConflictCount = false,
+  bool quietIfUnconfigured = false,
 }) =>
     _runChangeSetFullSyncCore(
       read: ref.read,
       invalidate: ref.invalidate,
       invalidateConflictCount: invalidateConflictCount,
+      quietIfUnconfigured: quietIfUnconfigured,
     );
 
 /// Same as [runChangeSetFullSync]; use from `Consumer*` widgets because
@@ -120,18 +125,19 @@ Future<int> runChangeSetFullSync(
 Future<int> runChangeSetFullSyncForWidget(
   WidgetRef ref, {
   bool invalidateConflictCount = false,
+  bool quietIfUnconfigured = false,
 }) =>
     _runChangeSetFullSyncCore(
       read: ref.read,
       invalidate: ref.invalidate,
       invalidateConflictCount: invalidateConflictCount,
+      quietIfUnconfigured: quietIfUnconfigured,
     );
 
 /// Serializes full sync across manual, startup, post-CRUD, and folder-watcher entry points.
 final _changeSetSyncLock = _ChangeSetSyncLock();
 
-const Duration _syncExportTimeout = Duration(seconds: 60);
-const Duration _syncImportTimeout = Duration(seconds: 60);
+const Duration _syncTimeout = Duration(seconds: 120);
 
 class _ChangeSetSyncLock {
   Future<void> _tail = Future.value();
@@ -155,26 +161,24 @@ Future<int> _runChangeSetFullSyncCore({
   required T Function<T>(ProviderListenable<T> provider) read,
   required void Function(ProviderOrFamily provider) invalidate,
   bool invalidateConflictCount = false,
+  bool quietIfUnconfigured = false,
 }) {
   return _changeSetSyncLock.run(() async {
+    final syncService = read(changeSetSyncServiceProvider);
+    if (quietIfUnconfigured && !await syncService.remoteConfigured()) {
+      return 0;
+    }
     final status = read(changeSetSyncStatusProvider.notifier);
     status.setSyncing(true);
     try {
-      final syncService = read(changeSetSyncServiceProvider);
       final db = read(appDatabaseProvider);
       final applier = ChangeSetApplier(db);
-      await syncService.export().timeout(
-        _syncExportTimeout,
-        onTimeout: () => throw TimeoutException(
-          'Export timed out after ${_syncExportTimeout.inSeconds}s',
-        ),
-      );
-      final applied = await syncService.import(
+      final applied = await syncService.syncWithRemote(
         tryApply: (record) => applier.tryApply(record),
       ).timeout(
-        _syncImportTimeout,
+        _syncTimeout,
         onTimeout: () => throw TimeoutException(
-          'Import timed out after ${_syncImportTimeout.inSeconds}s',
+          'Sync timed out after ${_syncTimeout.inSeconds}s',
         ),
       );
       status.setSuccess();
@@ -249,7 +253,7 @@ class PostCrudSyncScheduler {
         _pendingRun = false;
         lastError = null;
         try {
-          await runChangeSetFullSync(_ref);
+          await runChangeSetFullSync(_ref, quietIfUnconfigured: true);
         } catch (e) {
           lastError = e;
           // Status already updated; avoid crashing scheduler (matches folder watcher).

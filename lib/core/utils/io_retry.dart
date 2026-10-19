@@ -19,17 +19,30 @@ bool isTransientIoError(Object error) {
           !text.contains('errno = 2'));
 }
 
-/// Short user-facing message for OneDrive / sync-folder failures.
+/// Short user-facing message for sync failures.
 String userFacingSyncError(Object error) {
   final text = error.toString().toLowerCase();
 
-  if (error is TimeoutException || text.contains('timed out')) {
-    return 'OneDrive sync timed out. Check that OneDrive is running and try again.';
+  if (text.contains('connection string is not set') ||
+      text.contains('not configured')) {
+    return 'Sync database is not configured. Add the Neon connection string in Settings → Sync.';
+  }
+
+  if (error is TimeoutException ||
+      text.contains('timed out') ||
+      text.contains('timeout')) {
+    return 'Sync timed out. Check the internet connection and try again.';
+  }
+
+  if (text.contains('password') ||
+      text.contains('authentication') ||
+      text.contains('28p01')) {
+    return 'The sync database rejected the connection string. Check it in Settings → Sync.';
   }
 
   if (isTransientIoError(error)) {
-    return 'Couldn’t write to the OneDrive sync folder (file busy). '
-        'OneDrive may be syncing — the app will retry shortly.';
+    return 'Couldn’t write to the sync folder (file busy). '
+        'The app will retry shortly.';
   }
 
   if (text.contains('pathnotfound') ||
@@ -39,17 +52,23 @@ String userFacingSyncError(Object error) {
     return 'Sync folder not found. Check the path in Settings → Sync.';
   }
 
+  if (text.contains('socket') ||
+      text.contains('connection') ||
+      text.contains('network') ||
+      text.contains('failed host lookup') ||
+      text.contains('postgres')) {
+    return 'Couldn’t reach the sync database. Check the connection string in Settings → Sync and that you are online.';
+  }
+
   if (text.contains('permission') ||
       text.contains('access is denied') ||
       text.contains('errno = 5') ||
       text.contains('operation not permitted') ||
       text.contains('errno = 13')) {
-    return 'Couldn’t access the OneDrive sync folder. '
-        'Check OneDrive is running and the folder is available.';
+    return 'Couldn’t access the sync database. Check the connection string in Settings → Sync.';
   }
 
-  return 'OneDrive sync failed. Check OneDrive is running and the sync folder '
-      'is available in Settings → Sync.';
+  return 'Sync failed. Check the connection string in Settings → Sync and try again.';
 }
 
 /// Retries [fn] when [isTransientIoError] matches, with short backoff.

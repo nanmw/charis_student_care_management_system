@@ -30,6 +30,10 @@ class ChangeSets extends Table {
   /// ID of the device that created this change-set (for sync).
   TextColumn get deviceId => text()();
 
+  /// True after this row has been stored in the remote sync database.
+  BoolColumn get remotePushed =>
+      boolean().withDefault(const Constant(false))();
+
   @override
   Set<Column> get primaryKey => {id};
 

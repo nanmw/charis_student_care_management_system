@@ -6,6 +6,7 @@ import 'package:charis_student_care/core/constants/role_constants.dart';
 import 'package:charis_student_care/core/config/sync_folder_config.dart';
 import 'package:charis_student_care/core/theme/app_colors.dart';
 import 'package:charis_student_care/core/utils/file_export_utils.dart';
+import 'package:charis_student_care/core/utils/io_retry.dart';
 import 'package:charis_student_care/data/database/app_database.dart';
 import 'package:charis_student_care/data/database/database_file.dart';
 import 'package:charis_student_care/data/services/change_set_applier.dart';
@@ -24,7 +25,7 @@ import 'package:charis_student_care/presentation/widgets/academic_session_form_d
 import 'package:charis_student_care/presentation/widgets/common/role_guard.dart';
 import 'package:charis_student_care/presentation/widgets/conflict_resolution_dialog.dart';
 
-/// Settings screen: Sync folder path and Sync now.
+/// Settings screen: Neon sync connection and Sync now.
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -33,7 +34,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  final _pathController = TextEditingController();
+  final _connectionController = TextEditingController();
   final _monthlyTuitionController = TextEditingController();
   final _lumpSumDiscountController = TextEditingController();
   final _attendanceMonthController = TextEditingController();
@@ -47,10 +48,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isResolvingAll = false;
   bool _tuitionFieldsInitialized = false;
   bool _attendanceFieldsInitialized = false;
+  bool _obscureConnection = true;
 
   @override
   void dispose() {
-    _pathController.dispose();
+    _connectionController.dispose();
     _monthlyTuitionController.dispose();
     _lumpSumDiscountController.dispose();
     _attendanceMonthController.dispose();
@@ -77,14 +79,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ref.watch(attendanceThresholdsByModeProvider);
     final attendanceHolidaysAsync =
         ref.watch(attendanceHolidaysByModeProvider);
-
-    ref.listen<AsyncValue<SyncFolderConfig>>(syncFolderConfigProvider, (prev, next) {
-      next.whenData((config) {
-        if (_pathController.text != (config.syncFolderPath ?? '')) {
-          _pathController.text = config.syncFolderPath ?? '';
-        }
-      });
-    });
 
     return Container(
       color: colorScheme.surface,
@@ -174,7 +168,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Text(
-          'Sync folder',
+          'Sync',
           style: TextStyle(
             color: colorScheme.onSurfaceVariant,
             fontSize: 14,
@@ -183,7 +177,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          'Choose a folder inside your OneDrive so all devices can sync (e.g. OneDrive\\CharisStudentCare\\Sync). Each device needs OneDrive desktop installed.',
+          'Paste the Neon pooled connection string so this PC can share changes with the others. '
+          'The string stays on this computer and is not shown again after you save it. '
+          'Create the change_sets table in Neon once, using docs/neon_change_sets.sql.',
           style: TextStyle(
             color: colorScheme.onSurfaceVariant,
             fontSize: 12,
@@ -193,41 +189,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         const SizedBox(height: 16),
         configAsync.when(
           data: (config) {
-            if (_pathController.text.isEmpty && config.syncFolderPath != null && config.syncFolderPath!.isNotEmpty) {
-              _pathController.text = config.syncFolderPath!;
-            }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _pathController,
-                    decoration: InputDecoration(
-                      labelText: 'Sync folder path',
-                      hintText: 'C:\\Users\\...\\OneDrive\\CharisStudentCare\\Sync',
-                      border: const OutlineInputBorder(),
-                      filled: true,
-                      fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-                    ),
-                    style: TextStyle(
-                      color: colorScheme.onSurface,
-                      fontFamily: 'Questrial',
-                    ),
-                    enabled: !_isSaving,
+            return TextField(
+              controller: _connectionController,
+              obscureText: _obscureConnection,
+              enableSuggestions: false,
+              autocorrect: false,
+              decoration: InputDecoration(
+                labelText: 'Neon connection string',
+                hintText: config.hasNeonConnection
+                    ? 'Saved on this PC. Paste a new string to replace it.'
+                    : 'postgresql://user:password@host/database?sslmode=require',
+                border: const OutlineInputBorder(),
+                filled: true,
+                fillColor: colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                suffixIcon: IconButton(
+                  tooltip: _obscureConnection ? 'Show' : 'Hide',
+                  onPressed: () {
+                    setState(() => _obscureConnection = !_obscureConnection);
+                  },
+                  icon: Icon(
+                    _obscureConnection
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
                   ),
                 ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _isSaving ? null : () => _browseFolder(),
-                  icon: const Icon(Icons.folder_open_outlined),
-                  label: const Text('Browse'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: redColor,
-                    foregroundColor: colorScheme.onPrimary,
-                    textStyle: const TextStyle(fontFamily: 'Questrial'),
-                  ),
-                ),
-              ],
+              ),
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontFamily: 'Questrial',
+              ),
+              enabled: !_isSaving,
             );
           },
           loading: () => const SizedBox(height: 56),
@@ -239,11 +230,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             return SwitchListTile.adaptive(
               contentPadding: EdgeInsets.zero,
               title: const Text(
-                'Auto-sync when sync files change',
+                'Auto-sync while this app is open',
                 style: TextStyle(fontFamily: 'Questrial'),
               ),
               subtitle: Text(
-                'Automatically sync when OneDrive updates device_*.json files from other devices.',
+                'About once a minute, send local edits and pull changes from the sync database.',
                 style: TextStyle(
                   color: colorScheme.onSurfaceVariant,
                   fontSize: 12,
@@ -262,7 +253,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         SizedBox(
           width: double.infinity,
           child: FilledButton.icon(
-            onPressed: _isSaving ? null : () => _saveSyncPath(colorScheme),
+            onPressed: _isSaving ? null : () => _saveConnectionString(colorScheme),
             icon: _isSaving
                 ? SizedBox(
                     width: 20,
@@ -273,13 +264,28 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     ),
                   )
                 : const Icon(Icons.save_outlined),
-            label: Text(_isSaving ? 'Saving...' : 'Save path'),
+            label: Text(_isSaving ? 'Saving...' : 'Save connection'),
             style: FilledButton.styleFrom(
               backgroundColor: redColor,
               foregroundColor: colorScheme.onPrimary,
               textStyle: const TextStyle(fontFamily: 'Questrial'),
             ),
           ),
+        ),
+        configAsync.maybeWhen(
+          data: (config) => config.hasNeonConnection
+              ? Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: _isSaving ? null : () => _clearConnectionString(colorScheme),
+                    child: const Text(
+                      'Clear saved connection',
+                      style: TextStyle(fontFamily: 'Questrial'),
+                    ),
+                  ),
+                )
+              : const SizedBox.shrink(),
+          orElse: () => const SizedBox.shrink(),
         ),
         const SizedBox(height: 32),
         const Divider(),
@@ -345,7 +351,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         const SizedBox(height: 8),
         Text(
-          'Save a full copy of the school data to a USB stick or folder you choose. This is not the same as OneDrive Sync.',
+          'Save a full copy of the school data to a USB stick or folder you choose. This is not the same as sync between PCs.',
           style: TextStyle(
             color: colorScheme.onSurfaceVariant,
             fontSize: 12,
@@ -1322,12 +1328,91 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Future<void> _browseFolder() async {
-    final path = await FilePicker.platform.getDirectoryPath(
-      dialogTitle: 'Select sync folder (e.g. inside OneDrive)',
-    );
-    if (path != null && mounted) {
-      _pathController.text = path;
+  Future<void> _saveConnectionString(ColorScheme colorScheme) async {
+    final value = _connectionController.text.trim();
+    final existing =
+        ref.read(syncFolderConfigProvider).valueOrNull?.hasNeonConnection ??
+            false;
+    if (value.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            existing
+                ? 'A connection string is already saved. Paste a new one to replace it.'
+                : 'Paste the Neon connection string.',
+          ),
+          backgroundColor: existing ? AppColors.syncedGreen : colorScheme.error,
+        ),
+      );
+      return;
+    }
+    if (!value.startsWith('postgres://') &&
+        !value.startsWith('postgresql://')) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Connection string should start with postgresql://',
+          ),
+          backgroundColor: colorScheme.error,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      await SyncFolderConfig.saveNeonConnectionString(value);
+      _connectionController.clear();
+      ref.invalidate(syncFolderConfigProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sync connection saved on this PC.'),
+            backgroundColor: AppColors.syncedGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save: $e'),
+            backgroundColor: colorScheme.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _clearConnectionString(ColorScheme colorScheme) async {
+    setState(() => _isSaving = true);
+    try {
+      await SyncFolderConfig.saveNeonConnectionString(null);
+      _connectionController.clear();
+      ref.invalidate(syncFolderConfigProvider);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Saved sync connection cleared.'),
+            backgroundColor: AppColors.syncedGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to clear: $e'),
+            backgroundColor: colorScheme.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -1345,9 +1430,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             child: Text(
               'Backup saves a full copy of the school data to a USB stick or '
               'folder you choose.\n\n'
-              'It is not the same as OneDrive Sync. Sync shares changes between '
-              'PCs. Backup is a spare copy if a PC goes wrong.\n\n'
-              'Do not save into the Charis Sync folder or into OneDrive Documents.\n\n'
+              'It is not the same as sync between PCs. Sync shares changes. '
+              'Backup is a spare copy if a PC goes wrong.\n\n'
+              'Do not save the backup into OneDrive Documents.\n\n'
               'After it succeeds, keep that file somewhere safe.\n\n'
               'To use a backup later: close Charis on that PC, replace the live '
               'database file with the backup, then open the app again. The live '
@@ -1417,34 +1502,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  Future<void> _saveSyncPath(ColorScheme colorScheme) async {
-    final path = _pathController.text.trim();
-    setState(() => _isSaving = true);
-    try {
-      await SyncFolderConfig.saveSyncFolderPath(path.isEmpty ? null : path);
-      ref.invalidate(syncFolderConfigProvider);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Sync folder path saved.'),
-            backgroundColor: AppColors.syncedGreen,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to save: $e'),
-            backgroundColor: colorScheme.error,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSaving = false);
-    }
-  }
-
   Future<void> _syncNow(BuildContext context, ColorScheme colorScheme) async {
     try {
       final applied = await runChangeSetFullSyncForWidget(
@@ -1455,8 +1512,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         final conflictCount = await ref.read(syncConflictsCountProvider.future);
         if (!context.mounted) return;
         final message = applied > 0
-            ? 'OneDrive synced. Applied $applied change-set(s).'
-            : 'OneDrive sync complete. No new changes to apply.';
+            ? 'Synced. Applied $applied change-set(s).'
+            : 'Sync complete. No new changes to apply.';
         final conflictNote = conflictCount > 0
             ? ' $conflictCount conflict(s) need resolution in Settings.'
             : '';
@@ -1471,7 +1528,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (mounted && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('OneDrive sync failed: $e'),
+            content: Text(userFacingSyncError(e)),
             backgroundColor: colorScheme.error,
           ),
         );
@@ -1489,8 +1546,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           SnackBar(
             content: Text(
               enabled
-                  ? 'Auto-sync on remote changes enabled.'
-                  : 'Auto-sync on remote changes disabled.',
+                  ? 'Auto-sync while the app is open.'
+                  : 'Auto-sync turned off. Use Sync now to share changes.',
             ),
             backgroundColor: AppColors.syncedGreen,
           ),

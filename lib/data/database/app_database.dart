@@ -59,7 +59,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.test() : super(_openTestConnection());
 
   @override
-  int get schemaVersion => 35;
+  int get schemaVersion => 36;
 
   @override
   MigrationStrategy get migration {
@@ -1269,6 +1269,12 @@ class AppDatabase extends _$AppDatabase {
             'ALTER TABLE subjects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0',
           );
           await _backfillSubjectSortOrders();
+        }
+
+        if (from < 36) {
+          await customStatement(
+            'ALTER TABLE change_sets ADD COLUMN remote_pushed INTEGER NOT NULL DEFAULT 0',
+          );
         }
       },
     );

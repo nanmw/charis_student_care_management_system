@@ -152,6 +152,10 @@ class ChangeSetApplier {
       final conflict = await _checkCriticalConflict(record, payload);
       if (conflict != null) return conflict;
     }
+    if (record.table == 'subjects') {
+      final subjectConflict = await _subjectRenameConflict(record, payload);
+      if (subjectConflict != null) return subjectConflict;
+    }
 
     var applied = false;
     await _db.transaction(() async {
@@ -811,6 +815,13 @@ class ChangeSetApplier {
         final name = payload['name'] as String?;
         final classId = await _resolveClassIdFromPayload(payload);
         if (name == null || classId == null) return false;
+        final existing = await (_db.select(_db.subjects)
+              ..where((t) => t.name.equals(name) & t.classId.equals(classId)))
+            .getSingleOrNull();
+        if (existing != null) {
+          await _storeMapping('subjects', record.recordId, existing.id);
+          return true;
+        }
         final sortOrder = await _resolveSubjectSortOrder(payload, classId);
         final id = await _db.into(_db.subjects).insert(
               SubjectsCompanion.insert(
@@ -849,6 +860,44 @@ class ChangeSetApplier {
       default:
         return false;
     }
+  }
+
+  /// Rename onto a name already used by another subject in the same class.
+  Future<ApplyResultConflict?> _subjectRenameConflict(
+    ChangeSetRecord record,
+    Map<String, dynamic> payload,
+  ) async {
+    if (record.operation != 'UPDATE') return null;
+    final name = payload['name'] as String?;
+    if (name == null) return null;
+    final localId = await _getLocalId('subjects', record.recordId) ??
+        int.tryParse(record.recordId);
+    if (localId == null) return null;
+    final local = await (_db.select(_db.subjects)
+          ..where((t) => t.id.equals(localId)))
+        .getSingleOrNull();
+    if (local == null || local.name == name) return null;
+    final clash = await (_db.select(_db.subjects)
+          ..where((t) =>
+              t.name.equals(name) &
+              t.classId.equals(local.classId) &
+              t.id.equals(localId).not()))
+        .getSingleOrNull();
+    if (clash == null) return null;
+    return ApplyResultConflict(
+      changeSetId: record.id,
+      tableName: record.table,
+      recordId: record.recordId,
+      incomingPayload: record.payload,
+      localSnapshot: jsonEncode({
+        'id': local.id,
+        'name': local.name,
+        'classId': local.classId,
+        'existingSubjectId': clash.id,
+        'existingName': clash.name,
+      }),
+      sourceDeviceId: record.deviceId,
+    );
   }
 
   Future<int> _resolveSubjectSortOrder(

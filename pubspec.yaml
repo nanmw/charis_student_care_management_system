@@ -32,6 +32,9 @@ dependencies:
   http: ^1.2.0
   dio: ^5.4.0 # HTTP client for OneDrive API
 
+  # Remote change-set sync (Neon Postgres)
+  postgres: ^3.5.0
+
   # UI Components
   syncfusion_flutter_datagrid: ^24.1.41 # Data grid for tables
   syncfusion_flutter_core: ^24.1.41
