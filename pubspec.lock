@@ -778,10 +778,9 @@ packages:
   postgres:
     dependency: "direct main"
     description:
-      name: postgres
-      sha256: f2571f6f4256e94d87334d7189fcf28407500c34cd0ebcb74cff21fab5f4e988
-      url: "https://pub.dev"
-    source: hosted
+      path: "third_party/postgres"
+      relative: true
+    source: path
     version: "3.5.20"
   printing:
     dependency: "direct main"

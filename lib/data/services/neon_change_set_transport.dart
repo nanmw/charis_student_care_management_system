@@ -159,6 +159,8 @@ LIMIT @lim
     final existing = _connection;
     if (existing != null && existing.isOpen) return existing;
     final endpoint = parseNeonConnectionString(connectionString);
+    // Uses the vendored postgres package so the TLS handshake includes this
+    // hostname. Neon routes the connection by that name.
     final opened = await Connection.open(
       Endpoint(
         host: endpoint.host,

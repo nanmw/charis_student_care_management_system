@@ -32,8 +32,10 @@ dependencies:
   http: ^1.2.0
   dio: ^5.4.0 # HTTP client for OneDrive API
 
-  # Remote change-set sync (Neon Postgres)
-  postgres: ^3.5.0
+  # Remote change-set sync (Neon Postgres).
+  # Path copy so the TLS handshake sends the Neon hostname. See third_party/postgres.
+  postgres:
+    path: third_party/postgres
 
   # UI Components
   syncfusion_flutter_datagrid: ^24.1.41 # Data grid for tables

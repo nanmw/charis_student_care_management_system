@@ -3,9 +3,9 @@
 ; Non-commercial use only
 
 #define MyAppName "Charis"
-#define MyAppVersion "1.16"
+#define MyAppVersion "2.1"
 #define MyAppPublisher "Nati Applications and Tailored Interfaces Ltd."
-#define MyAppURL "https://onedrive.live.com/"
+#define MyAppURL "https://natty-portfolio.netlify.app/"
 #define MyAppExeName "Charis.exe"
 
 [Setup]
@@ -33,7 +33,7 @@ DisableProgramGroupPage=yes
 ; Uncomment the following line to run in non administrative install mode (install for current user only).
 ;PrivilegesRequired=lowest
 OutputDir=C:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\installers
-OutputBaseFilename=Charis_desktop_setup_v1.16
+OutputBaseFilename=Charis_desktop_setup_v2.1
 SetupIconFile=C:\Users\Mi\projects\desktop_apps\flutter_desktop\charis_student_care_management_system\windows\runner\resources\app_icon.ico
 Password=SteveCharisDesktop
 Encryption=yes
